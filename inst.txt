@@ -1,8 +1,3 @@
-Write function to print character,
-Write function to print string,
-Handle newline in console output,
-Implement clear screen function,
-Create simple printf-like function,
 Refactor screen driver,
 Test console printing features,
 Learn keyboard controller basics,

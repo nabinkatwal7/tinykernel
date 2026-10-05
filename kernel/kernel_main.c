@@ -1,15 +1,14 @@
-/* 32-bit kernel entry — reached after bootloader loads us and enters PM. */
+#include "console.h"
+
 void kernel_main(void)
 {
-	volatile unsigned short *vga = (unsigned short *)0xB8000;
-	const char *msg = "kernel ok";
-	int i;
-
-	/* Row 1 (leave BIOS "Tiny OS" on row 0). White on black. */
-	for (i = 0; msg[i]; i++)
-		vga[80 + i] = (unsigned short)(msg[i] | 0x0F00);
+	console_clear();
+	console_write("Tiny OS\n");
+	console_putchar('A');
+	console_putchar('\n');
+	console_printf("kernel %s boot=%d\n", "ok", 1);
 
 	for (;;) {
-		/* booted successfully — hang */
+		/* idle */
 	}
 }
