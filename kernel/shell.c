@@ -36,6 +36,7 @@
 #include "rtc.h"
 #include "sched.h"
 #include "selftest.h"
+#include "shm.h"
 #include "slab.h"
 #include "smp.h"
 #include "smpsched.h"
@@ -2813,6 +2814,24 @@ static int cmd_pgtest(int argc, char **argv)
 	return fails != 0;
 }
 
+/* shm [rm <key>]: list shared memory segments */
+static int cmd_shm(int argc, char **argv)
+{
+	int i, key, att, n = 0;
+	uint32_t size, k;
+
+	if (argc == 3 && !kstrcmp(argv[1], "rm") && !kstrtoul(argv[2], &k))
+		return shm_remove((int)k) ? (console_write("no such segment\n"), 1) : 0;
+	for (i = 0; i < SHM_MAX_SEGMENTS; i++) {
+		if (!shm_info(i, &key, &size, &att)) {
+			console_printf("  id %d key %d size %u bytes at %x, %d attach(es)\n", i, key, size, SHM_BASE + (uint32_t)i * SHM_SLOT, att);
+			n++;
+		}
+	}
+	console_printf("%d segment(s)\n", n);
+	return 0;
+}
+
 static int cmd_slabinfo(int argc, char **argv)
 {
 	(void)argc;
@@ -3177,6 +3196,7 @@ static const struct command commands[] = {
 	{ "format",  "format",                "erase the disk and make a filesystem", cmd_format },
 	{ "fstest",  "fstest",                "self-test the filesystem", cmd_fstest },
 	{ "pgtest",  "pgtest",                "self-test address spaces", cmd_pgtest },
+	{ "shm",     "shm [rm <key>]",        "shared memory segments", cmd_shm },
 	{ "slabinfo", "slabinfo",             "show slab caches", cmd_slabinfo },
 	{ "slabtest", "slabtest",             "self-test the slab allocator", cmd_slabtest },
 	{ "cowtest", "cowtest",               "copy-on-write self-test", cmd_cowtest },

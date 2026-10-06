@@ -7,6 +7,7 @@
 #include "klog.h"
 #include "sched.h"
 #include "shell.h"
+#include "shm.h"
 #include "timer.h"
 #include "kstring.h"
 #include "user.h"
@@ -189,6 +190,15 @@ void syscall_dispatch(struct regs *r)
 			*(int *)r->ecx = code;
 		break;
 	}
+	case SYS_SHMGET:
+		r->eax = (uint32_t)shm_get((int)r->ebx, r->ecx);
+		break;
+	case SYS_SHMAT:
+		r->eax = shm_attach((int)r->ebx);
+		break;
+	case SYS_SHMDT:
+		r->eax = (uint32_t)shm_detach(r->ebx);
+		break;
 	case SYS_SBRK:
 		r->eax = user_sbrk((int32_t)r->ebx);
 		break;

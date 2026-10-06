@@ -276,8 +276,8 @@ uint32_t paging_fork_dir(uint32_t dir)
 			uint32_t e = st[j];
 
 			if ((e & PTE_P) && (e & PTE_US)) {
-				if (e & PTE_RW)
-					e = (e & ~PTE_RW) | PTE_COW;     /* writable pages become copy-on-write */
+				if ((e & PTE_RW) && !(e & PTE_SHARED))
+					e = (e & ~PTE_RW) | PTE_COW;     /* writable pages become copy-on-write (shared memory stays shared) */
 				st[j] = e;                           /* the parent loses write access too */
 				pmm_ref(e & ~0xFFFu);
 			}

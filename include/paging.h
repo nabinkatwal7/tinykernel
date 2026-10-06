@@ -7,6 +7,7 @@
 #define PTE_RW 0x002u /* writable */
 #define PTE_US 0x004u /* user accessible */
 #define PTE_COW 0x200u /* software bit: shared copy-on-write page (was writable, now read-only) */
+#define PTE_SHARED 0x400u /* software bit: genuinely shared memory - stays writable across fork, never copy-on-write */
 #define PTE_PCD 0x010u /* cache disable: for memory-mapped device registers */
 
 /* Identity-maps the first 64 MiB (virtual == physical) and turns paging on. */
