@@ -294,6 +294,46 @@ static char *arith_end(char *s)
 	return s + 2;
 }
 
+/* ---------------- aliases ---------------- */
+
+#define MAX_ALIASES 16
+
+static struct { char name[16]; char value[64]; int used; } aliases[MAX_ALIASES];
+
+static int alias_find(const char *name, size_t len)
+{
+	int i;
+
+	for (i = 0; i < MAX_ALIASES; i++)
+		if (aliases[i].used && kstrlen(aliases[i].name) == len && !kstrncmp(aliases[i].name, name, len))
+			return i;
+	return -1;
+}
+
+/* Replace an aliased first word by its text, up to a few times (an alias may refer to another, but never to itself twice). */
+static const char *apply_alias(const char *line, char *buf, int size)
+{
+	int round, last = -1;
+
+	for (round = 0; round < 4; round++) {
+		const char *w = line;
+		size_t len;
+		int a;
+
+		while (*w == ' ' || *w == '\t')
+			w++;
+		for (len = 0; w[len] && w[len] != ' ' && w[len] != '\t'; len++)
+			;
+		a = len ? alias_find(w, len) : -1;
+		if (a < 0 || a == last)
+			break;
+		ksnprintf(buf, (size_t)size, "%s%s", aliases[a].value, w + len);
+		line = buf;
+		last = a;
+	}
+	return line;
+}
+
 /* ---------------- parser ---------------- */
 
 /* Splits in place on whitespace. Supports 'single', "double" quotes and backslash escapes. */
@@ -3033,6 +3073,9 @@ static int cmd_shtest(int argc, char **argv)
 		vfs_unlink("sht.sh");
 		env_unset("shi");
 	}
+	ok &= sh_expect("alias shx='echo aliased'", "");
+	ok &= sh_expect("shx a b", "aliased a b\n");
+	ok &= sh_expect("unalias shx", "");
 	ok &= sh_expect("echo x > sht.txt", "");
 	ok &= sh_expect("echo y >> sht.txt", "");
 	ok &= sh_expect("cat sht.txt", "x\ny\n");
@@ -3155,6 +3198,84 @@ static int cmd_test(int argc, char **argv)
 		return 2;
 	}
 	return (r != 0) == !neg ? 0 : 1;
+}
+
+/* alias [name=value] : define or list aliases */
+static int cmd_alias(int argc, char **argv)
+{
+	int i, k;
+
+	if (argc < 2) {
+		for (i = 0; i < MAX_ALIASES; i++)
+			if (aliases[i].used)
+				console_printf("alias %s='%s'\n", aliases[i].name, aliases[i].value);
+		return 0;
+	}
+	for (k = 1; k < argc; k++) {
+		char *eq = assignment_eq(argv[k]);
+
+		if (!eq) {
+			i = alias_find(argv[k], kstrlen(argv[k]));
+			if (i < 0) {
+				console_printf("alias: %s not found\n", argv[k]);
+				return 1;
+			}
+			console_printf("alias %s='%s'\n", aliases[i].name, aliases[i].value);
+			continue;
+		}
+		*eq = 0;
+		i = alias_find(argv[k], kstrlen(argv[k]));
+		for (int j = 0; i < 0 && j < MAX_ALIASES; j++)
+			if (!aliases[j].used)
+				i = j;
+		if (i < 0 || kstrlen(argv[k]) >= sizeof aliases[0].name) {
+			console_write("alias: table full or name too long\n");
+			*eq = '=';
+			return 1;
+		}
+		aliases[i].used = 1;
+		kstrlcpy(aliases[i].name, argv[k], sizeof aliases[i].name);
+		kstrlcpy(aliases[i].value, eq + 1, sizeof aliases[i].value);
+		*eq = '=';
+	}
+	return 0;
+}
+
+/* unalias name... */
+static int cmd_unalias(int argc, char **argv)
+{
+	int k, rc = 0;
+
+	if (argc < 2) {
+		console_write("usage: unalias name...\n");
+		return 1;
+	}
+	for (k = 1; k < argc; k++) {
+		int i = alias_find(argv[k], kstrlen(argv[k]));
+
+		if (i < 0) {
+			console_printf("unalias: %s not found\n", argv[k]);
+			rc = 1;
+		} else {
+			aliases[i].used = 0;
+		}
+	}
+	return rc;
+}
+
+/* functions : list the shell functions defined by scripts */
+static int cmd_functions(int argc, char **argv)
+{
+	int i;
+	const char *n;
+
+	(void)argc;
+	(void)argv;
+	for (i = 0; (n = script_function_name(i)); i++)
+		console_printf("%s()\n", n);
+	if (!script_function_count())
+		console_write("no functions\n");
+	return 0;
 }
 
 /* panic [message] : test the panic path and its stack trace */
@@ -3664,6 +3785,9 @@ static const struct command commands[] = {
 	{ "sh",      "sh <script> [args]",    "run a shell script", cmd_sh },
 	{ "let",     "let NAME=expr",         "integer arithmetic on shell variables", cmd_let },
 	{ "test",    "test EXPR",             "evaluate a condition (status 0 = true)", cmd_test },
+	{ "alias",   "alias [name=text]",     "define or list command aliases", cmd_alias },
+	{ "unalias", "unalias name",          "remove an alias", cmd_unalias },
+	{ "functions", "functions",           "list shell functions", cmd_functions },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
@@ -3890,10 +4014,11 @@ static int exec_command(const char *line);
  */
 int shell_exec(const char *line)
 {
-	char copy[LINE_MAX];
+	char copy[LINE_MAX], aliasbuf[LINE_MAX];
 	char *bar, *data;
 	int rc, len;
 
+	line = apply_alias(line, aliasbuf, sizeof aliasbuf);
 	kstrlcpy(copy, line, sizeof copy);
 	if (strip_ampersand(copy))
 		return start_job(copy);
@@ -4091,6 +4216,8 @@ static int exec_plain(const char *line)
 
 	if (all_assignments(argc, argv)) /* NAME=value ... sets shell variables */
 		return last_status = 0;
+	if (script_call(argv[0], argc, argv, &last_status)) /* a function defined by a script */
+		return last_status;
 
 	cmd_table = commands;
 	for (c = commands; c->name; c++) {

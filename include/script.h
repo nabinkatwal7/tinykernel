@@ -19,6 +19,9 @@
 
 int         script_run(const char *path, int argc, char **argv); /* the status of the last command, or of 'exit' */
 const char *script_param(int n);   /* $n inside a script (NULL when there is no such parameter or no script is running) */
+int         script_call(const char *name, int argc, char **argv, int *status); /* run a shell function; 0 if there is none */
+int         script_function_count(void);
+const char *script_function_name(int index);
 int         script_nargs(void);    /* $# (0 outside a script) */
 
 #endif
