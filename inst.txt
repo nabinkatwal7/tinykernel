@@ -1,6 +1,5 @@
 Learn ext2 layout,
 Add ext2 read support,
-Add disk partition table parsing,
 Add DMA for ATA transfers,
 Learn AHCI basics,
 Add USB controller detection,

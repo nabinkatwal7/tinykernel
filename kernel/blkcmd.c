@@ -131,6 +131,29 @@ int cmd_fdisk(int argc, char **argv)
 			return fail(argv[2], FS_EINVAL); /* only for RAM disks: never overwrite a real disk by accident */
 		return part_write_demo(d) ? 1 : 0;
 	}
+	if (argc == 2 && !kstrcmp(argv[1], "test")) { /* a partition must map to the right sectors of its parent */
+		uint8_t sec[512], back[512];
+		struct blkdev *r, *p2;
+		int bad = 0;
+
+		if (ramdisk_create("fdtest", 256))
+			return 1;
+		r = blk_find("fdtest");
+		bad += part_write_demo(r) != 0;
+		bad += part_scan(r) != 2;
+		p2 = blk_find("fdtestp2");
+		bad += !p2 || !blk_find("fdtestp1");
+		memset(sec, 0x5A, sizeof sec);
+		if (p2) {
+			bad += blk_write(p2, 3, 1, sec) != 0;
+			bad += blk_read(r, p2->offset + 3, 1, back) != 0 || memcmp(back, sec, 512);
+			bad += blk_read(p2, p2->sectors, 1, back) == 0; /* beyond the partition */
+		}
+		blk_remove("fdtest");
+		bad += blk_find("fdtestp1") != 0; /* partitions disappear with their disk */
+		console_printf("fdisk test: %d errors: %s\n", bad, bad ? "FAILED" : "ok");
+		return bad != 0;
+	}
 	if (argc != 2) {
 		console_write("usage: fdisk DEVICE | fdisk -demo RAMDISK\n");
 		return 1;
