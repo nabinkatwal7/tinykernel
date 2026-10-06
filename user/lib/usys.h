@@ -13,6 +13,8 @@
 #define SYS_CLOSE    8
 #define SYS_READ     9
 #define SYS_FWRITE  10
+#define SYS_FORK    26
+#define SYS_WAITPID 27
 #define SYS_NANOSLEEP 25
 #define SYS_CLOCK   24
 #define SYS_LSEEK   23
@@ -79,6 +81,9 @@ struct timespec { unsigned tv_sec, tv_nsec; };
 static inline int  clock_gettime(int id, struct timespec *ts) { return syscall3(SYS_CLOCK, id, (int)ts, 0); }
 static inline int  nanosleep(unsigned sec, unsigned nsec) { return syscall3(SYS_NANOSLEEP, (int)sec, (int)nsec, 0); }
 static inline void usleep(unsigned us)               { nanosleep(us / 1000000, (us % 1000000) * 1000); }
+/* fork(): 0 in the child, the child's pid in the parent, -1 on failure. waitpid() blocks until that child exits. */
+static inline int  fork(void)                      { return syscall3(SYS_FORK, 0, 0, 0); }
+static inline int  waitpid(int pid, int *status)   { return syscall3(SYS_WAITPID, pid, (int)status, 0); }
 static inline int  getpid(void)                    { return syscall3(SYS_GETPID, 0, 0, 0); }
 static inline int  getppid(void)                   { return syscall3(SYS_GETPPID, 0, 0, 0); }
 static inline void sleep_ms(int ms)                 { syscall3(SYS_SLEEP, ms, 0, 0); }

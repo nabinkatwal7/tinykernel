@@ -24,6 +24,8 @@ typedef struct task {
 	uint32_t esp;          /* saved kernel stack pointer while not running */
 	uint32_t esp0;         /* kernel stack the CPU switches to on ring3 -> ring0 */
 	uint32_t guard;        /* physical/virtual address of the unmapped stack guard page */
+	uint32_t ubrk, ubrk_min; /* user program break (heap) */
+	int is_uproc;          /* a forked user process: it exits through the scheduler, not enter_user() */
 	uint32_t heap_bytes;   /* live kmalloc bytes owned by this task */
 	uint32_t pgdir;        /* physical address of this task's page directory */
 	uint32_t id;           /* process id */

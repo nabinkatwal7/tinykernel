@@ -314,3 +314,24 @@ int paging_cow_fault(uint32_t addr, uint32_t err)
 	flush_page(addr);
 	return 1;
 }
+
+void paging_destroy_user(uint32_t dir)
+{
+	uint32_t *d = (uint32_t *)dir;
+	uint32_t i, j;
+
+	if (!dir || d == kdir)
+		return;
+	for (i = 0; i < ENTRIES; i++) {
+		uint32_t *t;
+
+		if (!(d[i] & PTE_P) || (d[i] & ~0xFFFu) == (kdir[i] & ~0xFFFu))
+			continue;                      /* shared kernel table: not ours to free */
+		t = (uint32_t *)(d[i] & ~0xFFFu);
+		for (j = 0; j < ENTRIES; j++)
+			if ((t[j] & PTE_P) && (t[j] & PTE_US))
+				pmm_free(t[j] & ~0xFFFu);  /* drops our reference; the frame lives on if shared */
+		pmm_free((uint32_t)t);
+	}
+	pmm_free(dir);
+}

@@ -17,6 +17,9 @@ void user_abort(void) __attribute__((noreturn)); /* called from the fault handle
 void user_exit(int code) __attribute__((noreturn));
 int  user_is_active(void);
 struct regs;
+int  user_fork(struct regs *r);          /* child pid in the parent; the child resumes with 0 */
+void user_proc_exit(int code) __attribute__((noreturn));
+struct regs;
 int  user_spawn(const char *path, char *const *user_argv); /* run to completion, return exit code */
 int  user_exec(struct regs *r, const char *path, char *const *user_argv); /* 0 = switched, -1 = no such program */
 uint32_t user_sbrk(int32_t delta); /* grow/shrink the program heap; old break or (uint32_t)-1 */

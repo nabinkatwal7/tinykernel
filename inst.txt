@@ -1,4 +1,3 @@
-Implement real fork for user programs,
 Add demand paging for user stacks,
 Add user heap growth by page fault,
 Add shared memory between tasks,

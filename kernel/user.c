@@ -22,17 +22,16 @@
 
 static int active;
 static volatile int abort_requested;
-static uint32_t cur_frames; /* physical frames behind the running program's window */
-static uint32_t brk, brk_min; /* program break: the heap lives between the image and the stack */
 
 /* Move the break by delta bytes; returns the old break or (uint32_t)-1. */
 uint32_t user_sbrk(int32_t delta)
 {
-	uint32_t old = brk, top = USER_END - STACK_RESERVE;
+	task_t *t = task_current();
+	uint32_t old = t->ubrk, top = USER_END - STACK_RESERVE;
 
-	if (delta < 0 ? old - brk_min < (uint32_t)-delta : delta > 0 && top - old < (uint32_t)delta)
+	if (delta < 0 ? old - t->ubrk_min < (uint32_t)-delta : delta > 0 && top - old < (uint32_t)delta)
 		return (uint32_t)-1;
-	brk += (uint32_t)delta;
+	t->ubrk += (uint32_t)delta;
 	return old;
 }
 
@@ -131,9 +130,9 @@ static int load_image(const char *name, uint8_t *dst, uint32_t *size, uint32_t *
  * envp pointer arrays (NULL terminated), then envp, argv, argc - so [esp]=argc, [esp+4]=argv,
  * [esp+8]=envp. Returns the initial user esp.
  */
-static uint32_t push_args(uint32_t frames, int argc, char **argv)
+static uint32_t push_args(int argc, char **argv)
 {
-	uint32_t sp = USER_END, ptrs[ARGS_MAX + 1], eptrs[ENV_MAX + 1], base = frames - USER_BASE;
+	uint32_t sp = USER_END, ptrs[ARGS_MAX + 1], eptrs[ENV_MAX + 1];
 	uint32_t envp_va;
 	int i, nenv = env_count();
 	char entry[ENV_NAME_MAX + ENV_VAL_MAX + 2];
@@ -144,7 +143,7 @@ static uint32_t push_args(uint32_t frames, int argc, char **argv)
 		env_entry(i, entry, sizeof entry);
 		len = (uint32_t)kstrlen(entry) + 1;
 		sp -= len;
-		memcpy((void *)(base + sp), entry, len);
+		memcpy((void *)sp, entry, len);
 		eptrs[i] = sp;
 	}
 	eptrs[nenv] = 0;
@@ -153,25 +152,25 @@ static uint32_t push_args(uint32_t frames, int argc, char **argv)
 		uint32_t len = (uint32_t)kstrlen(argv[i]) + 1;
 
 		sp -= len;
-		memcpy((void *)(base + sp), argv[i], len);
+		memcpy((void *)sp, argv[i], len);
 		ptrs[i] = sp;
 	}
 	sp &= ~3u;
 	sp -= 4 * (uint32_t)(nenv + 1);
-	memcpy((void *)(base + sp), eptrs, 4 * (uint32_t)(nenv + 1));
+	memcpy((void *)sp, eptrs, 4 * (uint32_t)(nenv + 1));
 	envp_va = sp;
 	ptrs[argc] = 0;
 	sp -= 4 * (uint32_t)(argc + 1);
-	memcpy((void *)(base + sp), ptrs, 4 * (uint32_t)(argc + 1));
+	memcpy((void *)sp, ptrs, 4 * (uint32_t)(argc + 1));
 	{
 		uint32_t argv_va = sp;
 
 		sp -= 4;
-		*(uint32_t *)(base + sp) = envp_va;
+		*(uint32_t *)sp = envp_va;
 		sp -= 4;
-		*(uint32_t *)(base + sp) = argv_va;
+		*(uint32_t *)sp = argv_va;
 		sp -= 4;
-		*(uint32_t *)(base + sp) = (uint32_t)argc;
+		*(uint32_t *)sp = (uint32_t)argc;
 	}
 	return sp;
 }
@@ -214,7 +213,7 @@ int user_exec(struct regs *r, const char *path, char *const *user_argv)
 	int rc;
 
 	stage_args(path, user_argv);
-	rc = load_image(stage_path, (uint8_t *)cur_frames, &size, &entry, &image_end);
+	rc = load_image(stage_path, (uint8_t *)USER_BASE, &size, &entry, &image_end);
 	if (rc == -1)
 		return -1;
 	if (rc) {
@@ -222,8 +221,8 @@ int user_exec(struct regs *r, const char *path, char *const *user_argv)
 		user_abort();
 	}
 	file_close_all();
-	brk_min = brk = (image_end + 15) & ~15u;
-	r->useresp = push_args(cur_frames, stage_argc, stage_argv);
+	task_current()->ubrk_min = task_current()->ubrk = (image_end + 15) & ~15u;
+	r->useresp = push_args(stage_argc, stage_argv);
 	r->eip = entry;
 	r->eax = r->ebx = r->ecx = r->edx = r->esi = r->edi = r->ebp = 0;
 	klog(LOG_INFO, "user: exec '%s' (%u bytes)", stage_path, size);
@@ -242,7 +241,7 @@ extern uint32_t user_saved_esp; /* switch.S: where enter_user()/user_return() me
 int user_spawn(const char *path, char *const *user_argv)
 {
 	uint32_t size, entry = USER_BASE, image_end = USER_BASE;
-	uint32_t saved_esp = user_saved_esp, saved_brk = brk, saved_brk_min = brk_min;
+	uint32_t saved_esp = user_saved_esp, saved_brk = task_current()->ubrk, saved_brk_min = task_current()->ubrk_min;
 	uint32_t saved_esp0 = task_current()->esp0;
 	uint8_t *backup;
 	volatile int marker;
@@ -252,28 +251,28 @@ int user_spawn(const char *path, char *const *user_argv)
 	backup = kmalloc(USER_PAGES * PAGE_SIZE);
 	if (!backup)
 		return -1;
-	memcpy(backup, (void *)cur_frames, USER_PAGES * PAGE_SIZE);
+	memcpy(backup, (void *)USER_BASE, USER_PAGES * PAGE_SIZE);
 
-	rc = load_image(stage_path, (uint8_t *)cur_frames, &size, &entry, &image_end);
+	rc = load_image(stage_path, (uint8_t *)USER_BASE, &size, &entry, &image_end);
 	if (rc) {
-		memcpy((void *)cur_frames, backup, USER_PAGES * PAGE_SIZE);
+		memcpy((void *)USER_BASE, backup, USER_PAGES * PAGE_SIZE);
 		kfree(backup);
 		return rc == -1 ? -1 : -2;
 	}
 	klog(LOG_INFO, "user: spawn '%s' (%u bytes)", stage_path, size);
-	brk_min = brk = (image_end + 15) & ~15u;
+	task_current()->ubrk_min = task_current()->ubrk = (image_end + 15) & ~15u;
 
 	task_current()->esp0 = (uint32_t)&marker - 256; /* ring 3 interrupts land below this frame */
 	gdt_set_kernel_stack(task_current()->esp0);
-	rc = enter_user(entry, push_args(cur_frames, stage_argc, stage_argv));
+	rc = enter_user(entry, push_args(stage_argc, stage_argv));
 
 	task_current()->esp0 = saved_esp0;
 	gdt_set_kernel_stack(saved_esp0);
 	user_saved_esp = saved_esp;
-	memcpy((void *)cur_frames, backup, USER_PAGES * PAGE_SIZE);
+	memcpy((void *)USER_BASE, backup, USER_PAGES * PAGE_SIZE);
 	kfree(backup);
-	brk = saved_brk;
-	brk_min = saved_brk_min;
+	task_current()->ubrk = saved_brk;
+	task_current()->ubrk_min = saved_brk_min;
 	abort_requested = 0;
 	klog(LOG_INFO, "user: spawned '%s' exited with code %d", stage_path, rc);
 	return rc;
@@ -308,16 +307,18 @@ int user_run_args(const char *name, int argc, char **argv)
 		if (paging_map(udir, USER_BASE + i * PAGE_SIZE, frames + i * PAGE_SIZE,
 			       PTE_RW | PTE_US))
 			goto fail;
-	cur_frames = frames;
-	switch (load_image(name, (uint8_t *)frames, &size, &entry, &image_end)) { /* kernel writes via the identity map */
+	saved_dir = t->pgdir;
+	t->pgdir = udir;
+	paging_switch(udir);             /* from here on the window is addressed through the user mapping */
+	switch (load_image(name, (uint8_t *)USER_BASE, &size, &entry, &image_end)) {
 	case 0:
 		break;
 	case -1:
 		console_printf("no such program: %s\n", name);
-		goto fail;
+		goto fail_switched;
 	default:
 		console_printf("cannot load %s\n", name);
-		goto fail;
+		goto fail_switched;
 	}
 
 	klog(LOG_INFO, "user: running '%s' (%u bytes), entry %x", name, size, entry);
@@ -328,14 +329,11 @@ int user_run_args(const char *name, int argc, char **argv)
 	t->esp0 = esp0;
 	gdt_set_kernel_stack(esp0);
 
-	saved_dir = t->pgdir;
-	t->pgdir = udir;
-	paging_switch(udir);
 	abort_requested = 0;
 	file_reset(); /* descriptors 0-2 = console */
-	brk_min = brk = (image_end + 15) & ~15u;
+	t->ubrk_min = t->ubrk = (image_end + 15) & ~15u;
 	active = 1;
-	rc = enter_user(entry, push_args(frames, argc > ARGS_MAX ? ARGS_MAX : argc, argv));
+	rc = enter_user(entry, push_args(argc > ARGS_MAX ? ARGS_MAX : argc, argv));
 	active = 0;
 	file_close_all(); /* flush anything the program forgot to close */
 	t->pgdir = saved_dir;
@@ -343,11 +341,15 @@ int user_run_args(const char *name, int argc, char **argv)
 
 	t->esp0 = saved_esp0;
 	gdt_set_kernel_stack(saved_esp0);
-	paging_free_dir(udir);
-	pmm_free_range(frames, USER_PAGES);
+	paging_destroy_user(udir);       /* page tables and every user frame (some may be shared with forked children) */
 	klog(LOG_INFO, "user: '%s' exited with code %d", name, rc);
 	return rc;
 
+fail_switched:
+	t->pgdir = saved_dir;
+	paging_switch(saved_dir);
+	paging_destroy_user(udir);
+	return -1;
 fail:
 	if (udir)
 		paging_free_dir(udir);
@@ -358,10 +360,82 @@ fail:
 
 void user_exit(int code)
 {
+	if (task_current()->is_uproc)
+		user_proc_exit(code);
 	user_return(code);
 }
 
 void user_abort(void)
 {
+	if (task_current()->is_uproc)
+		user_proc_exit(-1);
 	user_return(-1);
+}
+
+/* ---- fork ---- */
+
+extern void jump_to_regs(struct regs *r) __attribute__((noreturn)); /* switch.S: resume user mode from a saved frame */
+
+struct fork_start {
+	struct regs regs;
+	uint32_t dir, brk, brk_min;
+};
+
+/* First code of a forked process: adopt the copied address space and "return from the fork syscall". */
+static void fork_child_main(void *arg)
+{
+	struct fork_start *fs = arg;
+	struct regs regs = fs->regs;
+	task_t *t = task_current();
+
+	t->pgdir = fs->dir;
+	t->ubrk = fs->brk;
+	t->ubrk_min = fs->brk_min;
+	t->is_uproc = 1;
+	paging_switch(fs->dir);
+	kfree(fs);
+	jump_to_regs(&regs); /* eax is already 0: this is the child */
+}
+
+/* fork(): returns the child's pid to the caller; the child resumes after the same syscall with 0. */
+int user_fork(struct regs *r)
+{
+	task_t *me = task_current(), *child;
+	struct fork_start *fs;
+	uint32_t dir;
+
+	if (!active && !me->is_uproc)
+		return -1;
+	dir = paging_fork_dir(me->pgdir);
+	fs = kmalloc(sizeof *fs);
+	if (!dir || !fs) {
+		if (dir)
+			paging_destroy_user(dir);
+		kfree(fs);
+		return -1;
+	}
+	fs->regs = *r;
+	fs->regs.eax = 0;
+	fs->dir = dir;
+	fs->brk = me->ubrk;
+	fs->brk_min = me->ubrk_min;
+	child = task_spawn("uproc", fork_child_main, fs, me->priority, TASKF_WAITABLE);
+	if (!child) {
+		paging_destroy_user(dir);
+		kfree(fs);
+		return -1;
+	}
+	return (int)child->id;
+}
+
+/* A forked process ends: release its address space and leave the scheduler with the exit code. */
+void user_proc_exit(int code)
+{
+	task_t *t = task_current();
+	uint32_t dir = t->pgdir;
+
+	t->pgdir = paging_kernel_dir();
+	paging_switch(t->pgdir);
+	paging_destroy_user(dir);
+	task_exit_with(code);
 }
