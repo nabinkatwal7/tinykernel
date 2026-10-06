@@ -4,39 +4,48 @@
 #include <stdint.h>
 
 /*
- * TinyFS: a flat, contiguous-allocation filesystem.
- *   sector 0        superblock (magic, version)
- *   sectors 1-2     directory: 32 fixed entries of 32 bytes
- *   sectors 3..     file data; every file occupies one contiguous extent
+ * TinyFS v2: contiguous-allocation files in a hierarchy of directories.
+ *   sector 0         superblock (magic, version, disk size)
+ *   sectors 1-8      entry table: 128 fixed entries of 32 bytes (files and directories)
+ *   sectors 9..      file data; every file occupies one contiguous extent
+ * An entry names its parent directory by table index (0xFF = root), so a directory is just an
+ * entry with the DIR flag and no data. Paths use '/' separators; "a/b" and "/a/b" are the same.
  */
-#define FS_NAME_MAX  20 /* including the NUL */
-#define FS_MAX_FILES 32
+#define FS_NAME_MAX  20 /* one path component, including the NUL */
+#define FS_MAX_FILES 128 /* entries in total (files + directories) */
 
 #define FS_OK        0
-#define FS_ENOENT   -1 /* no such file */
+#define FS_ENOENT   -1 /* no such file or directory */
 #define FS_EEXIST   -2
-#define FS_ENOSPC   -3 /* disk or directory full */
+#define FS_ENOSPC   -3 /* disk or entry table full */
 #define FS_EIO      -4
 #define FS_EINVAL   -5 /* bad name or argument */
 #define FS_ENOMOUNT -6 /* no disk, or disk not formatted */
 #define FS_ETOOBIG  -7 /* destination buffer too small */
+#define FS_EISDIR   -8 /* is a directory (file operation on a directory) */
+#define FS_ENOTDIR  -9 /* a path component is not a directory */
+#define FS_ENOTEMPTY -10 /* rmdir on a directory that still has entries */
 
 struct fs_stat {
 	char name[FS_NAME_MAX];
 	uint32_t size;
 	uint32_t start_lba;
 	uint32_t sectors;
+	int is_dir;
 };
 
-int         fs_mount(void);              /* reads the directory; FS_ENOMOUNT if unusable */
+int         fs_mount(void);              /* reads the table; FS_ENOMOUNT if unusable */
 int         fs_mounted(void);
 int         fs_format(void);
-int         fs_create(const char *name);
-int         fs_write(const char *name, const void *data, uint32_t size); /* create or replace */
-int         fs_read(const char *name, void *buf, uint32_t cap);          /* bytes read or error */
-int         fs_size(const char *name);   /* bytes or error */
-int         fs_delete(const char *name);
-int         fs_list(struct fs_stat *out, int max); /* number of files */
+int         fs_create(const char *path);
+int         fs_write(const char *path, const void *data, uint32_t size); /* create or replace */
+int         fs_read(const char *path, void *buf, uint32_t cap);          /* bytes read or error */
+int         fs_size(const char *path);   /* bytes (FS_EISDIR for a directory) or error */
+int         fs_stat(const char *path, struct fs_stat *st);
+int         fs_delete(const char *path); /* files only */
+int         fs_mkdir(const char *path);
+int         fs_rmdir(const char *path);  /* must be empty */
+int         fs_list(const char *dir, struct fs_stat *out, int max); /* entries in a directory */
 uint32_t    fs_free_sectors(void);
 const char *fs_strerror(int err);
 

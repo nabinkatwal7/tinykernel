@@ -40,6 +40,8 @@ Everything lives in `kernel/` (code) and `include/` (one header per module).
 
 `1 exit(code)`, `2 write(ptr,len)`, `3 putchar(c)`, `4 ticks()`, `5 getkey()`, `6 sleep(ms)`.
 
-## Disk layout (TinyFS)
+## Disk layout (TinyFS v2)
 
-Sector 0 superblock (`TFS1`), sectors 1-2 directory (32 x 32-byte entries: name[20], start, size, flags), data from sector 3. Files are contiguous; a rewrite that no longer fits is relocated first-fit.
+Sector 0 superblock (`TFS1`, version 2), sectors 1-8 the entry table (128 x 32-byte entries: name[20], start, size, flags; flags carry used/directory bits and the parent entry index), data from sector 9. Files are contiguous; a rewrite that no longer fits is relocated first-fit. Directories are entries without data, so paths like `a/b/c.txt` resolve component by component.
+
+(v1 disks - a flat directory - are not mountable; run `format` once.)

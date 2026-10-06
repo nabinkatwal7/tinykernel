@@ -39,6 +39,8 @@ struct vfs_ops {
 	int (*create)(void *ctx, const char *path);
 	int (*unlink)(void *ctx, const char *path);
 	int (*list)(void *ctx, const char *path, struct vfs_dirent *out, int max);  /* entries */
+	int (*mkdir)(void *ctx, const char *path);
+	int (*rmdir)(void *ctx, const char *path);
 };
 
 #define VFS_MAX_MOUNTS 8
@@ -58,6 +60,8 @@ int  vfs_read(const char *path, void *buf, uint32_t cap);
 int  vfs_write(const char *path, const void *data, uint32_t size);
 int  vfs_create(const char *path);
 int  vfs_unlink(const char *path);
+int  vfs_mkdir(const char *path);
+int  vfs_rmdir(const char *path);
 int  vfs_list(const char *path, struct vfs_dirent *out, int max);
 void vfs_print_mounts(void);
 int  vfs_format_mounts(char *buf, uint32_t cap);   /* text for /proc/mounts */

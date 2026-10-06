@@ -100,3 +100,9 @@ _fork_snapshot:
 fork_child_stub:
 	xorl %eax, %eax
 	ret
+
+/* GCC's stack probe for frames over 4 KiB. Kernel stacks are pre-mapped, so nothing to probe;
+   it must preserve every register. */
+.globl ___chkstk_ms
+___chkstk_ms:
+	ret

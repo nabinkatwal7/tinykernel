@@ -2,6 +2,7 @@
 
 #include "console.h"
 #include "kprintf.h"
+#include "kmalloc.h"
 #include "kstring.h"
 
 struct mount {
@@ -31,22 +32,17 @@ static void ensure_mounted(void)
 
 static int tfs_stat(void *ctx, const char *path, struct vfs_stat *st)
 {
-	int size;
+	struct fs_stat fst;
+	int rc;
 
 	(void)ctx;
 	ensure_mounted();
 	st->dev = 0;
-	path = tfs_name(path);
-	if (!*path) { /* the root directory itself */
-		st->size = 0;
-		st->is_dir = 1;
-		return FS_OK;
-	}
-	size = fs_size(path);
-	if (size < 0)
-		return size;
-	st->size = (uint32_t)size;
-	st->is_dir = 0;
+	rc = fs_stat(tfs_name(path), &fst);
+	if (rc < 0)
+		return rc;
+	st->size = fst.size;
+	st->is_dir = fst.is_dir;
 	return FS_OK;
 }
 
@@ -76,25 +72,39 @@ static int tfs_unlink(void *ctx, const char *path)
 
 static int tfs_list(void *ctx, const char *path, struct vfs_dirent *out, int max)
 {
-	struct fs_stat st[FS_MAX_FILES];
+	struct fs_stat *st = kmalloc(FS_MAX_FILES * sizeof *st);
 	int n, i;
 
 	(void)ctx;
-	if (*tfs_name(path))
-		return FS_ENOENT; /* no subdirectories */
-	n = fs_list(st, FS_MAX_FILES);
-	if (n < 0)
-		return n;
+	if (!st)
+		return FS_ENOSPC;
+	ensure_mounted();
+	n = fs_list(tfs_name(path), st, FS_MAX_FILES);
 	for (i = 0; i < n && i < max; i++) {
 		kstrlcpy(out[i].name, st[i].name, sizeof out[i].name);
 		out[i].size = st[i].size;
-		out[i].is_dir = 0;
+		out[i].is_dir = st[i].is_dir;
 	}
-	return i;
+	kfree(st);
+	return n < 0 ? n : i;
+}
+
+static int tfs_mkdir(void *ctx, const char *path)
+{
+	(void)ctx;
+	ensure_mounted();
+	return fs_mkdir(tfs_name(path));
+}
+
+static int tfs_rmdir(void *ctx, const char *path)
+{
+	(void)ctx;
+	ensure_mounted();
+	return fs_rmdir(tfs_name(path));
 }
 
 static const struct vfs_ops tinyfs_ops = {
-	"tinyfs", tfs_stat, tfs_read, tfs_write, tfs_create, tfs_unlink, tfs_list,
+	"tinyfs", tfs_stat, tfs_read, tfs_write, tfs_create, tfs_unlink, tfs_list, tfs_mkdir, tfs_rmdir,
 };
 
 /* ---- mount table ---- */
@@ -232,6 +242,24 @@ int vfs_unlink(const char *path)
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 
 	return m && m->ops->unlink ? m->ops->unlink(m->ctx, rest) : FS_ENOENT;
+}
+
+int vfs_mkdir(const char *path)
+{
+	char full[64];
+	const char *rest;
+	struct mount *m = lookup(path, full, sizeof full, &rest);
+
+	return m && m->ops->mkdir ? m->ops->mkdir(m->ctx, rest) : FS_EINVAL;
+}
+
+int vfs_rmdir(const char *path)
+{
+	char full[64];
+	const char *rest;
+	struct mount *m = lookup(path, full, sizeof full, &rest);
+
+	return m && m->ops->rmdir ? m->ops->rmdir(m->ctx, rest) : FS_EINVAL;
 }
 
 int vfs_list(const char *path, struct vfs_dirent *out, int max)

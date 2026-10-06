@@ -1188,6 +1188,37 @@ static int cmd_fstest(int argc, char **argv)
 	CHECK(fs_delete("__fstest2") == FS_OK, "delete file 2");
 	CHECK(fs_size("__fstest2") == FS_ENOENT, "deleted file is gone");
 
+	/* directories */
+	{
+		struct fs_stat ent[8];
+		int n;
+
+		CHECK(fs_mkdir("__d1") == FS_OK, "mkdir");
+		CHECK(fs_mkdir("__d1") == FS_EEXIST, "mkdir twice fails");
+		CHECK(fs_mkdir("__d1/sub") == FS_OK, "nested mkdir");
+		CHECK(fs_mkdir("__nodir/x") == FS_ENOENT, "mkdir under a missing directory fails");
+		CHECK(fs_write("__d1/f.txt", "in dir", 6) == FS_OK, "write inside a directory");
+		CHECK(fs_write("__d1/sub/g", "deep", 4) == FS_OK, "write two levels down");
+		rc = fs_read("/__d1/f.txt", back, sizeof back);
+		CHECK(rc == 6 && !memcmp(back, "in dir", 6), "read with a leading slash");
+		rc = fs_read("__d1//sub/g", back, sizeof back);
+		CHECK(rc == 4 && !memcmp(back, "deep", 4), "read through a nested path");
+		CHECK(fs_write("__d1/f.txt/x", "z", 1) == FS_ENOTDIR, "a file is not a directory");
+		CHECK(fs_write("__d1", "z", 1) == FS_EISDIR, "cannot write a directory as a file");
+		CHECK(fs_size("__d1") == FS_EISDIR, "size of a directory");
+		n = fs_list("__d1", ent, 8);
+		CHECK(n == 2, "directory lists its two children");
+		CHECK(fs_write("f.txt", "root copy", 9) == FS_OK, "same name in the root is separate");
+		rc = fs_read("__d1/f.txt", back, sizeof back);
+		CHECK(rc == 6, "the two f.txt files do not collide");
+		CHECK(fs_delete("f.txt") == FS_OK, "delete the root copy");
+		CHECK(fs_rmdir("__d1") == FS_ENOTEMPTY, "rmdir refuses a non-empty directory");
+		CHECK(fs_rmdir("__d1/f.txt") == FS_ENOTDIR, "rmdir on a file fails");
+		CHECK(fs_delete("__d1/sub/g") == FS_OK && fs_delete("__d1/f.txt") == FS_OK, "empty it");
+		CHECK(fs_rmdir("__d1/sub") == FS_OK && fs_rmdir("__d1") == FS_OK, "rmdir bottom-up");
+		CHECK(fs_size("__d1/f.txt") == FS_ENOENT, "everything is gone");
+	}
+
 	if (fails)
 		console_printf("fstest: %d check(s) failed\n", fails);
 	else
