@@ -24,6 +24,7 @@
 #include "rtc.h"
 #include "sched.h"
 #include "slab.h"
+#include "speaker.h"
 #include "sync.h"
 #include "timer.h"
 #include "user.h"
@@ -1755,6 +1756,43 @@ static int cmd_guidemo(int argc, char **argv)
 	return 0;
 }
 
+/* beep [freq_hz] [ms] | beep tune | beep off | beep status */
+static int cmd_beep(int argc, char **argv)
+{
+	static const struct { uint32_t hz, ms; } tune[] = {
+		{ 262, 200 }, { 294, 200 }, { 330, 200 }, { 349, 200 }, { 392, 400 }, { 392, 400 },
+		{ 440, 200 }, { 440, 200 }, { 440, 200 }, { 440, 200 }, { 392, 800 },
+	};
+	uint32_t hz = 880, ms = 200;
+	unsigned i;
+
+	if (argc > 1 && !kstrcmp(argv[1], "tune")) {
+		for (i = 0; i < sizeof tune / sizeof tune[0] && !shell_interrupted(); i++) {
+			speaker_beep(tune[i].hz, tune[i].ms);
+			task_sleep(30);
+		}
+		return 0;
+	}
+	if (argc > 1 && !kstrcmp(argv[1], "off")) {
+		speaker_off();
+		return 0;
+	}
+	if (argc > 1 && !kstrcmp(argv[1], "status")) {
+		console_printf("speaker is %s", speaker_is_on() ? "on" : "off");
+		if (speaker_is_on())
+			console_printf(" (%u Hz)", speaker_freq());
+		console_putchar('\n');
+		return 0;
+	}
+	if ((argc > 1 && kstrtoul(argv[1], &hz)) || (argc > 2 && kstrtoul(argv[2], &ms)) || hz < 20 || hz > 20000
+	    || ms > 10000) {
+		console_write("usage: beep [20-20000 Hz] [ms <= 10000] | beep tune | beep off | beep status\n");
+		return 1;
+	}
+	speaker_beep(hz, ms);
+	return 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -2272,6 +2310,7 @@ static const struct command commands[] = {
 	{ "gfxmode", "gfxmode on|off",       "run the console on the graphics screen", cmd_gfxmode },
 	{ "wmdemo",  "wmdemo",                "window manager demo (mouse)", cmd_wmdemo },
 	{ "guidemo", "guidemo",              "button widget demo (mouse)", cmd_guidemo },
+	{ "beep",    "beep [hz] [ms]",        "PC speaker: tone, tune, off, status", cmd_beep },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },
