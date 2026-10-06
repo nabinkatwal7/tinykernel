@@ -1,4 +1,3 @@
-Write ELF loader for user programs,
 Add argument passing to programs,
 Add environment variables,
 Add user-space C runtime,

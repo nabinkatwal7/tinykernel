@@ -24,7 +24,7 @@ S_SRCS  := $(wildcard kernel/*.S)
 OBJS    := $(patsubst kernel/%.c,$(BUILD)/%.o,$(C_SRCS)) \
            $(patsubst kernel/%.S,$(BUILD)/%.o,$(S_SRCS))
 HEADERS := $(wildcard include/*.h)
-USER_BINS := $(BUILD)/hello.bin $(BUILD)/counter.bin $(BUILD)/fault.bin $(BUILD)/evil.bin $(BUILD)/spin.bin
+USER_BINS := $(BUILD)/hello.bin $(BUILD)/counter.bin $(BUILD)/fault.bin $(BUILD)/evil.bin $(BUILD)/spin.bin $(BUILD)/helloelf.elf
 
 # Headless run: serial log to build/serial.log, no window.
 QEMU_DISKS := -drive format=raw,file=$(IMAGE),if=floppy \
@@ -44,6 +44,12 @@ $(BUILD)/builtin.o: $(USER_BINS)
 
 $(BUILD)/%.bin: user/%.asm | $(BUILD)
 	$(NASM) -f bin $< -o $@
+
+# ELF user programs: assemble to COFF, link at the user address as PE, convert to ELF.
+$(BUILD)/%.elf: user/%.asm user/user.ld | $(BUILD)
+	$(NASM) -f win32 $< -o $(BUILD)/$*.uo
+	$(LD) -m i386pe -T user/user.ld -nostdlib -o $(BUILD)/$*.upe $(BUILD)/$*.uo
+	$(OBJCOPY) -O elf32-i386 $(BUILD)/$*.upe $@
 
 $(BUILD)/kernel.pe: $(OBJS) kernel/linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)
@@ -81,4 +87,4 @@ clean-disk:
 	rm -f $(DISK)
 
 clean:
-	rm -f $(BUILD)/*.o $(BUILD)/*.pe $(BUILD)/*.bin $(BUILD)/kernel.elf
+	rm -f $(BUILD)/*.o $(BUILD)/*.pe $(BUILD)/*.bin $(BUILD)/*.elf $(BUILD)/*.uo $(BUILD)/*.upe

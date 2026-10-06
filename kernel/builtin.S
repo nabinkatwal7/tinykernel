@@ -24,3 +24,8 @@ _builtin_evil_end:
 _builtin_spin_start:
 	.incbin "build/spin.bin"
 _builtin_spin_end:
+
+.globl _builtin_helloelf_start, _builtin_helloelf_end
+_builtin_helloelf_start:
+	.incbin "build/helloelf.elf"
+_builtin_helloelf_end:

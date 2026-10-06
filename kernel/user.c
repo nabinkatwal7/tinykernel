@@ -1,10 +1,12 @@
 #include "user.h"
 
 #include "console.h"
+#include "elf.h"
 #include "fs.h"
 #include "gdt.h"
 #include "io.h"
 #include "klog.h"
+#include "kmalloc.h"
 #include "kmalloc.h"
 #include "kstring.h"
 #include "paging.h"
@@ -17,6 +19,7 @@ extern const uint8_t builtin_counter_start[], builtin_counter_end[];
 extern const uint8_t builtin_fault_start[], builtin_fault_end[];
 extern const uint8_t builtin_evil_start[], builtin_evil_end[];
 extern const uint8_t builtin_spin_start[], builtin_spin_end[];
+extern const uint8_t builtin_helloelf_start[], builtin_helloelf_end[];
 
 struct builtin {
 	const char *name;
@@ -29,6 +32,7 @@ static const struct builtin builtins[] = {
 	{ "fault",   builtin_fault_start,   builtin_fault_end },
 	{ "evil",    builtin_evil_start,    builtin_evil_end },
 	{ "spin",    builtin_spin_start,    builtin_spin_end },
+	{ "helloelf", builtin_helloelf_start, builtin_helloelf_end },
 };
 #define NBUILTIN (sizeof builtins / sizeof builtins[0])
 
@@ -70,40 +74,63 @@ int user_install_builtin(const char *name)
 	return FS_ENOENT;
 }
 
-/* Copy a program image to USER_BASE. Looks on disk first, then in the built-in table. */
-static int load_image(const char *name, uint8_t *dst, uint32_t *size)
+#define STACK_RESERVE (16 * 1024) /* top of the window is the stack; programs may not load there */
+
+/*
+ * Find the program (disk first, then built-ins), then place it in the program window: ELF files
+ * are loaded segment by segment, anything else is treated as a flat binary linked at USER_BASE.
+ * Returns 0 and the entry point, or a negative value (-1 not found, -2 bad/too big image).
+ */
+static int load_image(const char *name, uint8_t *dst, uint32_t *size, uint32_t *entry)
 {
+	const uint8_t *img = 0;
+	uint8_t *heap_copy = 0;
+	uint32_t len = 0, limit = USER_PAGES * PAGE_SIZE - STACK_RESERVE;
 	unsigned i;
-	int n;
+	int n, rc = 0;
 
 	memset(dst, 0, USER_PAGES * PAGE_SIZE);
 
-	if (fs_mounted()) {
-		n = fs_size(name);
-		if (n >= 0) {
-			if ((uint32_t)n > USER_PAGES * PAGE_SIZE / 2)
-				return -1;
-			n = fs_read(name, dst, (uint32_t)n);
-			if (n >= 0) {
-				*size = (uint32_t)n;
-				return 0;
-			}
-			return -1;
+	if (fs_mounted() && (n = fs_size(name)) >= 0) {
+		if (n == 0 || (uint32_t)n > 256 * 1024)
+			return -2;
+		heap_copy = kmalloc((size_t)n);
+		if (!heap_copy)
+			return -2;
+		if (fs_read(name, heap_copy, (uint32_t)n) < 0) {
+			kfree(heap_copy);
+			return -2;
 		}
+		img = heap_copy;
+		len = (uint32_t)n;
 	}
-	for (i = 0; i < NBUILTIN; i++) {
+	for (i = 0; !img && i < NBUILTIN; i++) {
 		if (!kstrcmp(builtins[i].name, name)) {
-			*size = (uint32_t)(builtins[i].end - builtins[i].start);
-			memcpy(dst, builtins[i].start, *size);
-			return 0;
+			img = builtins[i].start;
+			len = (uint32_t)(builtins[i].end - builtins[i].start);
 		}
 	}
-	return -1;
+	if (!img)
+		return -1;
+
+	if (elf_is_elf(img, len)) {
+		rc = elf_load(img, len, dst, USER_BASE, limit, entry);
+		if (rc)
+			console_printf("bad ELF image (error %d)\n", rc);
+	} else if (len > limit) {
+		rc = -2;
+	} else {
+		memcpy(dst, img, len);
+		*entry = USER_BASE;
+	}
+	*size = len;
+	kfree(heap_copy);
+	return rc ? -2 : 0;
 }
 
 int user_run(const char *name)
 {
-	uint32_t size, esp0, saved_esp0, frames = 0, udir = 0, saved_dir, i;
+	uint32_t size, entry = USER_BASE, esp0, saved_esp0, frames = 0, udir = 0, saved_dir, i;
 	volatile int marker;
 	task_t *t = task_current();
 	int rc;
@@ -123,12 +150,18 @@ int user_run(const char *name)
 		if (paging_map(udir, USER_BASE + i * PAGE_SIZE, frames + i * PAGE_SIZE,
 			       PTE_RW | PTE_US))
 			goto fail;
-	if (load_image(name, (uint8_t *)frames, &size)) { /* kernel writes via the identity map */
+	switch (load_image(name, (uint8_t *)frames, &size, &entry)) { /* kernel writes via the identity map */
+	case 0:
+		break;
+	case -1:
 		console_printf("no such program: %s\n", name);
+		goto fail;
+	default:
+		console_printf("cannot load %s\n", name);
 		goto fail;
 	}
 
-	klog(LOG_INFO, "user: running '%s' (%u bytes) at %x", name, size, USER_BASE);
+	klog(LOG_INFO, "user: running '%s' (%u bytes), entry %x", name, size, entry);
 
 	/* Ring 3 interrupts must land below the kernel frames we are standing in. */
 	esp0 = (uint32_t)&marker - 256;
@@ -141,7 +174,7 @@ int user_run(const char *name)
 	paging_switch(udir);
 	abort_requested = 0;
 	active = 1;
-	rc = enter_user(USER_BASE, USER_END - 16);
+	rc = enter_user(entry, USER_END - 16);
 	active = 0;
 	t->pgdir = saved_dir;
 	paging_switch(saved_dir);
