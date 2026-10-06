@@ -1,4 +1,3 @@
-Implement producer-consumer demo,
 Add task priorities with aging,
 Add task states and wait reasons,
 Implement process IDs and parent links,

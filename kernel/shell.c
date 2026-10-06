@@ -647,6 +647,82 @@ static int cmd_spintest(int argc, char **argv)
 	return fails != 0;
 }
 
+/* ---- producer/consumer over a bounded ring buffer: mutex + two counting semaphores ---- */
+#define PC_SLOTS 4
+#define PC_ITEMS 10 /* per producer */
+
+static int pc_buf[PC_SLOTS];
+static int pc_in, pc_out;
+static mutex_t pc_lock = MUTEX_INIT;
+static sem_t pc_empty, pc_full;
+static volatile uint32_t pc_sum_in, pc_sum_out, pc_count_out;
+
+static void producer(void *arg)
+{
+	int id = (int)arg, i;
+
+	for (i = 1; i <= PC_ITEMS; i++) {
+		int item = id * 100 + i;
+
+		sem_wait(&pc_empty);            /* wait for a free slot */
+		mutex_lock(&pc_lock);
+		pc_buf[pc_in] = item;
+		pc_in = (pc_in + 1) % PC_SLOTS;
+		pc_sum_in += (uint32_t)item;
+		mutex_unlock(&pc_lock);
+		sem_post(&pc_full);
+		console_printf("[producer %d] put %d\n", id, item);
+		task_sleep(20 * (uint32_t)id);
+	}
+	test_done++;
+}
+
+static void consumer(void *arg)
+{
+	int id = (int)arg;
+
+	for (;;) {
+		int item;
+
+		sem_wait(&pc_full);             /* wait for data */
+		mutex_lock(&pc_lock);
+		item = pc_buf[pc_out];
+		pc_out = (pc_out + 1) % PC_SLOTS;
+		pc_sum_out += (uint32_t)item;
+		pc_count_out++;
+		mutex_unlock(&pc_lock);
+		sem_post(&pc_empty);
+		console_printf("    [consumer %d] got %d\n", id, item);
+		task_sleep(50);
+	}
+}
+
+static int cmd_prodcons(int argc, char **argv)
+{
+	task_t *c1, *c2;
+	int ok;
+
+	(void)argc;
+	(void)argv;
+	pc_in = pc_out = 0;
+	pc_sum_in = pc_sum_out = pc_count_out = 0;
+	test_done = 0;
+	sem_init(&pc_empty, PC_SLOTS);
+	sem_init(&pc_full, 0);
+	c1 = task_create("consumer1", consumer, (void *)1, 1);
+	c2 = task_create("consumer2", consumer, (void *)2, 1);
+	task_create("producer1", producer, (void *)1, 1);
+	task_create("producer2", producer, (void *)2, 1);
+	while (test_done < 2 || pc_count_out < 2 * PC_ITEMS)
+		task_sleep(50);
+	task_kill(c1->id); /* consumers loop forever; stop them (they are blocked or sleeping) */
+	task_kill(c2->id);
+	ok = pc_sum_in == pc_sum_out && pc_count_out == 2 * PC_ITEMS;
+	console_printf("produced sum %u, consumed sum %u, items %u: %s\n", pc_sum_in, pc_sum_out,
+		       pc_count_out, ok ? "ok" : "FAILED");
+	return !ok;
+}
+
 static int cmd_kill(int argc, char **argv)
 {
 	uint32_t id;
@@ -1103,6 +1179,7 @@ static const struct command commands[] = {
 	{ "mutextest", "mutextest",           "race with/without a mutex", cmd_mutextest },
 	{ "semtest", "semtest",             "semaphore limits concurrency", cmd_semtest },
 	{ "spintest", "spintest",             "spinlock IRQ-safety self-test", cmd_spintest },
+	{ "prodcons", "prodcons",             "producer/consumer demo", cmd_prodcons },
 	{ "kill",  "kill <id>",             "stop a task", cmd_kill },
 	{ "ls",      "ls",                    "list files", cmd_ls },
 	{ "cat",     "cat <file>",            "print a file", cmd_cat },
