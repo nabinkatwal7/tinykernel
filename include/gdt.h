@@ -13,6 +13,7 @@
 /* Flat 4 GiB segments for ring 0 and ring 3, plus a TSS for the ring3->ring0 stack switch. */
 void gdt_init(void);
 void gdt_set_kernel_stack(uint32_t esp0);
+void gdt_load_current(void);      /* lgdt + reload segments on the calling core (used by application processors) */
 void gdt_set_df_cr3(uint32_t cr3); /* the double-fault task needs the kernel page directory */
 
 #endif

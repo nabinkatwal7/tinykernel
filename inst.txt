@@ -1,4 +1,3 @@
-Start second CPU core,
 Add SMP-safe spinlocks,
 Run scheduler on multiple cores,
 Add CPU load statistics,

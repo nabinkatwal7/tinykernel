@@ -88,6 +88,11 @@ void double_fault_task(void)
 		__asm__ volatile ("cli; hlt");
 }
 
+void idt_load(void)
+{
+	__asm__ volatile ("lidt %0" : : "m"(ip));
+}
+
 void irq_install_handler(int irq, irq_handler_t h)
 {
 	handlers[irq] = h;

@@ -56,6 +56,11 @@ $(BUILD)/%.o: kernel/%.S | $(BUILD)
 $(BUILD)/progs_gen.c: tools/genprogs.sh Makefile $(USER_BINS) | $(BUILD)
 	sh tools/genprogs.sh $@ $(PROG_IMAGES)
 
+$(BUILD)/ap_tramp.bin: kernel/ap_tramp.asm | $(BUILD)
+	$(NASM) -f bin $< -o $@
+
+$(BUILD)/ap_data.o: $(BUILD)/ap_tramp.bin
+
 $(BUILD)/progs_gen.o: $(BUILD)/progs_gen.c $(HEADERS) $(USER_BINS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
