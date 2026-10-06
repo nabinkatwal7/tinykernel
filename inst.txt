@@ -1,4 +1,3 @@
-Add simple HTTP server,
 Add tiny telnet-like server,
 Add NTP time sync client,
 Add network statistics command,

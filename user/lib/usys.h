@@ -30,6 +30,7 @@
 #define SYS_RESOLVE 47
 #define SOCK_STREAM 1
 #define SOCK_DGRAM  2
+#define SYS_DIRLIST 48
 #define SYS_FLOCK   39
 #define LOCK_SH 1
 #define LOCK_EX 2
@@ -155,6 +156,7 @@ static inline int   recvfrom(int fd, void *buf, int cap, unsigned *ip, unsigned 
 	return syscall3(SYS_RECVFROM, fd, (int)a, 0);
 }
 static inline int   resolve(const char *name, unsigned *ip) { return syscall3(SYS_RESOLVE, (int)name, (int)ip, 0); }
+static inline int   dirlist(const char *path, char *buf, int cap) { return syscall3(SYS_DIRLIST, (int)path, (int)buf, cap); }
 static inline int   flock(int fd, int op)          { return syscall3(SYS_FLOCK, fd, op, 0); }
 static inline int   gfx(int op, const int *args)     { return syscall3(SYS_GFX, op, (int)args, 0); }
 static inline int   gfx_enter(void)                 { int a[6] = { 0 }; return gfx(GFX_ENTER, a); }

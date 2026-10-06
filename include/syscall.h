@@ -48,6 +48,7 @@
 #define SYS_SENDTO  45 /* ebx = socket, ecx = struct { buf, len, ip, port } */
 #define SYS_RECVFROM 46 /* ebx = socket, ecx = struct { buf, cap, uint32 *ip, uint32 *port }; the last two may be NULL */
 #define SYS_RESOLVE 47 /* ebx = host name, ecx = uint32 receiving the address */
+#define SYS_DIRLIST 48 /* ebx = path, ecx = buffer, edx = size: one "name size d|f" line per entry; returns the byte count or a negative error */
 #define SYS_FLOCK   39 /* ebx = fd, ecx = LOCK_SH / LOCK_EX / LOCK_UN, optionally | LOCK_NB */
 #define SYS_GFX     38 /* ebx = operation, ecx = int[6] of arguments: the 320x200 graphics screen (see GFX_* below) */
 #define GFX_ENTER   0  /* switch to graphics mode */

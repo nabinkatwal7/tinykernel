@@ -13,6 +13,8 @@
 #include "shm.h"
 #include "sock.h"
 #include "timer.h"
+#include "kmalloc.h"
+#include "kprintf.h"
 #include "kstring.h"
 #include "user.h"
 #include "vfs.h"
@@ -283,6 +285,39 @@ void syscall_dispatch(struct regs *r)
 		r->eax = (uint32_t)sock_resolve((const char *)r->ebx, &ip);
 		if (!r->eax)
 			*(uint32_t *)r->ecx = ip;
+		break;
+	}
+	case SYS_DIRLIST: {
+		struct vfs_dirent *ent;
+		uint32_t n = 0;
+		int count, i;
+
+		if (!user_str_ok(r->ebx) || !user_ptr_ok(r->ecx, r->edx) || !r->edx) {
+			r->eax = (uint32_t)-1;
+			break;
+		}
+		ent = kmalloc(sizeof *ent * FS_MAX_FILES);
+		if (!ent) {
+			r->eax = (uint32_t)FS_ENOSPC;
+			break;
+		}
+		count = vfs_list((const char *)r->ebx, ent, FS_MAX_FILES);
+		if (count < 0) {
+			r->eax = (uint32_t)count;
+			kfree(ent);
+			break;
+		}
+		for (i = 0; i < count; i++) {
+			char line[VFS_NAME_MAX + 24];
+			int len = ksnprintf(line, sizeof line, "%s %u %c\n", ent[i].name, ent[i].size, ent[i].is_dir ? 'd' : 'f');
+
+			if (n + (uint32_t)len > r->edx)
+				break;
+			memcpy((char *)r->ecx + n, line, (size_t)len);
+			n += (uint32_t)len;
+		}
+		kfree(ent);
+		r->eax = n;
 		break;
 	}
 	case SYS_FLOCK:
