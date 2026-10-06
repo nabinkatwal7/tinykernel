@@ -44,7 +44,7 @@ At the `tiny>` prompt try `help`, or just `demo`.
 
 ## Shell commands
 
-`help clear version echo ticks uptime sleep meminfo memtest hexdump dmesg ps spawn kill ls cat write touch rm format fstest disk install run history color contest demo reboot halt`
+`help clear version echo date time ticks uptime sleep meminfo memtest heapcheck hog unhog slabinfo slabtest pgtest vmap vunmap vtrans hexdump dmesg ps spawn overflow kill ls cat write touch rm format fstest disk install run history color contest demo reboot halt`
 
 Files need a formatted disk: run `format` once. `install` lists the built-in user programs (`hello`, `counter`, `fault`); `run hello` executes one in ring 3.
 
