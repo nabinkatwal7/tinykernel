@@ -548,6 +548,11 @@ uint32_t sched_newest_job(void)
 	return best;
 }
 
+uint32_t sched_idle_ticks(void)
+{
+	return idle ? idle->cpu_ticks : 0;
+}
+
 task_t *task_current(void)
 {
 	return current;

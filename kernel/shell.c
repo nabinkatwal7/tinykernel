@@ -8,6 +8,7 @@
 #include "cmdline.h"
 #include "clock.h"
 #include "console.h"
+#include "cpustat.h"
 #include "cpu.h"
 #include "debug.h"
 #include "dhcp.h"
@@ -2423,6 +2424,20 @@ static int cmd_nsleeptest(int argc, char **argv)
 	return fails != 0;
 }
 
+static int cmd_load(int argc, char **argv)
+{
+	int i;
+
+	(void)argc;
+	(void)argv;
+	console_printf("CPU load (busy %%) after %u s of sampling\n", cpustat_samples());
+	console_write("CPU   1s    5s    15s   60s\n");
+	for (i = 0; i < percpu_count(); i++)
+		console_printf("%-5d %3u%%  %3u%%  %3u%%  %3u%%\n", i, cpustat_busy_percent(i, 1), cpustat_busy_percent(i, 5),
+			       cpustat_busy_percent(i, 15), cpustat_busy_percent(i, 60));
+	return 0;
+}
+
 static int cmd_cpus(int argc, char **argv)
 {
 	int i;
@@ -2984,6 +2999,7 @@ static const struct command commands[] = {
 	{ "hrtime",  "hrtime",                "high-resolution clock self-test", cmd_hrtime },
 	{ "nsleeptest", "nsleeptest",           "nanosecond sleep self-test", cmd_nsleeptest },
 	{ "cpus",    "cpus",                  "per-CPU table", cmd_cpus },
+	{ "load",    "load",                  "CPU busy percentages", cmd_load },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },

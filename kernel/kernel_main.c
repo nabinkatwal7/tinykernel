@@ -6,6 +6,7 @@
 #include "bcache.h"
 #include "cmdline.h"
 #include "console.h"
+#include "cpustat.h"
 #include "cpu.h"
 #include "fat12.h"
 #include "fs.h"
@@ -84,6 +85,7 @@ void kernel_main(void)
 		apic_timer_start(100);
 	hrtime_init();
 	percpu_init();
+	cpustat_init();
 	clock_init();
 	pci_scan();
 	vfs_init();
