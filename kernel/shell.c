@@ -3946,6 +3946,8 @@ static const struct command commands[] = {
 	{ "functions", "functions",           "list shell functions", cmd_functions },
 	{ "grep",    "grep [-ivnc] pat [file]", "print lines that contain pat", tu_grep },
 	{ "wc",      "wc [-lwc] [file...]",   "count lines, words and bytes", tu_wc },
+	{ "head",    "head [-n N] [file]",    "first lines of a file", tu_head },
+	{ "tail",    "tail [-n N] [file]",    "last lines of a file", tu_tail },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },

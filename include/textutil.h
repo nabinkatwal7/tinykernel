@@ -9,4 +9,7 @@ int tu_grep(int argc, char **argv);   /* grep [-ivnc] pattern [file...]  ('^' an
 
 int tu_wc(int argc, char **argv);     /* wc [-lwc] [file...]: lines, words and bytes */
 
+int tu_head(int argc, char **argv);   /* head [-n N] [file...]: the first N lines (10) */
+int tu_tail(int argc, char **argv);   /* tail [-n N] [file...]: the last N lines (10) */
+
 #endif

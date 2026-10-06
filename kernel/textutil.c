@@ -250,3 +250,86 @@ int tu_wc(int argc, char **argv)
 	}
 	return rc;
 }
+
+/* Parses "-n N" / "-N" at argv[*a]; leaves the line count in *n. 0 on success. */
+static int parse_count(int argc, char **argv, int *a, uint32_t *n, const char *cmd)
+{
+	*n = 10;
+	while (*a < argc && argv[*a][0] == '-' && argv[*a][1]) {
+		const char *num = argv[*a] + 1;
+
+		if (!kstrcmp(argv[*a], "-n")) {
+			if (*a + 1 >= argc)
+				return 1;
+			num = argv[++*a];
+		}
+		if (kstrtoul(num, n)) {
+			console_printf("%s: bad line count '%s'\n", cmd, num);
+			return 1;
+		}
+		(*a)++;
+	}
+	return 0;
+}
+
+static void write_text(const char *s, uint32_t len)
+{
+	uint32_t i;
+
+	for (i = 0; i < len; i++)
+		console_putchar(s[i]);
+}
+
+/* head -n N / tail -n N over each input; 'last' selects tail. */
+static int head_or_tail(int argc, char **argv, int last)
+{
+	int a = 1, nfiles, f, rc = 0;
+	uint32_t n;
+
+	if (parse_count(argc, argv, &a, &n, last ? "tail" : "head"))
+		return 2;
+	nfiles = argc - a;
+	for (f = 0; f < (nfiles ? nfiles : 1); f++) {
+		const char *name = nfiles ? argv[a + f] : 0;
+		struct text t;
+		uint32_t i, seen = 0;
+
+		if (load_text(name, &t)) {
+			rc = 1;
+			continue;
+		}
+		if (nfiles > 1)
+			console_printf("%s==> %s <==\n", f ? "\n" : "", name);
+		if (!last) {
+			for (i = 0; i < t.len && seen < n; i++) {
+				console_putchar(t.data[i]);
+				if (t.data[i] == '\n')
+					seen++;
+			}
+		} else {
+			uint32_t end = t.len, start = end;
+
+			if (end && t.data[end - 1] == '\n')
+				end--; /* the final newline ends the last line, it does not start another */
+			for (start = end; start > 0; start--) {
+				if (t.data[start - 1] == '\n' && ++seen >= n)
+					break;
+			}
+			if (!n)
+				start = t.len;
+			write_text(t.data + start, t.len - start);
+		}
+		kfree(t.data);
+	}
+	return rc;
+}
+
+int tu_head(int argc, char **argv)
+{
+	return head_or_tail(argc, argv, 0);
+}
+
+int tu_tail(int argc, char **argv)
+{
+	return head_or_tail(argc, argv, 1);
+}
