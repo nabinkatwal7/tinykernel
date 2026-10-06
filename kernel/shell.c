@@ -3,6 +3,7 @@
 #include "ata.h"
 #include "console.h"
 #include "debug.h"
+#include "editor.h"
 #include "env.h"
 #include "fs.h"
 #include "io.h"
@@ -1280,6 +1281,17 @@ static int cmd_df(int argc, char **argv)
 	return 0;
 }
 
+static int cmd_edit(int argc, char **argv)
+{
+	if (argc != 2) {
+		console_write("usage: edit <file>   (^S save, ^Q quit)\n");
+		return 1;
+	}
+	if (need_fs())
+		return 1;
+	return editor_run(argv[1]);
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -1781,6 +1793,7 @@ static const struct command commands[] = {
 	{ "cp",      "cp <src> <dst>",        "copy a file", cmd_cp },
 	{ "stat",    "stat <path>",           "show file information", cmd_stat },
 	{ "df",      "df",                    "disk space usage", cmd_df },
+	{ "edit",    "edit <file>",           "full-screen text editor", cmd_edit },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },

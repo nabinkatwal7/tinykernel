@@ -119,6 +119,25 @@ void console_write(const char *s)
 		console_putchar(*s++);
 }
 
+void console_putat(int x, int y, char c, uint8_t a)
+{
+	if (x < 0 || x >= VGA_WIDTH || y < 0 || y >= VGA_HEIGHT)
+		return;
+	VGA_ADDR[y * VGA_WIDTH + x] = (unsigned short)((unsigned char)c | (a << 8));
+}
+
+void console_set_hw_cursor(int x, int y)
+{
+	unsigned short pos = (unsigned short)(y * VGA_WIDTH + x);
+	uint32_t f = irq_save();
+
+	outb(0x3D4, 0x0F);
+	outb(0x3D5, (uint8_t)(pos & 0xFF));
+	outb(0x3D4, 0x0E);
+	outb(0x3D5, (uint8_t)(pos >> 8));
+	irq_restore(f);
+}
+
 void console_set_color(uint8_t fg, uint8_t bg)
 {
 	attr = (uint8_t)((bg << 4) | (fg & 0x0F));

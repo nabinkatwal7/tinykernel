@@ -27,4 +27,11 @@ void console_printf(const char *fmt, ...);
 void console_set_color(uint8_t fg, uint8_t bg);
 void console_status(const char *text); /* paints the reserved top row */
 
+/* Direct cell access for full-screen programs (the editor). Rows 1-24, columns 0-79. */
+#define CONSOLE_COLS 80
+#define CONSOLE_FIRST_ROW 1
+#define CONSOLE_LAST_ROW 24
+void console_putat(int x, int y, char c, uint8_t attr);
+void console_set_hw_cursor(int x, int y);   /* move the blinking cursor without touching the text cursor */
+
 #endif
