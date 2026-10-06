@@ -25,6 +25,7 @@
 #include "sync.h"
 #include "timer.h"
 #include "user.h"
+#include "vga.h"
 #include "vfs.h"
 #include "version.h"
 
@@ -1499,6 +1500,38 @@ static int cmd_mouse(int argc, char **argv)
 	return 0;
 }
 
+/* gfx: switch to 320x200x256, draw a test card, wait for a key, switch back. */
+static int cmd_gfx(int argc, char **argv)
+{
+	uint8_t *fb;
+	int x, y;
+
+	(void)argc;
+	(void)argv;
+	if (vga_set_graphics()) {
+		console_write("gfx: cannot enter graphics mode\n");
+		return 1;
+	}
+	fb = vga_framebuffer();
+	for (y = 0; y < VGA_GFX_H; y++) {
+		for (x = 0; x < VGA_GFX_W; x++) {
+			uint8_t c;
+
+			if (y < 40)
+				c = (uint8_t)(x * 16 / VGA_GFX_W);                 /* the 16 text colours */
+			else if (y < 80)
+				c = (uint8_t)(16 + x * 16 / VGA_GFX_W);            /* grey ramp */
+			else
+				c = (uint8_t)(32 + ((x * 216 / VGA_GFX_W) + (y - 80) / 20 * 36) % 216); /* colour cube */
+			fb[y * VGA_GFX_W + x] = c;
+		}
+	}
+	keyboard_getkey();
+	vga_set_text();
+	console_clear();
+	return 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -2009,6 +2042,7 @@ static const struct command commands[] = {
 	{ "lspci",   "lspci [-v]",            "list PCI devices", cmd_lspci },
 	{ "cpuinfo", "cpuinfo",               "CPU identification and speed", cmd_cpuinfo },
 	{ "mouse",   "mouse",                 "PS/2 mouse position and buttons", cmd_mouse },
+	{ "gfx",     "gfx",                   "graphics mode test card", cmd_gfx },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },
