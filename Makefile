@@ -5,7 +5,7 @@ NASM    := nasm
 QEMU    := qemu-system-i386
 
 CFLAGS  := -m32 -ffreestanding -fno-builtin -fno-stack-protector \
-           -fno-pic -fno-pie -fno-asynchronous-unwind-tables \
+           -fno-pic -fno-pie -fno-asynchronous-unwind-tables -mgeneral-regs-only \
            -Wall -Wextra -Iinclude
 # ponytail: MinGW PE may warn "section below image base"; entry/VMA are still 1 MiB.
 LDFLAGS := -m i386pe -T kernel/linker.ld -nostdlib

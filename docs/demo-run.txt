@@ -1,0 +1,75 @@
+Tiny OS 1.0.0 - type 'help' for commands
+tiny> demo
+tiny> version
+Tiny OS 1.0.0 (i386, built Oct  6 2026 11:58:56)
+tiny> echo "Tiny OS demo: shell, memory, tasks, disk, user mode"
+Tiny OS demo: shell, memory, tasks, disk, user mode
+tiny> meminfo
+E820 physical memory map:
+  00000000 - 0009fbff  usable
+  0009fc00 - 0009ffff  reserved
+  000f0000 - 000fffff  reserved
+  00100000 - 07fdffff  usable
+  07fe0000 - 07ffffff  reserved
+  fffc0000 - ffffffff  reserved
+pmm: 15091 / 16384 frames free (60364 KiB), managing first 64 MiB
+heap: 4096 KiB total, 16624 used, 4177584 free (largest 4177584), 6 blocks
+tiny> memtest
+stress-testing kmalloc/kfree... ok
+tiny> spawn 2
+[worker 1] step 1/5
+[worker 2] step 1/5
+tiny> sleep 2600
+[worker 1] step 2/5
+[worker 2] step 2/5
+[worker 1] step 3/5
+[worker 2] step 3/5
+[worker 1] step 4/5
+[worker 2] step 4/5
+[worker 1] step 5/5
+[worker 2] step 5/5
+tiny> ps
+ID   NAME        STATE     PRIO  CPU-TICKS
+2    status      sleeping  1     0
+0    kmain       running   1     264
+1    idle        ready     1     440
+tiny> format
+[    7.34] INFO  fs: formatted 2048 sectors
+disk formatted
+tiny> write hello.txt Written by the demo
+tiny> ls
+  hello.txt               20 bytes  @3
+1 file(s), 1022 KiB free
+tiny> cat hello.txt
+Written by the demo
+tiny> fstest
+fstest: all checks passed
+tiny> rm hello.txt
+tiny> install
+built-in programs (install <name> copies one to disk):
+  hello    79 bytes
+  counter  65 bytes
+  fault    3 bytes
+tiny> run hello
+[    9.44] INFO  user: running 'hello' (79 bytes) at 800000
+Hello from user mode (ring 3) via int 0x80!
+[    9.44] INFO  user: 'hello' exited with code 0
+[exit code 0]
+tiny> run counter
+[    9.74] INFO  user: running 'counter' (65 bytes) at 800000
+counter: tick
+counter: tick
+counter: tick
+[   10.64] INFO  user: 'counter' exited with code 7
+[exit code 7]
+tiny> run fault
+[   10.94] INFO  user: running 'fault' (3 bytes) at 800000
+
+[user fault] general protection at eip=00800000 (err=0)
+[   10.94] WARN  user fault: general protection eip=800000
+[   10.94] INFO  user: 'fault' exited with code -1
+[exit code -1]
+tiny> ticks
+ticks=1124 (100 Hz)
+demo complete.
+tiny> 

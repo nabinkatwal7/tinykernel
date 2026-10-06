@@ -46,9 +46,10 @@ void klog(int level, const char *fmt, ...)
 		  ticks % timer_hz(), names[level], msg);
 	for (p = line; *p; p++)
 		ring_put(*p);
-	serial_write(line);
 	if (level >= console_level)
-		console_write(line);
+		console_write(line); /* the console mirrors to serial */
+	else
+		serial_write(line);
 	irq_restore(f);
 }
 

@@ -44,6 +44,12 @@ def main():
         s.sendall((cmd + "\n").encode()); time.sleep(0.05)
     time.sleep(1.0)
     for line in args:
+        if line.startswith("key:"):
+            mon("sendkey " + line[4:]); time.sleep(0.4); continue
+        if line.startswith("raw:"):
+            for c in line[4:]:
+                mon("sendkey " + key(c)); time.sleep(0.03)
+            time.sleep(0.4); continue
         if line.startswith("wait:"):
             time.sleep(float(line[5:])); continue
         for c in line + "\n":
