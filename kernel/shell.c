@@ -32,6 +32,7 @@
 #include "speaker.h"
 #include "sync.h"
 #include "timer.h"
+#include "tcp.h"
 #include "udp.h"
 #include "user.h"
 #include "vga.h"
@@ -2135,6 +2136,63 @@ static int cmd_ipconfig(int argc, char **argv)
 	return 0;
 }
 
+/* tcp connect <ip> <port> [text] | tcp list */
+static int cmd_tcp(int argc, char **argv)
+{
+	uint32_t ip, port;
+	uint8_t buf[512];
+	char s[16];
+	int c, n;
+
+	if (!netif.up) {
+		console_write("no network interface\n");
+		return 1;
+	}
+	if (argc >= 2 && !kstrcmp(argv[1], "list")) {
+		int i, shown = 0;
+
+		for (i = 0; i < TCP_MAX_CONN; i++) {
+			uint16_t rp, lp;
+			enum tcp_state st;
+
+			if (!tcp_conn_info(i, &ip, &rp, &lp, &st)) {
+				console_printf("  %u -> %s:%u  %s\n", lp, ip_str(ip, s), rp, tcp_state_name(st));
+				shown++;
+			}
+		}
+		console_printf("%d connection(s)\n", shown);
+		return 0;
+	}
+	if (argc < 4 || kstrcmp(argv[1], "connect") || ip_parse(argv[2], &ip) || kstrtoul(argv[3], &port) || port == 0
+	    || port > 65535) {
+		console_write("usage: tcp connect <ip> <port> [text] | tcp list\n");
+		return 1;
+	}
+	console_printf("connecting to %s:%u... ", ip_str(ip, s), port);
+	c = tcp_connect(ip, (uint16_t)port, 4000);
+	if (c < 0) {
+		console_printf("%s\n", c == -2 ? "connection refused" : c == -1 ? "no answer" : "cannot open a connection");
+		return 1;
+	}
+	console_printf("established (%s)\n", tcp_state_name(tcp_state(c)));
+	if (argc > 4) {
+		if (tcp_send(c, argv[4], (uint16_t)kstrlen(argv[4]), 3000)) {
+			console_write("send failed\n");
+		} else {
+			n = tcp_recv(c, buf, sizeof buf - 1, 2000);
+			if (n > 0) {
+				buf[n] = '\0';
+				console_printf("received %d byte(s): %s\n", n, (char *)buf);
+			} else {
+				console_write("no reply\n");
+			}
+		}
+	}
+	n = tcp_close(c);
+	console_printf("connection closed%s\n", n ? " (peer did not finish the close handshake)" : "");
+	return 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -2664,6 +2722,7 @@ static const struct command commands[] = {
 	{ "udp",     "udp send|listen|test",  "UDP datagrams", cmd_udp },
 	{ "dhcp",    "dhcp",                  "get an address via DHCP", cmd_dhcp },
 	{ "ipconfig", "ipconfig <ip> <mask> [gw]", "set a static address", cmd_ipconfig },
+	{ "tcp",     "tcp connect|list",      "TCP client (handshake, send, receive)", cmd_tcp },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },

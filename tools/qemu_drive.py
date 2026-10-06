@@ -52,6 +52,7 @@ def main():
         s.sendall((cmd + "\n").encode()); time.sleep(0.05)
     time.sleep(1.0)
     host_udp = None
+    host_log = []
     for line in args:
         if line.startswith("ser:"):  # text typed on the serial port; the two characters backslash-r mean Enter
             ser.sendall(line[4:].replace(chr(92) + "r", chr(13)).encode()); time.sleep(0.6); continue
@@ -59,6 +60,28 @@ def main():
             u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); u.sendto(line[8:].encode(), ("127.0.0.1", 5601)); time.sleep(0.6); continue
         if line.startswith("hostlisten:"):   # hostlisten:<udp port> -> collect datagrams the guest sends to 10.0.2.2:<port>
             host_udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); host_udp.bind(("0.0.0.0", int(line[11:]))); host_udp.settimeout(0.2); continue
+        if line.startswith("hosttcp:"):   # hosttcp:<port>:<reply> -> one-shot TCP server on the host
+            import threading
+            port_s, reply = line[8:].split(":", 1)
+            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            srv.bind(("0.0.0.0", int(port_s))); srv.listen(1); srv.settimeout(20)
+            def serve(srv=srv, reply=reply):
+                try:
+                    conn, addr = srv.accept()
+                    conn.settimeout(5)
+                    got = conn.recv(1024)
+                    host_log.append("HOST TCP: connection from %s:%d, received %r" % (addr[0], addr[1], got))
+                    conn.sendall(reply.encode())
+                    try:
+                        rest = conn.recv(1024)
+                        host_log.append("HOST TCP: peer then closed (recv returned %r)" % (rest,))
+                    except Exception as e:
+                        host_log.append("HOST TCP: %s" % e)
+                    conn.close()
+                except Exception as e:
+                    host_log.append("HOST TCP: server error %s" % e)
+            t = threading.Thread(target=serve, daemon=True); t.start(); continue
         if line.startswith("mon:"):
             mon(line[4:]); time.sleep(0.4); continue
         if line.startswith("key:"):
@@ -82,6 +105,8 @@ def main():
                 print("HOST RECEIVED UDP from %s:%d: %r" % (addr[0], addr[1], data))
         except socket.timeout:
             pass
+    for entry in host_log:
+        print(entry)
     mon("quit")
     q.wait(timeout=10)
     print(open(serial, errors="replace").read())

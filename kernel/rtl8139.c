@@ -7,6 +7,7 @@
 #include "ip.h"
 #include "io.h"
 #include "pic.h"
+#include "tcp.h"
 #include "udp.h"
 #include "sched.h"
 #include "kmalloc.h"
@@ -336,6 +337,7 @@ int rtl8139_init(void)
 	ip_init();
 	icmp_init();
 	udp_init();
+	tcp_init();
 	irq_install_handler(netif.irq, rtl_irq);
 	pic_unmask(netif.irq);
 	task_create("netrx", rx_task, 0, 6);

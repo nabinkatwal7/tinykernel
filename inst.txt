@@ -1,4 +1,3 @@
-Implement basic TCP handshake,
 Add power management: ACPI shutdown,
 Add boot menu and kernel parameters,
 Add automated test runner command,
