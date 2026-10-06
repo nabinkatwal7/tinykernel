@@ -15,6 +15,7 @@
 #include "serial.h"
 #include "shell.h"
 #include "timer.h"
+#include "vfs.h"
 #include "version.h"
 
 /* Background task: keeps the status bar (row 0) fresh once a second. */
@@ -53,6 +54,7 @@ void kernel_main(void)
 	sti();
 	klog(LOG_INFO, "interrupts enabled");
 
+	vfs_init();
 	if (ata_init() == 0) {
 		int rc = fs_mount();
 

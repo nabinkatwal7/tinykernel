@@ -19,6 +19,7 @@
 #include "sync.h"
 #include "timer.h"
 #include "user.h"
+#include "vfs.h"
 #include "version.h"
 
 /* Self-test helper: needs a local 'fails' counter. */
@@ -1030,17 +1031,28 @@ static int fs_fail(const char *what, int rc)
 
 static int cmd_ls(int argc, char **argv)
 {
-	struct fs_stat st[FS_MAX_FILES];
+	struct vfs_dirent ent[FS_MAX_FILES];
+	const char *path = argc > 1 ? argv[1] : "/";
 	int n, i;
 
+	n = vfs_list(path, ent, FS_MAX_FILES);
+	if (n < 0)
+		return fs_fail(path, n);
+	for (i = 0; i < n; i++)
+		console_printf("  %-19s %6u bytes%s\n", ent[i].name, ent[i].size,
+			       ent[i].is_dir ? "  <dir>" : "");
+	console_printf("%d entr%s", n, n == 1 ? "y" : "ies");
+	if (fs_mounted() && !kstrcmp(path, "/"))
+		console_printf(", %u KiB free", fs_free_sectors() / 2);
+	console_putchar('\n');
+	return 0;
+}
+
+static int cmd_mount(int argc, char **argv)
+{
 	(void)argc;
 	(void)argv;
-	if (need_fs())
-		return 1;
-	n = fs_list(st, FS_MAX_FILES);
-	for (i = 0; i < n; i++)
-		console_printf("  %-19s %6u bytes  @%u\n", st[i].name, st[i].size, st[i].start_lba);
-	console_printf("%d file(s), %u KiB free\n", n, fs_free_sectors() / 2);
+	vfs_print_mounts();
 	return 0;
 }
 
@@ -1055,7 +1067,7 @@ static int cmd_cat(int argc, char **argv)
 	}
 	if (need_fs())
 		return 1;
-	n = fs_size(argv[1]);
+	n = vfs_size(argv[1]);
 	if (n < 0)
 		return fs_fail(argv[1], n);
 	buf = kmalloc((size_t)n + 1);
@@ -1063,7 +1075,7 @@ static int cmd_cat(int argc, char **argv)
 		console_write("out of memory\n");
 		return 1;
 	}
-	n = fs_read(argv[1], buf, (uint32_t)n);
+	n = vfs_read(argv[1], buf, (uint32_t)n);
 	if (n < 0) {
 		kfree(buf);
 		return fs_fail(argv[1], n);
@@ -1095,7 +1107,7 @@ static int cmd_write(int argc, char **argv)
 			break;
 	}
 	text[len++] = '\n';
-	rc = fs_write(argv[1], text, (uint32_t)len);
+	rc = vfs_write(argv[1], text, (uint32_t)len);
 	return rc ? fs_fail(argv[1], rc) : 0;
 }
 
@@ -1109,7 +1121,7 @@ static int cmd_touch(int argc, char **argv)
 	}
 	if (need_fs())
 		return 1;
-	rc = fs_create(argv[1]);
+	rc = vfs_create(argv[1]);
 	return rc ? fs_fail(argv[1], rc) : 0;
 }
 
@@ -1123,7 +1135,7 @@ static int cmd_rm(int argc, char **argv)
 	}
 	if (need_fs())
 		return 1;
-	rc = fs_delete(argv[1]);
+	rc = vfs_unlink(argv[1]);
 	return rc ? fs_fail(argv[1], rc) : 0;
 }
 
@@ -1464,6 +1476,7 @@ static const struct command commands[] = {
 	{ "priotest", "priotest",             "priority + aging scheduler test", cmd_priotest },
 	{ "kill",  "kill <id>",             "stop a task", cmd_kill },
 	{ "ls",      "ls",                    "list files", cmd_ls },
+	{ "mount",   "mount",                 "list mounted filesystems", cmd_mount },
 	{ "cat",     "cat <file>",            "print a file", cmd_cat },
 	{ "write",   "write <file> <text>",   "create/replace a file", cmd_write },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },

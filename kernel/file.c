@@ -1,7 +1,7 @@
 #include "file.h"
 
 #include "console.h"
-#include "fs.h"
+#include "vfs.h"
 #include "io.h"
 #include "keyboard.h"
 #include "kmalloc.h"
@@ -74,7 +74,7 @@ static int release(struct ofile *o)
 		return rc;
 	if (o->kind == OBJ_FILE) {
 		if (writable(o->flags) && o->dirty)
-			rc = fs_write(o->name, o->buf, o->size);
+			rc = vfs_write(o->name, o->buf, o->size);
 		kfree(o->buf);
 	}
 	memset(o, 0, sizeof *o);
@@ -129,11 +129,11 @@ int file_open(const char *path, int flags)
 	if (fd < 0 || oi < 0)
 		return FS_ENOSPC;
 
-	size = fs_size(path);
+	size = vfs_size(path);
 	if (size == FS_ENOENT) {
 		if (!(flags & O_CREAT))
 			return FS_ENOENT;
-		rc = fs_create(path); /* visible immediately, like creat() */
+		rc = vfs_create(path); /* visible immediately, like creat() */
 		if (rc)
 			return rc;
 		size = 0;
@@ -155,7 +155,7 @@ int file_open(const char *path, int flags)
 		return FS_ENOSPC;
 	}
 	if (size > 0 && !(writable(flags) && (flags & O_TRUNC))) {
-		rc = fs_read(path, o->buf, (uint32_t)size);
+		rc = vfs_read(path, o->buf, (uint32_t)size);
 		if (rc < 0) {
 			kfree(o->buf);
 			o->kind = OBJ_FREE;

@@ -5,6 +5,7 @@
 #include "file.h"
 #include "env.h"
 #include "fs.h"
+#include "vfs.h"
 #include "gdt.h"
 #include "idt.h"
 #include "io.h"
@@ -65,7 +66,7 @@ int user_install_builtin(const char *name)
 
 	for (i = 0; i < NBUILTIN; i++)
 		if (!kstrcmp(builtins[i].name, name))
-			return fs_write(name, builtins[i].start,
+			return vfs_write(name, builtins[i].start,
 					(uint32_t)(builtins[i].end - builtins[i].start));
 	return FS_ENOENT;
 }
@@ -86,13 +87,13 @@ static int load_image(const char *name, uint8_t *dst, uint32_t *size, uint32_t *
 	unsigned i;
 	int n, rc = 0;
 
-	if (fs_mounted() && (n = fs_size(name)) >= 0) {
+	if ((n = vfs_size(name)) >= 0) {
 		if (n == 0 || (uint32_t)n > 256 * 1024)
 			return -2;
 		heap_copy = kmalloc((size_t)n);
 		if (!heap_copy)
 			return -2;
-		if (fs_read(name, heap_copy, (uint32_t)n) < 0) {
+		if (vfs_read(name, heap_copy, (uint32_t)n) < 0) {
 			kfree(heap_copy);
 			return -2;
 		}
