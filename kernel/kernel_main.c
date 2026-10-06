@@ -68,7 +68,6 @@ void kernel_main(void)
 
 	cpu_init();
 	pci_scan();
-	rtl8139_init();
 	vfs_init();
 	if (ata_init() == 0) {
 		if (ata_dev_present(1) && fat12_mount(1) != FS_OK)
@@ -79,6 +78,7 @@ void kernel_main(void)
 	}
 
 	task_create("status", status_task, 0, 7);
+	rtl8139_init(); /* needs the scheduler (rx task) and IRQs */
 	bc_start_flusher();
 	console_status(" " KERNEL_NAME " " KERNEL_VERSION);
 	speaker_beep(880, 70); /* power-on chirp */

@@ -1,6 +1,10 @@
 #include "net.h"
 
+#include "console.h"
+#include "idt.h"
 #include "io.h"
+#include "pic.h"
+#include "sched.h"
 #include "kmalloc.h"
 #include "klog.h"
 #include "kprintf.h"
@@ -45,6 +49,131 @@ struct netif netif;
 static uint8_t *rx_buf;          /* DMA ring the card writes received frames into */
 static uint8_t *tx_buf[NTX];     /* one buffer per transmit descriptor */
 static int tx_cur;
+
+#define RXQ 16
+#define RX_FRAME_MAX 1536
+static struct { uint16_t len; uint8_t data[RX_FRAME_MAX]; } rxq[RXQ];
+static volatile int rxq_head, rxq_tail;
+static struct waitq rx_wq;
+static uint32_t rx_off;       /* where the driver has read up to in the card's ring */
+static int trace;
+
+#define MAX_HANDLERS 8
+static struct { uint16_t type; eth_handler_t fn; } handlers[MAX_HANDLERS];
+
+int net_register_ethertype(uint16_t type, eth_handler_t fn)
+{
+	int i;
+
+	for (i = 0; i < MAX_HANDLERS; i++) {
+		if (!handlers[i].fn) {
+			handlers[i].type = type;
+			handlers[i].fn = fn;
+			return 0;
+		}
+	}
+	return -1;
+}
+
+void net_set_trace(int on)
+{
+	trace = on;
+}
+
+void net_set_loopback(int on)
+{
+	uint32_t tcr = inl((uint16_t)(netif.io_base + REG_TCR));
+
+	tcr = on ? (tcr | 0x60000u) : (tcr & ~0x60000u); /* LBK1:LBK0 = 11 */
+	outl((uint16_t)(netif.io_base + REG_TCR), tcr);
+}
+
+/* IRQ context: move every complete frame out of the card's ring into our queue. */
+static void rx_drain(void)
+{
+	uint16_t io = netif.io_base;
+
+	while (!(inb((uint16_t)(io + REG_CR)) & CR_BUFE)) {
+		uint8_t *p = rx_buf + rx_off;
+		uint16_t status = (uint16_t)(p[0] | (p[1] << 8)), len = (uint16_t)(p[2] | (p[3] << 8));
+		int next = (rxq_head + 1) % RXQ;
+
+		if (!(status & 1) || len < 18 || len > ETH_MAX_FRAME + 4) { /* bad packet: resync the ring */
+			netif.rx_errors++;
+			outb((uint16_t)(io + REG_CR), CR_TE);          /* stop the receiver ... */
+			outb((uint16_t)(io + REG_CR), CR_RE | CR_TE);  /* ... and restart it */
+			rx_off = 0;
+			outw((uint16_t)(io + REG_CAPR), (uint16_t)(rx_off - 16));
+			outl((uint16_t)(io + REG_RBSTART), (uint32_t)rx_buf);
+			return;
+		}
+		if (next == rxq_tail) {
+			netif.rx_dropped++;
+		} else {
+			uint16_t flen = (uint16_t)(len - 4);                /* drop the CRC */
+
+			memcpy(rxq[rxq_head].data, p + 4, flen);
+			rxq[rxq_head].len = flen;
+			rxq_head = next;
+		}
+		netif.rx_frames++;
+		rx_off = (rx_off + len + 4 + 3u) & ~3u;
+		if (rx_off >= 8192)
+			rx_off -= 8192;
+		outw((uint16_t)(io + REG_CAPR), (uint16_t)(rx_off - 16));
+	}
+}
+
+static void rtl_irq(struct regs *r)
+{
+	uint16_t io = netif.io_base, isr = inw((uint16_t)(io + REG_ISR));
+
+	(void)r;
+	outw((uint16_t)(io + REG_ISR), isr); /* acknowledge everything we saw */
+	if (isr & 0x01)
+		rx_drain();
+	if (isr & 0x10) /* rx buffer overflow: drain what is there */
+		rx_drain();
+	if (rxq_head != rxq_tail)
+		wq_wake_one(&rx_wq);
+}
+
+static void dispatch(const uint8_t *f, uint16_t len)
+{
+	uint16_t type = (uint16_t)((f[12] << 8) | f[13]);
+	int i;
+
+	if (trace) {
+		char s[18], d[18];
+
+		console_printf("[net] rx %u bytes %s -> %s type %04x\n", len, mac_str(f + 6, s), mac_str(f, d), type);
+	}
+	for (i = 0; i < MAX_HANDLERS; i++) {
+		if (handlers[i].fn && handlers[i].type == type) {
+			handlers[i].fn(f, len);
+			return;
+		}
+	}
+}
+
+static void rx_task(void *arg)
+{
+	static uint8_t local[RX_FRAME_MAX];
+
+	(void)arg;
+	for (;;) {
+		uint32_t flags = irq_save();
+		uint16_t len;
+
+		while (rxq_head == rxq_tail)
+			wq_wait(&rx_wq, WAIT_OTHER);
+		len = rxq[rxq_tail].len;
+		memcpy(local, rxq[rxq_tail].data, len);
+		rxq_tail = (rxq_tail + 1) % RXQ;
+		irq_restore(flags);
+		dispatch(local, len);
+	}
+}
 
 const char *mac_str(const uint8_t mac[ETH_ALEN], char out[18])
 {
@@ -155,11 +284,14 @@ int rtl8139_init(void)
 			tx_buf[i] = (uint8_t *)(tx + (uint32_t)i * TX_SLOT);
 	}
 	outl((uint16_t)(io + REG_RBSTART), (uint32_t)rx_buf);
-	outw((uint16_t)(io + REG_IMR), 0x0000);        /* polling until the IRQ path is added */
+	outw((uint16_t)(io + REG_IMR), 0x001F);        /* ROK, RER, TOK, TER, receive overflow */
 	outl((uint16_t)(io + REG_RCR), 0x0000008F);    /* accept broadcast/multicast/physical/all, WRAP */
 	outl((uint16_t)(io + REG_TCR), 0x03000700);    /* default inter-frame gap and DMA burst */
 	outb((uint16_t)(io + REG_CR), CR_RE | CR_TE);
 	netif.up = 1;
+	irq_install_handler(netif.irq, rtl_irq);
+	pic_unmask(netif.irq);
+	task_create("netrx", rx_task, 0, 6);
 	{
 		char m[18];
 

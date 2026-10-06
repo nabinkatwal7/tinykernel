@@ -1829,6 +1829,57 @@ static int cmd_netsend(int argc, char **argv)
 	return rc != 0;
 }
 
+static volatile uint32_t loop_seen;
+
+static void loop_handler(const uint8_t *f, uint16_t len)
+{
+	if (len >= ETH_HLEN + 8 && !memcmp(f + ETH_HLEN, "LOOPBACK", 8))
+		loop_seen++;
+}
+
+/* netloop: the card's loopback mode must hand our own frame back through the whole rx path. */
+static int cmd_netloop(int argc, char **argv)
+{
+	static int registered;
+	uint32_t before, rx_before;
+	int i, rc;
+
+	(void)argc;
+	(void)argv;
+	if (!netif.up) {
+		console_write("no network interface\n");
+		return 1;
+	}
+	if (!registered) {
+		net_register_ethertype(0x88B6, loop_handler);
+		registered = 1;
+	}
+	before = loop_seen;
+	rx_before = netif.rx_frames;
+	net_set_loopback(1);
+	rc = eth_send(netif.mac, 0x88B6, "LOOPBACK payload", 16);
+	for (i = 0; i < 100 && loop_seen == before; i++)
+		task_sleep(10);
+	net_set_loopback(0);
+	if (rc || loop_seen == before) {
+		console_printf("netloop: FAILED (send rc %d, rx frames +%u)\n", rc, netif.rx_frames - rx_before);
+		return 1;
+	}
+	console_printf("netloop: frame sent and received back through IRQ -> queue -> task (rx +%u)\n",
+		       netif.rx_frames - rx_before);
+	return 0;
+}
+
+static int cmd_nettrace(int argc, char **argv)
+{
+	if (argc != 2 || (kstrcmp(argv[1], "on") && kstrcmp(argv[1], "off"))) {
+		console_write("usage: nettrace on|off\n");
+		return 1;
+	}
+	net_set_trace(!kstrcmp(argv[1], "on"));
+	return 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -2349,6 +2400,8 @@ static const struct command commands[] = {
 	{ "beep",    "beep [hz] [ms]",        "PC speaker: tone, tune, off, status", cmd_beep },
 	{ "ifconfig", "ifconfig",              "network interface status", cmd_ifconfig },
 	{ "netsend", "netsend [text]",         "send a raw Ethernet frame", cmd_netsend },
+	{ "netloop", "netloop",               "self-test the receive path in loopback", cmd_netloop },
+	{ "nettrace", "nettrace on|off",      "show every received frame", cmd_nettrace },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },
