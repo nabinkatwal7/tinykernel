@@ -1118,6 +1118,36 @@ static int cmd_smptest(int argc, char **argv)
 	return fails != 0;
 }
 
+static volatile int where_ran[4];
+
+static void where_thread(void *arg)
+{
+	where_ran[(uint32_t)arg] = this_cpu()->id; /* which core did the scheduler really use? */
+}
+
+/* smpaffinity <mask>: place a thread with a CPU affinity mask and report where it ran. */
+static int cmd_smpaffinity(int argc, char **argv)
+{
+	uint32_t mask;
+	int id, cpu;
+
+	if (argc != 2 || kstrtoul(argv[1], &mask)) {
+		console_write("usage: smpaffinity <mask>   (bit n = cpu n; thread cores are the application processors)\n");
+		return 1;
+	}
+	where_ran[0] = -1;
+	id = smpt_create_affinity(mask, "where", where_thread, (void *)0);
+	if (id < 0) {
+		console_printf("mask %x allows no online application processor\n", mask);
+		return 1;
+	}
+	cpu = smpt_cpu_of(id);
+	smpt_join(id, 2000);
+	console_printf("thread %d placed on cpu %d, ran on cpu %d\n", id, cpu, where_ran[0]);
+	smpt_reap();
+	return where_ran[0] != cpu;
+}
+
 static int cmd_kill(int argc, char **argv)
 {
 	uint32_t id;
@@ -3027,6 +3057,7 @@ static const struct command commands[] = {
 	{ "priotest", "priotest",             "priority + aging scheduler test", cmd_priotest },
 	{ "spinsmp", "spinsmp",               "two-core spinlock test", cmd_spinsmp },
 	{ "smptest", "smptest",               "threads on the second core", cmd_smptest },
+	{ "smpaffinity", "smpaffinity <mask>",   "place a thread by CPU mask", cmd_smpaffinity },
 	{ "kill",  "kill <id>",             "stop a task", cmd_kill },
 	{ "ls",      "ls",                    "list files", cmd_ls },
 	{ "mount",   "mount",                 "list mounted filesystems", cmd_mount },

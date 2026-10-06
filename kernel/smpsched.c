@@ -114,17 +114,23 @@ void smpsched_cpu_init(int cpu)
 
 int smpt_create(int cpu, const char *name, void (*fn)(void *), void *arg)
 {
+	return cpu < 0 ? smpt_create_affinity(~0u, name, fn, arg) : smpt_create_affinity(1u << cpu, name, fn, arg);
+}
+
+int smpt_create_affinity(uint32_t mask, const char *name, void (*fn)(void *), void *arg)
+{
+	int cpu = -1;
 	struct rq *q;
 	int i, best = -1;
 	uint32_t stack, *sp;
 
-	if (cpu < 0) { /* the least loaded online application processor */
+	{ /* the least loaded online application processor that the affinity mask allows */
 		int load, best_load = 1 << 30, c;
 
 		for (c = 0; c < percpu_count(); c++) {
 			struct percpu *p = percpu_get(c);
 
-			if (!p->online || p->is_bsp)
+			if (!(mask & (1u << c)) || !p->online || p->is_bsp)
 				continue;
 			for (load = 0, i = 0; i < SMPT_PER_CPU; i++)
 				load += rqs[c].thr[i].state == T_READY;
@@ -177,6 +183,7 @@ int smpt_create(int cpu, const char *name, void (*fn)(void *), void *arg)
 	return i;
 }
 
+static struct sthread *find(int id, int *cpu);
 static struct sthread *find(int id, int *cpu)
 {
 	int c, i;
@@ -188,6 +195,13 @@ static struct sthread *find(int id, int *cpu)
 				return &rqs[c].thr[i];
 			}
 	return 0;
+}
+
+int smpt_cpu_of(int id)
+{
+	int cpu;
+
+	return find(id, &cpu) ? cpu : -1;
 }
 
 int smpt_join(int id, uint32_t timeout_ms)

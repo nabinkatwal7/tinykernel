@@ -19,6 +19,10 @@ void smpsched_tick(void);                   /* from the timer interrupt on an ap
 /* Create a thread on an application processor (cpu < 0: the least loaded one). Returns a thread id or -1.
    The function runs on another core: it must not use the heap, console or any other kernel service. */
 int  smpt_create(int cpu, const char *name, void (*fn)(void *), void *arg);
+/* Same, but only on cores whose bit is set in 'affinity' (bit n = core n); the least loaded allowed core
+   is used. -1 if no allowed core is an online application processor. */
+int  smpt_create_affinity(uint32_t affinity, const char *name, void (*fn)(void *), void *arg);
+int  smpt_cpu_of(int id);                      /* core a thread was placed on, -1 if unknown */
 int  smpt_join(int id, uint32_t timeout_ms);   /* 0 once it has finished */
 int  smpt_reap(void);                          /* free the stacks of finished threads; returns how many */
 int  smpt_info(int cpu, int slot, struct smpt_info *out);

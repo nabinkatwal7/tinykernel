@@ -1,4 +1,3 @@
-Add task CPU affinity,
 Learn copy-on-write paging,
 Implement copy-on-write pages,
 Implement real fork for user programs,
