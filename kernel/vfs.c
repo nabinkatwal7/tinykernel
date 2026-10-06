@@ -59,6 +59,7 @@ static int tfs_stat(void *ctx, const char *path, struct vfs_stat *st)
 	st->uid = fst.meta.uid;
 	st->gid = fst.meta.gid;
 	st->mtime = fst.meta.mtime;
+	st->ctime = fst.meta.ctime;
 	return FS_OK;
 }
 

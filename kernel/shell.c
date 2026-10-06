@@ -1723,6 +1723,17 @@ static int cmd_stat(int argc, char **argv)
 		console_printf("  File: %s\n  Type: %s\n  Size: %u bytes\n", abs,
 			       st.dev ? "character device" : st.is_dir ? "directory" : "regular file",
 			       st.size);
+		{
+			char ms[11], mt[17], ct[17];
+
+			mode_string(st.is_dir, st.mode, ms);
+			time_string(st.mtime, mt);
+			time_string(st.ctime, ct);
+			console_printf("  Mode: %s (0%u%u%u)  Owner: %s  Group: %u\n", ms, (st.mode >> 6) & 7u,
+				       (st.mode >> 3) & 7u, st.mode & 7u, user_name_of(st.uid), st.gid);
+			if (st.mtime)
+				console_printf("  Modified: %s\n  Created:  %s\n", mt, ct);
+		}
 		if (!st.dev && !st.is_dir && kstrncmp(abs, "/dev/", 5) && kstrncmp(abs, "/proc/", 6)
 		    && fs_stat(abs, &fst) == FS_OK)
 			console_printf("  Disk: sector %u, %u sector(s)\n", fst.start_lba, fst.sectors);
@@ -2903,6 +2914,10 @@ static int cmd_touch(int argc, char **argv)
 	if (argc < 2) {
 		console_write("usage: touch <file>\n");
 		return 1;
+	}
+	if (vfs_size(argv[1]) >= 0) { /* an existing file: just bring its modification time up to date */
+		rc = vfs_touch(argv[1], 0);
+		return rc ? fs_fail(argv[1], rc) : 0;
 	}
 	rc = vfs_create(argv[1]);
 	return rc ? fs_fail(argv[1], rc) : 0;

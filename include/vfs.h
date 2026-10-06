@@ -35,7 +35,7 @@ struct vfs_stat {
 	const struct vfs_device *dev;              /* non-NULL for device files */
 	int has_meta;
 	uint16_t mode, uid, gid;                   /* permissions (0777 style) and owner; defaults on filesystems without them */
-	uint32_t mtime;
+	uint32_t mtime, ctime;                     /* last modification and creation, seconds since 1970 (0 = not recorded) */
 };
 
 struct vfs_ops {
