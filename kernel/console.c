@@ -89,6 +89,12 @@ void console_clear(void)
 	uint32_t f = irq_save();
 	int i;
 
+	if (gfxcon_active()) {
+		gfxcon_clear();
+		irq_restore(f);
+		return;
+	}
+
 	for (i = VGA_TOP * VGA_WIDTH; i < VGA_WIDTH * VGA_HEIGHT; i++)
 		VGA_ADDR[i] = cell(' ');
 	cursor_x = 0;
@@ -107,6 +113,11 @@ void console_putchar(char c)
 		serial_putc('\b');
 	} else {
 		serial_putc(c);
+	}
+	if (gfxcon_active()) {
+		gfxcon_putchar(c);
+		irq_restore(f);
+		return;
 	}
 	put_screen(c);
 	update_cursor();
@@ -155,6 +166,7 @@ void console_set_hw_cursor(int x, int y)
 void console_set_color(uint8_t fg, uint8_t bg)
 {
 	attr = (uint8_t)((bg << 4) | (fg & 0x0F));
+	gfxcon_set_attr(attr);
 }
 
 void console_status(const char *text)

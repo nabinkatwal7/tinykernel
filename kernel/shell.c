@@ -1501,6 +1501,34 @@ static int cmd_mouse(int argc, char **argv)
 	return 0;
 }
 
+/* The demos draw on the whole screen, so they cannot run while the graphical console owns it. */
+static int gfx_enter(void)
+{
+	if (vga_in_graphics()) {
+		console_write("already in graphics mode (gfxmode off)\n");
+		return 1;
+	}
+	return vga_set_graphics();
+}
+
+/* gfxmode on|off: move the whole console onto the graphics screen and back. */
+static int cmd_gfxmode(int argc, char **argv)
+{
+	if (argc != 2 || (kstrcmp(argv[1], "on") && kstrcmp(argv[1], "off"))) {
+		console_write("usage: gfxmode on|off\n");
+		return 1;
+	}
+	if (!kstrcmp(argv[1], "on")) {
+		if (gfxcon_enable(1))
+			return 1;
+		console_write("graphical console: 40x12 characters\n");
+	} else {
+		gfxcon_enable(0);
+		console_clear();
+	}
+	return 0;
+}
+
 /* gfx: switch to 320x200x256, draw a test card, wait for a key, switch back. */
 static int cmd_gfx(int argc, char **argv)
 {
@@ -1509,7 +1537,7 @@ static int cmd_gfx(int argc, char **argv)
 
 	(void)argc;
 	(void)argv;
-	if (vga_set_graphics()) {
+	if (gfx_enter()) {
 		console_write("gfx: cannot enter graphics mode\n");
 		return 1;
 	}
@@ -1540,7 +1568,7 @@ static int cmd_gfxlines(int argc, char **argv)
 
 	(void)argc;
 	(void)argv;
-	if (vga_set_graphics())
+	if (gfx_enter())
 		return 1;
 	vga_fill(0);
 	for (i = 0; i < 320; i += 10) { /* fan from the bottom centre */
@@ -1566,7 +1594,7 @@ static int cmd_gfxshapes(int argc, char **argv)
 
 	(void)argc;
 	(void)argv;
-	if (vga_set_graphics())
+	if (gfx_enter())
 		return 1;
 	vga_fill(1);                                   /* blue background */
 	gfx_fill_rect(10, 10, 100, 60, 4);
@@ -1594,7 +1622,7 @@ static int cmd_gfxtext(int argc, char **argv)
 
 	(void)argc;
 	(void)argv;
-	if (vga_set_graphics())
+	if (gfx_enter())
 		return 1;
 	vga_fill(0);
 	gfx_text(8, 4, "Bitmap font rendering", 15, -1);
@@ -2131,6 +2159,7 @@ static const struct command commands[] = {
 	{ "gfxlines", "gfxlines",            "pixel and line drawing demo", cmd_gfxlines },
 	{ "gfxshapes", "gfxshapes",          "rectangles, circles and triangles demo", cmd_gfxshapes },
 	{ "gfxtext", "gfxtext",              "bitmap font demo", cmd_gfxtext },
+	{ "gfxmode", "gfxmode on|off",       "run the console on the graphics screen", cmd_gfxmode },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },

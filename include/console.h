@@ -25,7 +25,15 @@ void console_putchar(char c);       /* handles \n \r \b \t; mirrored to COM1 */
 void console_write(const char *s);
 void console_printf(const char *fmt, ...);
 void console_set_color(uint8_t fg, uint8_t bg);
-void console_status(const char *text); /* paints the reserved top row */
+void console_status(const char *text);
+
+/* Graphical console (kernel/gfxcon.c): the console drawn on the 320x200 screen, 40 x 12 cells. */
+int  gfxcon_enable(int on);          /* switches the video mode; 0 on success */
+int  gfxcon_active(void);
+void gfxcon_putchar(char c);
+void gfxcon_clear(void);
+void gfxcon_set_attr(uint8_t attr);
+
 
 /* Direct cell access for full-screen programs (the editor). Rows 1-24, columns 0-79. */
 #define CONSOLE_COLS 80
