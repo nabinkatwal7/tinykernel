@@ -1,3 +1,2 @@
-Add sound blaster detection,
 Add basic PCM audio playback,
 Final review and 300-day roadmap,
