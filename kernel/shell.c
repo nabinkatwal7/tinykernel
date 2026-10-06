@@ -12,6 +12,7 @@
 #include "fs.h"
 #include "gfx.h"
 #include "gui.h"
+#include "icmp.h"
 #include "io.h"
 #include "ip.h"
 #include "keyboard.h"
@@ -1961,6 +1962,36 @@ static int cmd_iptest(int argc, char **argv)
 	return fails != 0;
 }
 
+/* icmptest: ping ourselves (127.0.0.1 and our own address): exercises request -> reply handling. */
+static int cmd_icmptest(int argc, char **argv)
+{
+	uint32_t bytes = 0;
+	int rtt, fails = 0;
+	struct icmp_stats a, b;
+
+	(void)argc;
+	(void)argv;
+	if (!netif.up) {
+		console_write("no network interface\n");
+		return 1;
+	}
+	icmp_get_stats(&a);
+	rtt = icmp_ping(IP4(127, 0, 0, 1), 1, 1000, &bytes, 0);
+	CHECK(rtt >= 0, "127.0.0.1 answers an echo request");
+	CHECK(bytes == 32, "the reply carries our 32 bytes of data back");
+	rtt = icmp_ping(netif.ip, 2, 1000, &bytes, 0);
+	CHECK(rtt >= 0, "our own address answers too");
+	icmp_get_stats(&b);
+	CHECK(b.echo_requests_in - a.echo_requests_in == 2, "two requests reached the ICMP handler");
+	CHECK(b.echo_replies_out - a.echo_replies_out == 2, "two replies were produced");
+	CHECK(b.echo_replies_in - a.echo_replies_in == 2, "two replies came back");
+	if (fails)
+		console_printf("icmptest: %d check(s) failed\n", fails);
+	else
+		console_write("icmptest: all checks passed\n");
+	return fails != 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -2485,6 +2516,7 @@ static const struct command commands[] = {
 	{ "nettrace", "nettrace on|off",      "show every received frame", cmd_nettrace },
 	{ "arp",     "arp [ip|flush]",        "ARP cache / resolve an address", cmd_arp },
 	{ "iptest",  "iptest",                "IPv4 checksum / parsing self-test", cmd_iptest },
+	{ "icmptest", "icmptest",             "ICMP echo self-test (loopback)", cmd_icmptest },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },

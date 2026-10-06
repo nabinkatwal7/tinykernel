@@ -2,6 +2,7 @@
 
 #include "arp.h"
 #include "console.h"
+#include "icmp.h"
 #include "idt.h"
 #include "ip.h"
 #include "io.h"
@@ -332,6 +333,7 @@ int rtl8139_init(void)
 	netif.gateway = IP4(10, 0, 2, 2);
 	arp_init();
 	ip_init();
+	icmp_init();
 	irq_install_handler(netif.irq, rtl_irq);
 	pic_unmask(netif.irq);
 	task_create("netrx", rx_task, 0, 6);

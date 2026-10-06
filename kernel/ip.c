@@ -102,7 +102,7 @@ static void ip_input(const uint8_t *frame, uint16_t len)
 	}
 	src = get_ip(h->src);
 	dst = get_ip(h->dst);
-	if (dst != netif.ip && dst != 0xFFFFFFFFu && dst != (netif.ip | ~netif.netmask)) {
+	if (dst != netif.ip && dst >> 24 != 127 && dst != 0xFFFFFFFFu && dst != (netif.ip | ~netif.netmask)) {
 		stats.rx_not_for_us++;
 		return;
 	}
@@ -135,11 +135,22 @@ int ip_send(uint32_t dst, uint8_t proto, const void *payload, uint16_t len)
 	h->ttl = 64;
 	h->proto = proto;
 	h->checksum = 0;
-	put_ip(h->src, netif.ip);
+	put_ip(h->src, dst >> 24 == 127 ? dst : netif.ip); /* loopback traffic comes from 127.x.x.x */
 	put_ip(h->dst, dst);
 	h->checksum = htons(ip_checksum(h, sizeof *h));
 	memcpy(pkt + sizeof *h, payload, len);
 
+	if (dst == netif.ip || dst >> 24 == 127) {
+		/* to ourselves: no wire involved, hand the frame straight to the receive path */
+		uint8_t loop[ETH_MAX_FRAME];
+
+		memset(loop, 0, ETH_HLEN);
+		loop[12] = 0x08;
+		memcpy(loop + ETH_HLEN, pkt, sizeof *h + len);
+		stats.tx_packets++;
+		ip_input(loop, (uint16_t)(ETH_HLEN + sizeof *h + len));
+		return 0;
+	}
 	if (dst == 0xFFFFFFFFu) {
 		memset(mac, 0xFF, ETH_ALEN);
 	} else if (arp_resolve(next_hop, mac, 2000)) {

@@ -1,4 +1,3 @@
-Implement ICMP ping reply,
 Add 'ping' shell command,
 Implement UDP send and receive,
 Add tiny DHCP or static IP config,

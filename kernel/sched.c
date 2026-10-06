@@ -12,7 +12,7 @@
 #include "slab.h"
 #include "timer.h"
 
-#define TASK_STACK_SIZE 8192
+#define TASK_STACK_SIZE 16384
 #define BASE_SLICE      5 /* ticks per quantum */
 
 static task_t *task_head;   /* circular list */
