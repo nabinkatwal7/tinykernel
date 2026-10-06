@@ -14,4 +14,6 @@ int tu_tail(int argc, char **argv);   /* tail [-n N] [file...]: the last N lines
 
 int tu_sort(int argc, char **argv);   /* sort [-nru] [file...]: sorted lines (numeric, reversed, duplicates removed) */
 
+int tu_find(int argc, char **argv);   /* find [dir] [-name pattern] [-type f|d]: walk a directory tree */
+
 #endif

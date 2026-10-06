@@ -6,6 +6,7 @@
 #include "file.h"
 #include "fs.h"
 #include "kmalloc.h"
+#include "kprintf.h"
 #include "kstring.h"
 #include "pcache.h"
 #include "shell.h"
@@ -445,4 +446,79 @@ int tu_sort(int argc, char **argv)
 	for (i = 0; i < ntexts; i++)
 		kfree(texts[i].data);
 	return rc;
+}
+
+/* Shell-style wildcard match: '*' any run, '?' any one character. */
+static int glob_match(const char *pat, const char *s)
+{
+	if (!*pat)
+		return !*s;
+	if (*pat == '*') {
+		do {
+			if (glob_match(pat + 1, s))
+				return 1;
+		} while (*s++);
+		return 0;
+	}
+	if (*s && (*pat == '?' || *pat == *s))
+		return glob_match(pat + 1, s + 1);
+	return 0;
+}
+
+#define FIND_MAX_DEPTH 8
+
+struct find_opts {
+	const char *name; /* -name pattern, or NULL */
+	char type;        /* 'f', 'd' or 0 */
+	int hits;
+};
+
+static void find_walk(const char *dir, int depth, struct find_opts *o)
+{
+	struct vfs_dirent *ent = kmalloc(sizeof *ent * FS_MAX_FILES);
+	int n, i;
+
+	if (!ent)
+		return;
+	n = vfs_list(dir, ent, FS_MAX_FILES);
+	for (i = 0; i < n && !shell_interrupted(); i++) {
+		char path[VFS_PATH_MAX];
+
+		if (!kstrcmp(dir, "/"))
+			ksnprintf(path, sizeof path, "/%s", ent[i].name);
+		else if (!kstrcmp(dir, "."))
+			ksnprintf(path, sizeof path, "%s", ent[i].name);
+		else
+			ksnprintf(path, sizeof path, "%s/%s", dir, ent[i].name);
+		if ((!o->name || glob_match(o->name, ent[i].name)) && (!o->type || (o->type == 'd') == (ent[i].is_dir != 0))) {
+			console_printf("%s\n", path);
+			o->hits++;
+		}
+		if (ent[i].is_dir && depth < FIND_MAX_DEPTH)
+			find_walk(path, depth + 1, o);
+	}
+	kfree(ent);
+}
+
+int tu_find(int argc, char **argv)
+{
+	struct find_opts o = { 0, 0, 0 };
+	const char *start = ".";
+	int a = 1;
+
+	if (a < argc && argv[a][0] != '-')
+		start = argv[a++];
+	while (a < argc) {
+		if (!kstrcmp(argv[a], "-name") && a + 1 < argc) {
+			o.name = argv[a + 1];
+		} else if (!kstrcmp(argv[a], "-type") && a + 1 < argc && (argv[a + 1][0] == 'f' || argv[a + 1][0] == 'd')) {
+			o.type = argv[a + 1][0];
+		} else {
+			console_write("usage: find [dir] [-name pattern] [-type f|d]\n");
+			return 2;
+		}
+		a += 2;
+	}
+	find_walk(start, 0, &o);
+	return !o.hits;
 }
