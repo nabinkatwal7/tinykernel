@@ -1,0 +1,181 @@
+#include "textutil.h"
+
+#include <stdint.h>
+
+#include "console.h"
+#include "file.h"
+#include "fs.h"
+#include "kmalloc.h"
+#include "kstring.h"
+#include "pcache.h"
+#include "shell.h"
+#include "vfs.h"
+
+#define STDIN_MAX (64 * 1024)
+
+/* The text of one input: a NUL-terminated buffer owned by the caller (kfree). */
+struct text {
+	char *data;
+	uint32_t len;
+};
+
+/* Reads a file, or standard input when path is NULL. Returns 0, or 1 after printing why not. */
+static int load_text(const char *path, struct text *t)
+{
+	char *buf;
+	int n;
+
+	t->data = 0;
+	t->len = 0;
+	if (path) {
+		n = vfs_size(path);
+		if (n < 0) {
+			console_printf("%s: %s\n", path, fs_strerror(n));
+			return 1;
+		}
+		buf = kmalloc((size_t)n + 1);
+		if (!buf) {
+			console_write("out of memory\n");
+			return 1;
+		}
+		n = n ? pcache_read(path, buf, (uint32_t)n) : 0;
+		if (n < 0) {
+			kfree(buf);
+			console_printf("%s: %s\n", path, fs_strerror(n));
+			return 1;
+		}
+		buf[n] = '\0';
+		t->data = buf;
+		t->len = (uint32_t)n;
+		return 0;
+	}
+	if (!file_stdin_active()) {
+		console_write("no input: give a file name or use a pipe\n");
+		return 1;
+	}
+	buf = kmalloc(STDIN_MAX + 1);
+	if (!buf) {
+		console_write("out of memory\n");
+		return 1;
+	}
+	while (t->len < STDIN_MAX && (n = console_stdin_read(buf + t->len, STDIN_MAX - t->len)) > 0)
+		t->len += (uint32_t)n;
+	buf[t->len] = '\0';
+	t->data = buf;
+	return 0;
+}
+
+static char lower(char c)
+{
+	return c >= 'A' && c <= 'Z' ? (char)(c + 32) : c;
+}
+
+static int equal_at(const char *s, const char *pat, size_t n, int icase)
+{
+	size_t i;
+
+	for (i = 0; i < n; i++) {
+		if (icase ? lower(s[i]) != lower(pat[i]) : s[i] != pat[i])
+			return 0;
+	}
+	return 1;
+}
+
+/* Does the line contain pat? A leading '^' anchors it to the start, a trailing '$' to the end. */
+static int line_matches(const char *line, const char *pat, int icase)
+{
+	size_t plen = kstrlen(pat), llen = kstrlen(line), i;
+	int head = 0, tail = 0;
+
+	if (plen && pat[0] == '^') {
+		head = 1;
+		pat++;
+		plen--;
+	}
+	if (plen && pat[plen - 1] == '$') {
+		tail = 1;
+		plen--;
+	}
+	if (plen > llen)
+		return 0;
+	if (head && tail)
+		return plen == llen && equal_at(line, pat, plen, icase);
+	if (head)
+		return equal_at(line, pat, plen, icase);
+	if (tail)
+		return equal_at(line + llen - plen, pat, plen, icase);
+	for (i = 0; i + plen <= llen; i++)
+		if (equal_at(line + i, pat, plen, icase))
+			return 1;
+	return 0;
+}
+
+int tu_grep(int argc, char **argv)
+{
+	int invert = 0, icase = 0, number = 0, count = 0, a = 1, matched = 0, rc = 1, nfiles, f;
+	const char *pat;
+
+	while (a < argc && argv[a][0] == '-' && argv[a][1]) {
+		const char *o;
+
+		for (o = argv[a] + 1; *o; o++) {
+			switch (*o) {
+			case 'v': invert = 1; break;
+			case 'i': icase = 1; break;
+			case 'n': number = 1; break;
+			case 'c': count = 1; break;
+			default:
+				console_printf("grep: unknown option -%c\n", *o);
+				return 2;
+			}
+		}
+		a++;
+	}
+	if (a >= argc) {
+		console_write("usage: grep [-ivnc] pattern [file...]\n");
+		return 2;
+	}
+	pat = argv[a++];
+	nfiles = argc - a;
+	for (f = 0; f < (nfiles ? nfiles : 1); f++) {
+		const char *name = nfiles ? argv[a + f] : 0;
+		struct text t;
+		char *p, *eol;
+		int lineno = 0, hits = 0;
+
+		if (load_text(name, &t)) {
+			rc = 2;
+			continue;
+		}
+		for (p = t.data; p < t.data + t.len; p = eol + 1) {
+			int hit;
+
+			eol = p;
+			while (eol < t.data + t.len && *eol != '\n')
+				eol++;
+			*eol = '\0'; /* the buffer has a spare byte after its end */
+			lineno++;
+			hit = line_matches(p, pat, icase) != invert;
+			if (hit) {
+				hits++;
+				matched = 1;
+				if (!count) {
+					if (nfiles > 1)
+						console_printf("%s:", name);
+					if (number)
+						console_printf("%d:", lineno);
+					console_printf("%s\n", p);
+				}
+			}
+		}
+		if (count) {
+			if (nfiles > 1)
+				console_printf("%s:", name);
+			console_printf("%d\n", hits);
+		}
+		kfree(t.data);
+		if (shell_interrupted())
+			break;
+	}
+	return rc == 2 ? 2 : !matched;
+}
