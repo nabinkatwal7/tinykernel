@@ -3950,6 +3950,7 @@ static const struct command commands[] = {
 	{ "tail",    "tail [-n N] [file]",    "last lines of a file", tu_tail },
 	{ "sort",    "sort [-nru] [file...]", "sort lines", tu_sort },
 	{ "find",    "find [dir] [-name pat]", "search a directory tree", tu_find },
+	{ "diff",    "diff file1 file2",      "compare two files line by line", tu_diff },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },

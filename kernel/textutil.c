@@ -522,3 +522,107 @@ int tu_find(int argc, char **argv)
 	find_walk(start, 0, &o);
 	return !o.hits;
 }
+
+#define DIFF_MAX_LINES 400
+
+/* Splits a text into lines in place; returns how many (at most max). */
+static int split_lines(struct text *t, char **v, int max)
+{
+	char *p = t->data, *eol;
+	int n = 0;
+
+	while (p < t->data + t->len && n < max) {
+		eol = p;
+		while (eol < t->data + t->len && *eol != '\n')
+			eol++;
+		*eol = '\0';
+		v[n++] = p;
+		p = eol + 1;
+	}
+	return n;
+}
+
+static void range(int from, int to) /* 1-based, inclusive; prints "a" or "a,b" */
+{
+	if (from == to)
+		console_printf("%d", from);
+	else
+		console_printf("%d,%d", from, to);
+}
+
+/* diff file1 file2 : the lines that differ, in the classic "ed" style (NcM / NaM / NdM, '<' old, '>' new) */
+int tu_diff(int argc, char **argv)
+{
+	static char *va[DIFF_MAX_LINES], *vb[DIFF_MAX_LINES];
+	struct text ta, tb;
+	uint16_t *lcs;
+	int na, nb, i = 0, j = 0, differ = 0, w, del, add;
+
+	if (argc != 3) {
+		console_write("usage: diff file1 file2\n");
+		return 2;
+	}
+	if (load_text(argv[1], &ta))
+		return 2;
+	if (load_text(argv[2], &tb)) {
+		kfree(ta.data);
+		return 2;
+	}
+	na = split_lines(&ta, va, DIFF_MAX_LINES);
+	nb = split_lines(&tb, vb, DIFF_MAX_LINES);
+	if ((na == DIFF_MAX_LINES && ta.len) || (nb == DIFF_MAX_LINES && tb.len))
+		console_printf("diff: only the first %d lines of each file are compared\n", DIFF_MAX_LINES);
+	w = nb + 1;
+	lcs = kcalloc((size_t)(na + 1) * (size_t)w, sizeof *lcs);
+	if (!lcs) {
+		console_write("diff: out of memory\n");
+		kfree(ta.data);
+		kfree(tb.data);
+		return 2;
+	}
+	/* lcs[i][j]: length of the longest common subsequence of a[i..] and b[j..] */
+	for (i = na - 1; i >= 0; i--)
+		for (j = nb - 1; j >= 0; j--)
+			lcs[i * w + j] = !kstrcmp(va[i], vb[j]) ? (uint16_t)(lcs[(i + 1) * w + j + 1] + 1)
+				: (lcs[(i + 1) * w + j] >= lcs[i * w + j + 1] ? lcs[(i + 1) * w + j] : lcs[i * w + j + 1]);
+	i = j = 0;
+	while (i < na || j < nb) {
+		int si = i, sj = j;
+
+		if (i < na && j < nb && !kstrcmp(va[i], vb[j])) {
+			i++;
+			j++;
+			continue;
+		}
+		/* a run of differences: advance until the files line up again */
+		while ((i < na || j < nb) && !(i < na && j < nb && !kstrcmp(va[i], vb[j]))) {
+			if (j >= nb || (i < na && lcs[(i + 1) * w + j] >= lcs[i * w + j + 1]))
+				i++;
+			else
+				j++;
+		}
+		differ = 1;
+		del = i - si;
+		add = j - sj;
+		if (del)
+			range(si + 1, i);
+		else
+			console_printf("%d", si);
+		console_putchar(del && add ? 'c' : del ? 'd' : 'a');
+		if (add)
+			range(sj + 1, j);
+		else
+			console_printf("%d", sj);
+		console_putchar('\n');
+		for (; si < i; si++)
+			console_printf("< %s\n", va[si]);
+		if (del && add)
+			console_write("---\n");
+		for (; sj < j; sj++)
+			console_printf("> %s\n", vb[sj]);
+	}
+	kfree(lcs);
+	kfree(ta.data);
+	kfree(tb.data);
+	return differ;
+}

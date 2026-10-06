@@ -16,4 +16,6 @@ int tu_sort(int argc, char **argv);   /* sort [-nru] [file...]: sorted lines (nu
 
 int tu_find(int argc, char **argv);   /* find [dir] [-name pattern] [-type f|d]: walk a directory tree */
 
+int tu_diff(int argc, char **argv);   /* diff file1 file2: differing lines, ed style; status 1 when the files differ */
+
 #endif
