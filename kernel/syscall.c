@@ -104,6 +104,26 @@ void syscall_dispatch(struct regs *r)
 	case SYS_SBRK:
 		r->eax = user_sbrk((int32_t)r->ebx);
 		break;
+	case SYS_EXEC: {
+		char *const *av = (char *const *)r->ecx;
+		uint32_t i;
+		int ok = user_str_ok(r->ebx);
+
+		if (ok && av) { /* the argv array and every string in it must lie in the window */
+			ok = 0;
+			for (i = 0; i < 16 && user_ptr_ok((uint32_t)&av[i], 4); i++) {
+				if (!av[i]) {
+					ok = 1;
+					break;
+				}
+				if (!user_str_ok((uint32_t)av[i]))
+					break;
+			}
+		}
+		if (!ok || user_exec(r, (const char *)r->ebx, av))
+			r->eax = (uint32_t)-1;
+		break;
+	}
 	case SYS_GETPID:
 		r->eax = task_current()->id;
 		break;

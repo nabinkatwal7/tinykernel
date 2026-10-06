@@ -6,6 +6,7 @@
 #include "env.h"
 #include "fs.h"
 #include "gdt.h"
+#include "idt.h"
 #include "io.h"
 #include "klog.h"
 #include "kmalloc.h"
@@ -20,6 +21,7 @@
 
 static int active;
 static volatile int abort_requested;
+static uint32_t cur_frames; /* physical frames behind the running program's window */
 static uint32_t brk, brk_min; /* program break: the heap lives between the image and the stack */
 
 /* Move the break by delta bytes; returns the old break or (uint32_t)-1. */
@@ -84,8 +86,6 @@ static int load_image(const char *name, uint8_t *dst, uint32_t *size, uint32_t *
 	unsigned i;
 	int n, rc = 0;
 
-	memset(dst, 0, USER_PAGES * PAGE_SIZE);
-
 	if (fs_mounted() && (n = fs_size(name)) >= 0) {
 		if (n == 0 || (uint32_t)n > 256 * 1024)
 			return -2;
@@ -108,6 +108,7 @@ static int load_image(const char *name, uint8_t *dst, uint32_t *size, uint32_t *
 	if (!img)
 		return -1;
 
+	memset(dst, 0, USER_PAGES * PAGE_SIZE); /* only now: a failed lookup must not wipe the caller */
 	if (elf_is_elf(img, len)) {
 		rc = elf_load(img, len, dst, USER_BASE, limit, entry, image_end);
 		if (rc)
@@ -174,6 +175,49 @@ static uint32_t push_args(uint32_t frames, int argc, char **argv)
 	return sp;
 }
 
+/*
+ * exec(): replace the running program with another one. The new image is loaded into the same
+ * window and the interrupt frame is rewritten so that returning from the system call starts it
+ * from the top with fresh arguments. Returns -1 (program untouched) if the path is unknown;
+ * if the new image turns out to be unloadable the old one is already gone, so it is stopped.
+ */
+int user_exec(struct regs *r, const char *path, char *const *user_argv)
+{
+	static char names[ARGS_MAX][64];
+	static char pathbuf[FS_NAME_MAX];
+	char *argv[ARGS_MAX];
+	int argc = 0, i, rc;
+	uint32_t size, entry = USER_BASE, image_end = USER_BASE;
+
+	kstrlcpy(pathbuf, path, sizeof pathbuf);
+	if (user_argv) {
+		for (; argc < ARGS_MAX && user_argv[argc]; argc++) {
+			kstrlcpy(names[argc], user_argv[argc], sizeof names[argc]);
+			argv[argc] = names[argc];
+		}
+	}
+	if (argc == 0) {
+		kstrlcpy(names[0], pathbuf, sizeof names[0]);
+		argv[argc++] = names[0];
+	}
+
+	rc = load_image(pathbuf, (uint8_t *)cur_frames, &size, &entry, &image_end);
+	if (rc == -1)
+		return -1;
+	if (rc) {
+		console_printf("exec: cannot load %s\n", pathbuf);
+		user_abort();
+	}
+	file_close_all();
+	brk_min = brk = (image_end + 15) & ~15u;
+	r->useresp = push_args(cur_frames, argc, argv);
+	r->eip = entry;
+	r->eax = r->ebx = r->ecx = r->edx = r->esi = r->edi = r->ebp = 0;
+	(void)i;
+	klog(LOG_INFO, "user: exec '%s' (%u bytes)", pathbuf, size);
+	return 0;
+}
+
 int user_run(const char *name)
 {
 	char *argv[1] = { (char *)name };
@@ -203,6 +247,7 @@ int user_run_args(const char *name, int argc, char **argv)
 		if (paging_map(udir, USER_BASE + i * PAGE_SIZE, frames + i * PAGE_SIZE,
 			       PTE_RW | PTE_US))
 			goto fail;
+	cur_frames = frames;
 	switch (load_image(name, (uint8_t *)frames, &size, &entry, &image_end)) { /* kernel writes via the identity map */
 	case 0:
 		break;

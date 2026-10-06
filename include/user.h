@@ -16,6 +16,8 @@ int  user_run_args(const char *name, int argc, char **argv);
 void user_abort(void) __attribute__((noreturn)); /* called from the fault handler */
 void user_exit(int code) __attribute__((noreturn));
 int  user_is_active(void);
+struct regs;
+int  user_exec(struct regs *r, const char *path, char *const *user_argv); /* 0 = switched, -1 = no such program */
 uint32_t user_sbrk(int32_t delta); /* grow/shrink the program heap; old break or (uint32_t)-1 */
 void user_request_abort(void);     /* checked at every syscall; for Ctrl+C while the program is in the kernel */
 int  user_abort_requested(void);
