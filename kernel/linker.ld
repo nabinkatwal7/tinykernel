@@ -1,5 +1,5 @@
 /* Link the kernel at 1 MiB — above the low memory BIOS/bootloader use. */
-ENTRY(_kernel_main)
+ENTRY(_kernel_start)
 
 SECTIONS
 {
@@ -10,7 +10,9 @@ SECTIONS
 		KEEP(*(.mbhdr))
 	}
 
+	/* The bootloader jumps to the first byte after the header: keep the entry stub first. */
 	.text : {
+		*(.text.entry)
 		*(.text .text.*)
 	}
 
@@ -27,6 +29,8 @@ SECTIONS
 		*(.bss .bss.*)
 		*(COMMON)
 	}
+
+	_kernel_end = ALIGN(4096);
 
 	/DISCARD/ : {
 		*(.eh_frame)

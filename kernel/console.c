@@ -2,13 +2,34 @@
 
 #include <stdarg.h>
 
+#include "io.h"
+#include "kprintf.h"
+#include "serial.h"
+
 #define VGA_WIDTH  80
 #define VGA_HEIGHT 25
-#define VGA_ATTR   0x0F /* white on black */
+#define VGA_TOP    1 /* row 0 is reserved for the status bar */
 #define VGA_ADDR   ((volatile unsigned short *)0xB8000)
+#define STATUS_ATTR 0x70 /* black on light grey */
 
 static int cursor_x;
-static int cursor_y;
+static int cursor_y = VGA_TOP;
+static uint8_t attr = 0x0F; /* white on black */
+
+static unsigned short cell(char c)
+{
+	return (unsigned short)((unsigned char)c | (attr << 8));
+}
+
+static void update_cursor(void)
+{
+	unsigned short pos = (unsigned short)(cursor_y * VGA_WIDTH + cursor_x);
+
+	outb(0x3D4, 0x0F);
+	outb(0x3D5, (uint8_t)(pos & 0xFF));
+	outb(0x3D4, 0x0E);
+	outb(0x3D5, (uint8_t)(pos >> 8));
+}
 
 static void scroll_if_needed(void)
 {
@@ -17,45 +38,79 @@ static void scroll_if_needed(void)
 	if (cursor_y < VGA_HEIGHT)
 		return;
 
-	for (i = 0; i < VGA_WIDTH * (VGA_HEIGHT - 1); i++)
+	for (i = VGA_TOP * VGA_WIDTH; i < VGA_WIDTH * (VGA_HEIGHT - 1); i++)
 		VGA_ADDR[i] = VGA_ADDR[i + VGA_WIDTH];
 	for (i = VGA_WIDTH * (VGA_HEIGHT - 1); i < VGA_WIDTH * VGA_HEIGHT; i++)
-		VGA_ADDR[i] = (unsigned short)(' ' | (VGA_ATTR << 8));
+		VGA_ADDR[i] = cell(' ');
 	cursor_y = VGA_HEIGHT - 1;
+}
+
+static void newline(void)
+{
+	cursor_x = 0;
+	cursor_y++;
+	scroll_if_needed();
+}
+
+static void put_screen(char c)
+{
+	switch (c) {
+	case '\n':
+		newline();
+		return;
+	case '\r':
+		cursor_x = 0;
+		return;
+	case '\b':
+		if (cursor_x > 0) {
+			cursor_x--;
+		} else if (cursor_y > VGA_TOP) {
+			cursor_y--;
+			cursor_x = VGA_WIDTH - 1;
+		} else {
+			return;
+		}
+		VGA_ADDR[cursor_y * VGA_WIDTH + cursor_x] = cell(' ');
+		return;
+	case '\t':
+		do
+			put_screen(' ');
+		while (cursor_x % 4);
+		return;
+	}
+
+	VGA_ADDR[cursor_y * VGA_WIDTH + cursor_x] = cell(c);
+	if (++cursor_x >= VGA_WIDTH)
+		newline();
 }
 
 void console_clear(void)
 {
+	uint32_t f = irq_save();
 	int i;
 
-	for (i = 0; i < VGA_WIDTH * VGA_HEIGHT; i++)
-		VGA_ADDR[i] = (unsigned short)(' ' | (VGA_ATTR << 8));
+	for (i = VGA_TOP * VGA_WIDTH; i < VGA_WIDTH * VGA_HEIGHT; i++)
+		VGA_ADDR[i] = cell(' ');
 	cursor_x = 0;
-	cursor_y = 0;
+	cursor_y = VGA_TOP;
+	update_cursor();
+	irq_restore(f);
 }
 
 void console_putchar(char c)
 {
-	if (c == '\n') {
-		cursor_x = 0;
-		cursor_y++;
-		scroll_if_needed();
-		return;
-	}
+	uint32_t f = irq_save();
 
-	if (c == '\r') {
-		cursor_x = 0;
-		return;
+	if (c == '\b') {
+		serial_putc('\b');
+		serial_putc(' ');
+		serial_putc('\b');
+	} else {
+		serial_putc(c);
 	}
-
-	VGA_ADDR[cursor_y * VGA_WIDTH + cursor_x] =
-		(unsigned short)((unsigned char)c | (VGA_ATTR << 8));
-	cursor_x++;
-	if (cursor_x >= VGA_WIDTH) {
-		cursor_x = 0;
-		cursor_y++;
-		scroll_if_needed();
-	}
+	put_screen(c);
+	update_cursor();
+	irq_restore(f);
 }
 
 void console_write(const char *s)
@@ -64,73 +119,33 @@ void console_write(const char *s)
 		console_putchar(*s++);
 }
 
-static void print_uint(unsigned int n)
+void console_set_color(uint8_t fg, uint8_t bg)
 {
-	char buf[10];
-	int i = 0;
-
-	if (n == 0) {
-		console_putchar('0');
-		return;
-	}
-	while (n) {
-		buf[i++] = (char)('0' + (n % 10));
-		n /= 10;
-	}
-	while (i--)
-		console_putchar(buf[i]);
+	attr = (uint8_t)((bg << 4) | (fg & 0x0F));
 }
 
-static void print_int(int n)
+void console_status(const char *text)
 {
-	if (n < 0) {
-		console_putchar('-');
-		/* ponytail: INT_MIN not handled */
-		print_uint((unsigned int)(-n));
-	} else {
-		print_uint((unsigned int)n);
-	}
+	uint32_t f = irq_save();
+	int i;
+
+	for (i = 0; i < VGA_WIDTH; i++)
+		VGA_ADDR[i] = (unsigned short)((unsigned char)(*text ? *text++ : ' ')
+					       | (STATUS_ATTR << 8));
+	irq_restore(f);
 }
 
-/* %c %s %d %u %% — enough for early kernel logging */
+static void put_cb(char c, void *ctx)
+{
+	(void)ctx;
+	console_putchar(c);
+}
+
 void console_printf(const char *fmt, ...)
 {
 	va_list ap;
-	char c;
 
 	va_start(ap, fmt);
-	while ((c = *fmt++) != '\0') {
-		if (c != '%') {
-			console_putchar(c);
-			continue;
-		}
-		c = *fmt++;
-		switch (c) {
-		case 'c':
-			console_putchar((char)va_arg(ap, int));
-			break;
-		case 's': {
-			const char *s = va_arg(ap, const char *);
-			console_write(s ? s : "(null)");
-			break;
-		}
-		case 'd':
-			print_int(va_arg(ap, int));
-			break;
-		case 'u':
-			print_uint(va_arg(ap, unsigned int));
-			break;
-		case '%':
-			console_putchar('%');
-			break;
-		case '\0':
-			goto done;
-		default:
-			console_putchar('%');
-			console_putchar(c);
-			break;
-		}
-	}
-done:
+	kvformat(put_cb, 0, fmt, ap);
 	va_end(ap);
 }
