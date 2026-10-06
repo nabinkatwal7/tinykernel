@@ -35,6 +35,7 @@
 #include "paging.h"
 #include "ksym.h"
 #include "pcache.h"
+#include "pipe.h"
 #include "percpu.h"
 #include "pci.h"
 #include "pmm.h"
@@ -2871,6 +2872,57 @@ static int cmd_gdbstub(int argc, char **argv)
 	return 0;
 }
 
+#define PIPE_TEST_BYTES 20000
+
+static void pipe_writer(void *arg)
+{
+	struct pipe *p = arg;
+	uint8_t chunk[333];
+	uint32_t sent = 0, i, n;
+
+	while (sent < PIPE_TEST_BYTES) {
+		n = PIPE_TEST_BYTES - sent < sizeof chunk ? PIPE_TEST_BYTES - sent : sizeof chunk;
+		for (i = 0; i < n; i++)
+			chunk[i] = (uint8_t)((sent + i) % 251);
+		if (pipe_write(p, chunk, n) != (int)n)
+			break;
+		sent += n;
+	}
+	pipe_close_write(p);
+}
+
+/* pipetest : a writer task pushes 20000 bytes through a 4 KiB pipe to this task (both sides must block) */
+static int cmd_pipetest(int argc, char **argv)
+{
+	struct pipe *p = pipe_new(), *q;
+	uint8_t buf[500];
+	uint32_t total = 0, bad = 0, i;
+	int n, ok;
+
+	(void)argc;
+	(void)argv;
+	if (!p)
+		return 1;
+	task_create("pipe-writer", pipe_writer, p, PRIO_DEFAULT);
+	while ((n = pipe_read(p, buf, sizeof buf)) > 0) {
+		for (i = 0; i < (uint32_t)n; i++)
+			if (buf[i] != (uint8_t)((total + i) % 251))
+				bad++;
+		total += (uint32_t)n;
+	}
+	ok = total == PIPE_TEST_BYTES && !bad;
+	console_printf("pipe: %u bytes through, %u wrong, end of file after the writer closed: %s\n", total, bad,
+		       ok ? "ok" : "FAILED");
+	pipe_close_read(p);
+
+	q = pipe_new(); /* writing with no reader left fails instead of blocking forever */
+	pipe_close_read(q);
+	n = pipe_write(q, "x", 1);
+	console_printf("write with no reader: %d (expected -1)\n", n);
+	pipe_close_write(q);
+	return !(ok && n == -1);
+}
+
 /* panic [message] : test the panic path and its stack trace */
 static int cmd_panic(int argc, char **argv)
 {
@@ -3371,6 +3423,7 @@ static const struct command commands[] = {
 	{ "assert",  "assert",                "trip a failing assertion (tests the panic message)", cmd_assert },
 	{ "crashdump", "crashdump [show|clear]", "show the crash dump saved by the last panic", cmd_crashdump },
 	{ "gdbstub", "gdbstub",               "stop in a GDB remote stub on COM2", cmd_gdbstub },
+	{ "pipetest", "pipetest",             "test pipes between two tasks", cmd_pipetest },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },

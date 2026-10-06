@@ -31,6 +31,7 @@ static const struct test tests[] = {
 	{ "task exit codes",       "waittest",            0, 0 },
 	{ "producer/consumer",     "prodcons",            0, 0 },
 	{ "scheduler priorities",  "priotest",            0, 0 },
+	{ "pipes between tasks",   "pipetest",            0, 0 },
 	{ "user: strings",         "run strtest",         0, 0 },
 	{ "user: printf",          "run printftest",      0, 0 },
 	{ "user: malloc",          "run malloctest",      0, 0 },
