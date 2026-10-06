@@ -27,6 +27,7 @@
 #include "timer.h"
 #include "user.h"
 #include "vga.h"
+#include "wm.h"
 #include "vfs.h"
 #include "version.h"
 
@@ -1645,6 +1646,50 @@ static int cmd_gfxtext(int argc, char **argv)
 	return 0;
 }
 
+static void paint_text(struct window *w, int cx, int cy)
+{
+	gfx_text(cx + 4, cy + 4, (const char *)w->data, 0, -1);
+}
+
+/* wmdemo: three draggable windows. Click a title bar and drag; any key quits. */
+static int cmd_wmdemo(int argc, char **argv)
+{
+	static const char *const msg[3] = { "I am window 1", "Second window", "Drag my title bar" };
+	struct window *w;
+	struct mouse_state m;
+	int i;
+
+	(void)argc;
+	(void)argv;
+	if (!mouse_present()) {
+		console_write("wmdemo needs the PS/2 mouse\n");
+		return 1;
+	}
+	if (gfx_enter())
+		return 1;
+	wm_init(3);
+	for (i = 0; i < 3; i++) {
+		w = wm_create(20 + i * 50, 20 + i * 35, 140, 80, i == 0 ? "Alpha" : i == 1 ? "Beta" : "Gamma",
+			      (uint8_t)(7 + i % 2 * 7));
+		w->paint = paint_text;
+		w->data = (void *)msg[i];
+	}
+	mousecursor_enable(0); /* the text-mode pointer would only paint the hidden text screen */
+	mouse_get(&m);
+	wm_mouse(m.x / 2, m.y / 2, m.buttons);
+	wm_render();
+	while (keyboard_trygetkey() < 0) {
+		mouse_get(&m);
+		if (wm_mouse(m.x / 2, m.y / 2, m.buttons))
+			wm_render();
+		task_sleep(20);
+	}
+	vga_set_text();
+	console_clear();
+	mousecursor_enable(1);
+	return 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -2160,6 +2205,7 @@ static const struct command commands[] = {
 	{ "gfxshapes", "gfxshapes",          "rectangles, circles and triangles demo", cmd_gfxshapes },
 	{ "gfxtext", "gfxtext",              "bitmap font demo", cmd_gfxtext },
 	{ "gfxmode", "gfxmode on|off",       "run the console on the graphics screen", cmd_gfxmode },
+	{ "wmdemo",  "wmdemo",                "window manager demo (mouse)", cmd_wmdemo },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },

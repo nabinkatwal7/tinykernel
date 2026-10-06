@@ -1,4 +1,3 @@
-Build simple window manager concept,
 Add simple GUI button demo,
 Add serial console input,
 Add PC speaker driver,
