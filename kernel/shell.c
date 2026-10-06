@@ -1303,9 +1303,24 @@ static int cmd_cachestat(int argc, char **argv)
 		console_write("block cache emptied\n");
 	}
 	bc_stats_get(&s);
-	console_printf("block cache: %u/%u sectors cached, %u hits, %u misses (%u%% hit rate), %u writes\n",
-		       s.entries, s.capacity, s.hits, s.misses,
-		       s.hits + s.misses ? s.hits * 100 / (s.hits + s.misses) : 0, s.writes);
+	console_printf("block cache: %u/%u sectors cached (%u dirty), %u hits, %u misses (%u%% hit rate)\n"
+		       "             %u writes, %u written back\n",
+		       s.entries, s.capacity, s.dirty, s.hits, s.misses,
+		       s.hits + s.misses ? s.hits * 100 / (s.hits + s.misses) : 0, s.writes, s.writebacks);
+	return 0;
+}
+
+static int cmd_sync(int argc, char **argv)
+{
+	int n = bc_flush();
+
+	(void)argc;
+	(void)argv;
+	if (n < 0) {
+		console_write("sync: disk error\n");
+		return 1;
+	}
+	console_printf("synced %d sector(s)\n", n);
 	return 0;
 }
 
@@ -1621,6 +1636,7 @@ static int cmd_disk(int argc, char **argv)
 			       ata_sectors() / 2);
 		return 0;
 	}
+	bc_flush(); /* the raw read below bypasses the cache */
 	if (kstrtoul(argv[1], &lba) || ata_read(lba, 1, sec)) {
 		console_write("read failed\n");
 		return 1;
@@ -1707,6 +1723,8 @@ static int cmd_reboot(int argc, char **argv)
 {
 	(void)argc;
 	(void)argv;
+	console_write("flushing disk cache... ");
+	bc_flush();
 	console_write("rebooting...\n");
 	cli();
 	while (inb(0x64) & 0x02)
@@ -1721,6 +1739,7 @@ static int cmd_halt(int argc, char **argv)
 {
 	(void)argc;
 	(void)argv;
+	bc_flush();
 	console_write("halted. You can close the window.\n");
 	cli();
 	for (;;)
@@ -1812,6 +1831,7 @@ static const struct command commands[] = {
 	{ "df",      "df",                    "disk space usage", cmd_df },
 	{ "edit",    "edit <file>",           "full-screen text editor", cmd_edit },
 	{ "cachestat", "cachestat [drop]",    "block cache statistics", cmd_cachestat },
+	{ "sync",    "sync",                  "flush cached writes to disk", cmd_sync },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },

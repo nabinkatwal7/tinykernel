@@ -1,4 +1,5 @@
 #include "ata.h"
+#include "bcache.h"
 #include "console.h"
 #include "fs.h"
 #include "gdt.h"
@@ -62,6 +63,7 @@ void kernel_main(void)
 	}
 
 	task_create("status", status_task, 0, 7);
+	bc_start_flusher();
 	console_status(" " KERNEL_NAME " " KERNEL_VERSION);
 	shell_run();
 }
