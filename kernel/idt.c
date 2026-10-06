@@ -1,5 +1,7 @@
 #include "idt.h"
 
+#include "gdbstub.h"
+
 #include "console.h"
 #include "debug.h"
 #include "gdt.h"
@@ -104,6 +106,11 @@ static void exception(struct regs *r)
 
 	if (r->int_no == 14) {
 		paging_fault(r); /* returns only when it resolved the fault (copy-on-write) */
+		return;
+	}
+
+	if ((r->int_no == 1 || r->int_no == 3) && !(r->cs & 3) && gdbstub_active()) {
+		gdbstub_trap(r);
 		return;
 	}
 

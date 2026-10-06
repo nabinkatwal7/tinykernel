@@ -47,6 +47,8 @@ def main():
         "-display", "none",
         "-chardev", f"socket,id=s0,host=127.0.0.1,port={port + 1},server=on,wait=off,logfile={serial}",
         "-serial", "chardev:s0",
+        "-chardev", f"socket,id=s1,host=127.0.0.1,port={port + 2},server=on,wait=off",
+        "-serial", "chardev:s1",
         "-monitor", f"tcp:127.0.0.1:{port},server,nowait"])
     time.sleep(1.5)
     s = socket.create_connection(("127.0.0.1", port))
@@ -60,10 +62,20 @@ def main():
         time.sleep(3.0)              # let the 2-second boot menu time out
     time.sleep(0.5)
     host_udp = None
+    gdb = socket.create_connection(("127.0.0.1", port + 2)); gdb.settimeout(3)
     host_log = []
     for line in args:
         if line.startswith("ser:"):  # text typed on the serial port; the two characters backslash-r mean Enter
             ser.sendall(line[4:].replace(chr(92) + "r", chr(13)).encode()); time.sleep(0.6); continue
+        if line.startswith("gdb:"):       # gdb:<packet> -> send a GDB remote packet to COM2 and print the reply ("gdb:" only reads)
+            if line[4:]:
+                body = line[4:]; gdb.sendall(("$%s#%02x" % (body, sum(body.encode()) & 255)).encode())
+            data = b""
+            try:
+                while not (b"#" in data and len(data) >= data.index(b"#") + 3 and b"$" in data): data += gdb.recv(4096)
+            except socket.timeout: pass
+            gdb.sendall(b"+")
+            print("gdb<", data.decode(errors="replace")); continue
         if line.startswith("hostudp:"):   # hostudp:<text> -> datagram to guest port 7777 (forwarded 5601)
             u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); u.sendto(line[8:].encode(), ("127.0.0.1", 5601)); time.sleep(0.6); continue
         if line.startswith("hostlisten:"):   # hostlisten:<udp port> -> collect datagrams the guest sends to 10.0.2.2:<port>

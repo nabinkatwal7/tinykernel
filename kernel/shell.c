@@ -12,6 +12,7 @@
 #include "cpu.h"
 #include "crashdump.h"
 #include "debug.h"
+#include "gdbstub.h"
 #include "dhcp.h"
 #include "editor.h"
 #include "env.h"
@@ -2861,6 +2862,15 @@ static int cmd_crashdump(int argc, char **argv)
 	return crash_show();
 }
 
+/* gdbstub : break into a GDB session attached to COM2 */
+static int cmd_gdbstub(int argc, char **argv)
+{
+	(void)argc;
+	(void)argv;
+	gdbstub_arm();
+	return 0;
+}
+
 /* panic [message] : test the panic path and its stack trace */
 static int cmd_panic(int argc, char **argv)
 {
@@ -3360,6 +3370,7 @@ static const struct command commands[] = {
 	{ "backtrace", "backtrace",          "print the current kernel call chain", cmd_backtrace },
 	{ "assert",  "assert",                "trip a failing assertion (tests the panic message)", cmd_assert },
 	{ "crashdump", "crashdump [show|clear]", "show the crash dump saved by the last panic", cmd_crashdump },
+	{ "gdbstub", "gdbstub",               "stop in a GDB remote stub on COM2", cmd_gdbstub },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
