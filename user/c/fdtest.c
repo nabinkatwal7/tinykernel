@@ -49,7 +49,7 @@ int main(void)
 	fd = open("fdtest.out", O_RDONLY);
 	memset(buf, 0, sizeof buf);
 	n = read(fd, buf, sizeof buf);
-	check(n == 12 && !strcmp(buf, "captured 123\n"), "printf output landed in the file");
+	check(n == 13 && !strcmp(buf, "captured 123\n"), "printf output landed in the file");
 	close(fd);
 
 	check(dup2(99, 5) < 0, "dup2 of a bad descriptor fails");
