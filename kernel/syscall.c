@@ -206,6 +206,20 @@ void syscall_dispatch(struct regs *r)
 	case SYS_MUNMAP:
 		r->eax = (uint32_t)mmap_unmap(r->ebx);
 		break;
+	case SYS_PIPE: {
+		int fds[2];
+
+		if (!user_ptr_ok(r->ebx, sizeof fds)) {
+			r->eax = (uint32_t)-1;
+			break;
+		}
+		r->eax = (uint32_t)file_pipe(fds);
+		if (!r->eax) {
+			((int *)r->ebx)[0] = fds[0];
+			((int *)r->ebx)[1] = fds[1];
+		}
+		break;
+	}
 	case SYS_MSYNC:
 		r->eax = (uint32_t)mmap_sync(r->ebx);
 		break;

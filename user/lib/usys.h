@@ -16,6 +16,7 @@
 #define SYS_MMAP    31
 #define SYS_MUNMAP  32
 #define SYS_MSYNC   33
+#define SYS_PIPE    34
 #define SYS_SHMGET  28
 #define SYS_SHMAT   29
 #define SYS_SHMDT   30
@@ -99,6 +100,7 @@ static inline int   shmdt(void *addr)              { return syscall3(SYS_SHMDT, 
 /* Map a file (length 0 = all of it). Shared mappings are written back by msync/munmap. 0 on failure. */
 static inline void *mmap(const char *path, unsigned length, int flags) { return (void *)syscall3(SYS_MMAP, (int)path, (int)length, flags); }
 static inline int   munmap(void *addr)             { return syscall3(SYS_MUNMAP, (int)addr, 0, 0); }
+static inline int   pipe(int fds[2])                { return syscall3(SYS_PIPE, (int)fds, 0, 0); }
 static inline int   msync(void *addr)              { return syscall3(SYS_MSYNC, (int)addr, 0, 0); }
 static inline int  getpid(void)                    { return syscall3(SYS_GETPID, 0, 0, 0); }
 static inline int  getppid(void)                   { return syscall3(SYS_GETPPID, 0, 0, 0); }

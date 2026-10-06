@@ -36,6 +36,7 @@
 #define SYS_MMAP    31 /* ebx = path, ecx = length (0 = whole file), edx = flags (1 = shared); returns an address or 0 */
 #define SYS_MUNMAP  32 /* ebx = address */
 #define SYS_MSYNC   33 /* ebx = address */
+#define SYS_PIPE    34 /* ebx = int[2] receiving the read and write descriptors */
 #define SYS_FWRITE  10 /* ebx = fd, ecx = buffer, edx = count; fd 1 and 2 are the console */
 
 void syscall_dispatch(struct regs *r);

@@ -102,14 +102,13 @@ $(BUILD)/c_%.elf: $(BUILD)/uc_%.o $(ULIB_OBJS) user/user.ld
 $(BUILD)/kernel.pe: $(OBJS) kernel/linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)
 
-# Include .bss so zero-initialised state lands in the image.
 $(BUILD)/ksymgen.exe: tools/ksymgen.c | $(BUILD)
 	gcc -O2 -o $@ $<
 
-# The symbol table is filled in after linking: nm lists the functions, ksymgen patches them into the image.
+# .bss is not part of the image (entry.S clears it at boot). The symbol table is filled in after linking: nm lists the functions, ksymgen patches them into the image.
 $(KERNEL_BIN): $(BUILD)/kernel.pe $(BUILD)/ksymgen.exe
 	$(OBJCOPY) -O binary -j .mbhdr -j .text -j .rodata -j .data -j .bootpd \
-		--set-section-flags .bss=alloc,load,contents -j .bss $< $@
+		$< $@
 	nm -n $< | $(BUILD)/ksymgen.exe $@ 0xC0100000
 	@test $$(stat -c%s $@) -le $$(($(KERNEL_SECTORS) * 512)) || \
 		{ echo "kernel.bin exceeds $(KERNEL_SECTORS) sectors: raise KERNEL_SECTORS"; rm -f $@; exit 1; }

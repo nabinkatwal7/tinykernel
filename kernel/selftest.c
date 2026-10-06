@@ -44,6 +44,7 @@ static const struct test tests[] = {
 	{ "user: directories",     "run dirtest",         1, 0 },
 	{ "user: seek",            "run seektest",        1, 0 },
 	{ "user: descriptors",     "run fdtest",          1, 0 },
+	{ "user: pipe syscall",    "run pipetest",        0, 0 },
 	{ "icmp loopback",         "icmptest",            0, 1 },
 	{ "udp loopback",          "udp test",            0, 1 },
 };

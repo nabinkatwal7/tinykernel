@@ -1,4 +1,3 @@
-Implement pipe syscall,
 Add shell pipelines,
 Add output redirection operators,
 Add input redirection operator,
