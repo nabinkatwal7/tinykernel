@@ -61,6 +61,11 @@ fill:
 	irq_restore(flags);
 }
 
+void arp_learn(uint32_t ip, const uint8_t mac[ETH_ALEN])
+{
+	learn(ip, mac);
+}
+
 int arp_lookup(uint32_t ip, uint8_t mac[ETH_ALEN])
 {
 	int i;

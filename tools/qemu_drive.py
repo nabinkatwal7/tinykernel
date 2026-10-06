@@ -76,6 +76,15 @@ def main():
             except socket.timeout: pass
             gdb.sendall(b"+")
             print("gdb<", data.decode(errors="replace")); continue
+        if line.startswith("guesttcp:"):   # guesttcp:<port>:<text> -> connect to the guest TCP service (forwarded ports 5602=8080), send text, print the reply
+            _, hp, htext = line.split(":", 2)
+            t = socket.create_connection(("127.0.0.1", int(hp)), timeout=4)
+            t.sendall(htext.replace('\\n', chr(10)).encode())
+            time.sleep(1.0)
+            t.settimeout(1.0)
+            try: reply = t.recv(65536)
+            except socket.timeout: reply = b""
+            print("tcp<", reply.decode(errors="replace").strip()); t.close(); continue
         if line.startswith("hostudp:"):   # hostudp:<text> -> datagram to guest port 7777 (forwarded 5601)
             u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); u.sendto(line[8:].encode(), ("127.0.0.1", 5601)); time.sleep(0.6); continue
         if line.startswith("hostlisten:"):   # hostlisten:<udp port> -> collect datagrams the guest sends to 10.0.2.2:<port>

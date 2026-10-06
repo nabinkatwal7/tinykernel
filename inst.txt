@@ -1,4 +1,3 @@
-Implement TCP server sockets,
 Implement TCP retransmission timers,
 Implement TCP sliding window,
 Add socket system calls,

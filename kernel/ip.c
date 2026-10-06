@@ -106,6 +106,10 @@ static void ip_input(const uint8_t *frame, uint16_t len)
 		stats.rx_not_for_us++;
 		return;
 	}
+	/* A packet from a neighbour tells us its MAC address: remember it, so answering it (often from the receive task
+	   itself, which could not wait for an ARP reply) does not need a lookup on the network. */
+	if (netif.netmask && src != netif.ip && ((src ^ netif.ip) & netif.netmask) == 0)
+		arp_learn(src, frame + ETH_ALEN);
 	stats.rx_packets++;
 	for (i = 0; i < MAX_PROTOS; i++) {
 		if (protos[i].fn && protos[i].proto == h->proto) {
