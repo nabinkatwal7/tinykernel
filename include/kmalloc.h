@@ -14,6 +14,7 @@ void *kcalloc(size_t n, size_t size);
 void  kfree(void *p);
 void  heap_stats(struct heap_stats *s);
 int   heap_check(void);       /* walks every block; returns the number of inconsistencies */
+int   kmalloc_detector_selftest(void); /* provokes overflow/underflow; 0 = detected as expected */
 int   kmalloc_selftest(void); /* randomized stress test, 0 = pass */
 
 #endif

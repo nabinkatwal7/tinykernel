@@ -254,6 +254,21 @@ static int cmd_memtest(int argc, char **argv)
 	return bad != 0;
 }
 
+static int cmd_heapcheck(int argc, char **argv)
+{
+	int errors, bad = 0;
+
+	(void)argc;
+	(void)argv;
+	errors = heap_check();
+	console_printf("heap check: %d error(s)\n", errors);
+	if (argc > 1 && !kstrcmp(argv[1], "test")) {
+		bad = kmalloc_detector_selftest();
+		console_printf("detector self-test: %s\n", bad ? "FAILED" : "ok");
+	}
+	return errors || bad;
+}
+
 static int cmd_hexdump(int argc, char **argv)
 {
 	uint32_t addr, len = 64;
@@ -804,6 +819,7 @@ static const struct command commands[] = {
 	{ "sleep",   "sleep <ms>",            "sleep via the scheduler", cmd_sleep },
 	{ "meminfo", "meminfo",               "memory map, frames and heap", cmd_meminfo },
 	{ "memtest", "memtest",               "stress test the allocator", cmd_memtest },
+	{ "heapcheck", "heapcheck [test]",    "verify the heap / test the detector", cmd_heapcheck },
 	{ "hexdump", "hexdump <addr> [len]",  "dump memory", cmd_hexdump },
 	{ "vmap",    "vmap <virt> <phys> [ro]", "map a page", cmd_vmap },
 	{ "vunmap",  "vunmap <virt>",         "unmap a page", cmd_vunmap },

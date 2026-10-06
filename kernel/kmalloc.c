@@ -15,12 +15,13 @@
 #define MAGIC_FREE 0xF4EEB10Cu
 #define HDR        16u
 #define ALIGN      16u
+#define CANARY     0xDEADC0DEu
 
 struct block {
 	uint32_t magic;
 	uint32_t size;      /* payload bytes */
 	uint32_t prev_size; /* payload bytes of the previous block, 0 for the first */
-	uint32_t pad;
+	uint32_t req;       /* bytes the caller asked for; a canary follows them */
 };
 
 static uint8_t *arena;
@@ -67,7 +68,7 @@ void heap_init(void)
 
 void *kmalloc(size_t size)
 {
-	uint32_t flags, need = ((uint32_t)size + ALIGN - 1) & ~(ALIGN - 1);
+	uint32_t flags, need = ((uint32_t)size + sizeof(uint32_t) + ALIGN - 1) & ~(ALIGN - 1);
 	struct block *b, *start;
 
 	if (!arena || size == 0 || need > arena_size)
@@ -90,6 +91,8 @@ void *kmalloc(size_t size)
 					after->prev_size = tail->size;
 			}
 			b->magic = MAGIC_USED;
+			b->req = (uint32_t)size;
+			*(uint32_t *)((uint8_t *)b + HDR + size) = CANARY;
 			rover = next_of(b) ? next_of(b) : (struct block *)arena;
 			irq_restore(flags);
 			return (uint8_t *)b + HDR;
@@ -101,6 +104,14 @@ void *kmalloc(size_t size)
 
 	irq_restore(flags);
 	return 0;
+}
+
+/* 0 if the block's bookkeeping and trailing canary are intact. */
+static int block_damaged(struct block *b)
+{
+	if (b->req + sizeof(uint32_t) > b->size)
+		return 1;
+	return *(uint32_t *)((uint8_t *)b + HDR + b->req) != CANARY;
 }
 
 void *kcalloc(size_t n, size_t size)
@@ -127,6 +138,8 @@ void kfree(void *p)
 	}
 
 	flags = irq_save();
+	if (block_damaged(b))
+		klog(LOG_ERROR, "heap: block %p corrupted (overflow or underflow), freeing anyway", p);
 	b->magic = MAGIC_FREE;
 
 	n = next_of(b);
@@ -190,9 +203,36 @@ int heap_check(void)
 			errors++;
 		if (prev && prev->magic == MAGIC_FREE && b->magic == MAGIC_FREE)
 			errors++; /* two adjacent free blocks: coalescing failed */
+		if (b->magic == MAGIC_USED && block_damaged(b))
+			errors++; /* overflow into the canary or clobbered header */
 	}
 	irq_restore(flags);
 	return errors;
+}
+
+/* Deliberately overflows/underflows blocks and checks that the detector notices. 0 = pass. */
+int kmalloc_detector_selftest(void)
+{
+	uint8_t *a = kmalloc(24), *b = kmalloc(24);
+	int bad = 0;
+
+	if (!a || !b)
+		return 1;
+	if (heap_check())
+		bad++;           /* clean heap must report clean */
+	a[24] = 0xFF;            /* one byte past the end: trashes the canary */
+	if (heap_check() != 1)
+		bad++;
+	a[24] = (uint8_t)(CANARY & 0xFF); /* repair (little endian low byte) */
+	if (heap_check())
+		bad++;
+	*(uint32_t *)(b - 4) = 0xFFFFFFFFu; /* underflow: clobber the header's request size */
+	if (heap_check() != 1)
+		bad++;
+	*(uint32_t *)(b - 4) = 24;
+	kfree(a);
+	kfree(b);
+	return bad + heap_check();
 }
 
 #define ST_SLOTS 48
