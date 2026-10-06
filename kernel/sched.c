@@ -7,6 +7,7 @@
 #include "kmalloc.h"
 #include "kstring.h"
 #include "paging.h"
+#include "pmm.h"
 #include "slab.h"
 #include "timer.h"
 
@@ -78,11 +79,14 @@ task_t *task_create(const char *name, void (*entry)(void *), void *arg, uint32_t
 
 	if (!t)
 		return 0;
-	t->stack = kmalloc(TASK_STACK_SIZE);
+	/* [guard page][stack]: the guard is unmapped so an overflow faults instead of corrupting. */
+	t->guard = pmm_alloc_contig(1 + TASK_STACK_SIZE / PAGE_SIZE);
+	t->stack = t->guard ? (void *)(t->guard + PAGE_SIZE) : 0;
 	if (!t->stack) {
 		slab_free(&task_cache, t);
 		return 0;
 	}
+	paging_unmap(paging_kernel_dir(), t->guard);
 	sp = (uint32_t *)((uint8_t *)t->stack + TASK_STACK_SIZE);
 	*--sp = 0;                          /* fake return address for task_trampoline */
 	*--sp = (uint32_t)task_trampoline;  /* popped by the ret in switch_context */
@@ -140,7 +144,8 @@ static void reap(void)
 		prev->next = t->next;
 		if (task_head == t)
 			task_head = prev;
-		kfree(t->stack);
+		paging_map(paging_kernel_dir(), t->guard, t->guard, PTE_RW);
+		pmm_free_range(t->guard, 1 + TASK_STACK_SIZE / PAGE_SIZE);
 		slab_free(&task_cache, t);
 	}
 }
@@ -215,6 +220,20 @@ int task_kill(uint32_t id)
 	} while (t != task_head);
 	irq_restore(f);
 	return rc;
+}
+
+const char *sched_guard_owner(uint32_t addr)
+{
+	task_t *t = task_head;
+
+	if (!t)
+		return 0;
+	do {
+		if (t->guard && addr >= t->guard && addr < t->guard + PAGE_SIZE)
+			return t->name;
+		t = t->next;
+	} while (t != task_head);
+	return 0;
 }
 
 task_t *task_current(void)

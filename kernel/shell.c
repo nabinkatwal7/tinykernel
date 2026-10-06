@@ -377,6 +377,30 @@ static int cmd_spawn(int argc, char **argv)
 	return 0;
 }
 
+static int recurse(int n)
+{
+	volatile char pad[256];
+
+	pad[0] = (char)n;
+	return recurse(n + 1) + pad[0];
+}
+
+static void overflow_main(void *arg)
+{
+	(void)arg;
+	recurse(0);
+}
+
+/* Crash test: blows the kernel stack of a task. The guard page must catch it. */
+static int cmd_overflow(int argc, char **argv)
+{
+	(void)argc;
+	(void)argv;
+	console_write("starting a task that recurses forever (system will stop)...\n");
+	task_create("overflow", overflow_main, 0, 1);
+	return 0;
+}
+
 static int cmd_kill(int argc, char **argv)
 {
 	uint32_t id;
@@ -827,7 +851,8 @@ static const struct command commands[] = {
 	{ "dmesg",  "dmesg",                 "show the kernel log", cmd_dmesg },
 	{ "ps",      "ps",                    "list tasks", cmd_ps },
 	{ "spawn",   "spawn [n]",             "start demo worker tasks", cmd_spawn },
-	{ "kill",    "kill <id>",             "stop a task", cmd_kill },
+	{ "overflow", "overflow",             "crash test: kernel stack overflow", cmd_overflow },
+	{ "kill",   "kill <id>",             "stop a task", cmd_kill },
 	{ "ls",      "ls",                    "list files", cmd_ls },
 	{ "cat",     "cat <file>",            "print a file", cmd_cat },
 	{ "write",   "write <file> <text>",   "create/replace a file", cmd_write },

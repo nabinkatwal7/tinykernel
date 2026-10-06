@@ -2,10 +2,12 @@
 
 #include "console.h"
 #include "debug.h"
+#include "gdt.h"
 #include "idt.h"
 #include "klog.h"
 #include "kstring.h"
 #include "pmm.h"
+#include "sched.h"
 #include "user.h"
 
 #define MAP_BYTES (64u << 20) /* matches what pmm manages */
@@ -58,6 +60,7 @@ void paging_init(void)
 		"movl %%eax, %%cr0"
 		: : "r"(kdir) : "eax", "memory");
 	enabled = 1;
+	gdt_set_df_cr3((uint32_t)kdir);
 	klog(LOG_INFO, "paging: on, %u tables map %u MiB at 0 and at 0xC0000000, cr3=%x", tables, MAP_BYTES >> 20,
 	     (uint32_t)kdir);
 }
@@ -74,6 +77,12 @@ void paging_fault(struct regs *r)
 			       r->eip);
 		klog(LOG_WARN, "user page fault: %s addr=%x eip=%x", kind, addr, r->eip);
 		user_abort();
+	}
+	{
+		const char *owner = sched_guard_owner(addr);
+
+		if (owner)
+			panic("kernel stack overflow in task %s (guard page %x hit)", owner, addr);
 	}
 	console_set_color(COLOR_WHITE, COLOR_RED);
 	console_printf("\n*** PAGE FAULT: %s at %08x ***\n", kind, addr);

@@ -1,4 +1,3 @@
-Implement kernel stack guard pages,
 Add memory usage per task,
 Learn CMOS real-time clock,
 Read date and time from RTC,

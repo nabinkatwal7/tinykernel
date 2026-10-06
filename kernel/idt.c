@@ -5,6 +5,7 @@
 #include "gdt.h"
 #include "klog.h"
 #include "paging.h"
+#include "sched.h"
 #include "pic.h"
 #include "syscall.h"
 #include "user.h"
@@ -53,11 +54,34 @@ void idt_init(void)
 
 	for (i = 0; i < 48; i++)
 		set_gate(i, isr_stub_table[i], 0x8E); /* present, ring0, 32-bit interrupt gate */
+	/* Double fault: a task gate, so the handler gets a fresh stack even if ours is gone. */
+	idt[8].base_lo = 0;
+	idt[8].sel = SEL_DF;
+	idt[8].zero = 0;
+	idt[8].flags = 0x85;
+	idt[8].base_hi = 0;
 	set_gate(0x80, (uint32_t)isr128, 0xEE);       /* same, but callable from ring 3 */
 
 	ip.limit = sizeof idt - 1;
 	ip.base = (uint32_t)idt;
 	__asm__ volatile ("lidt %0" : : "m"(ip));
+}
+
+void double_fault_task(void)
+{
+	uint32_t cr2;
+	const char *owner;
+
+	__asm__ volatile ("movl %%cr2, %0" : "=r"(cr2));
+	owner = sched_guard_owner(cr2);
+	console_set_color(COLOR_WHITE, COLOR_RED);
+	if (owner)
+		console_printf("\n*** KERNEL STACK OVERFLOW in task '%s' (guard page %08x) ***\n", owner, cr2);
+	else
+		console_printf("\n*** DOUBLE FAULT (cr2=%08x) ***\n", cr2);
+	klog(LOG_ERROR, "double fault cr2=%x owner=%s", cr2, owner ? owner : "?");
+	for (;;)
+		__asm__ volatile ("cli; hlt");
 }
 
 void irq_install_handler(int irq, irq_handler_t h)
