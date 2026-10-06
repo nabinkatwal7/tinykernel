@@ -14,10 +14,15 @@ struct netif {
 	uint8_t  mac[ETH_ALEN];
 	uint16_t io_base;
 	uint8_t  irq;
+	uint32_t ip, netmask, gateway;       /* IPv4, host byte order; 0 = not configured */
 	uint32_t tx_frames, tx_errors, rx_frames, rx_errors, rx_dropped;
 };
 
 extern struct netif netif;
+
+#define IP4(a, b, c, d) (((uint32_t)(a) << 24) | ((uint32_t)(b) << 16) | ((uint32_t)(c) << 8) | (uint32_t)(d))
+const char *ip_str(uint32_t ip, char out[16]);
+int  ip_parse(const char *s, uint32_t *ip);      /* dotted quad -> host-order address; 0 on success */
 
 int  net_send_frame(const void *frame, uint16_t len);   /* a complete Ethernet frame (no FCS); 0 on success */
 /* Received frames are queued by the IRQ handler and delivered, in task context, to the handler

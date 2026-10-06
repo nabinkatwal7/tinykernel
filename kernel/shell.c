@@ -1,6 +1,7 @@
 #include "shell.h"
 
 #include "ata.h"
+#include "arp.h"
 #include "bcache.h"
 #include "console.h"
 #include "cpu.h"
@@ -1806,7 +1807,12 @@ static int cmd_ifconfig(int argc, char **argv)
 	}
 	console_printf("eth0: RTL8139  io %x  irq %u  link %s\n", netif.io_base, netif.irq,
 		       rtl8139_link_up() ? "up" : "down");
-	console_printf("      MAC %s\n", mac_str(netif.mac, m));
+	{
+		char a[16], b[16], c[16];
+
+		console_printf("      MAC %s  inet %s  mask %s  gateway %s\n", mac_str(netif.mac, m), ip_str(netif.ip, a),
+			       ip_str(netif.netmask, b), ip_str(netif.gateway, c));
+	}
 	console_printf("      tx %u frames (%u errors), rx %u frames (%u errors, %u dropped)\n", netif.tx_frames,
 		       netif.tx_errors, netif.rx_frames, netif.rx_errors, netif.rx_dropped);
 	return 0;
@@ -1877,6 +1883,44 @@ static int cmd_nettrace(int argc, char **argv)
 		return 1;
 	}
 	net_set_trace(!kstrcmp(argv[1], "on"));
+	return 0;
+}
+
+/* arp: list the cache; arp <ip>: resolve an address on the local network. */
+static int cmd_arp(int argc, char **argv)
+{
+	uint8_t mac[ETH_ALEN];
+	char m[18], s[16];
+	uint32_t ip;
+	int i, n = 0;
+
+	if (!netif.up) {
+		console_write("no network interface\n");
+		return 1;
+	}
+	if (argc > 1) {
+		if (!kstrcmp(argv[1], "flush")) {
+			arp_cache_clear();
+			return 0;
+		}
+		if (ip_parse(argv[1], &ip)) {
+			console_write("usage: arp [a.b.c.d | flush]\n");
+			return 1;
+		}
+		if (arp_resolve(ip, mac, 3000)) {
+			console_printf("%s: no ARP reply\n", argv[1]);
+			return 1;
+		}
+		console_printf("%s is at %s\n", ip_str(ip, s), mac_str(mac, m));
+		return 0;
+	}
+	for (i = 0; i < ARP_CACHE_SIZE; i++) {
+		if (!arp_cache_get(i, &ip, mac)) {
+			console_printf("  %-15s %s\n", ip_str(ip, s), mac_str(mac, m));
+			n++;
+		}
+	}
+	console_printf("%d ARP entr%s\n", n, n == 1 ? "y" : "ies");
 	return 0;
 }
 
@@ -2402,6 +2446,7 @@ static const struct command commands[] = {
 	{ "netsend", "netsend [text]",         "send a raw Ethernet frame", cmd_netsend },
 	{ "netloop", "netloop",               "self-test the receive path in loopback", cmd_netloop },
 	{ "nettrace", "nettrace on|off",      "show every received frame", cmd_nettrace },
+	{ "arp",     "arp [ip|flush]",        "ARP cache / resolve an address", cmd_arp },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },

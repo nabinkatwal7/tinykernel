@@ -1,5 +1,6 @@
 #include "net.h"
 
+#include "arp.h"
 #include "console.h"
 #include "idt.h"
 #include "io.h"
@@ -231,6 +232,42 @@ int eth_send(const uint8_t dst[ETH_ALEN], uint16_t ethertype, const void *payloa
 	return net_send_frame(frame, (uint16_t)(ETH_HLEN + len));
 }
 
+const char *ip_str(uint32_t ip, char out[16])
+{
+	ksnprintf(out, 16, "%u.%u.%u.%u", ip >> 24, (ip >> 16) & 255, (ip >> 8) & 255, ip & 255);
+	return out;
+}
+
+int ip_parse(const char *s, uint32_t *ip)
+{
+	uint32_t v = 0, part = 0;
+	int dots = 0, digits = 0;
+
+	for (;; s++) {
+		if (*s >= '0' && *s <= '9') {
+			part = part * 10 + (uint32_t)(*s - '0');
+			if (part > 255 || ++digits > 3)
+				return -1;
+		} else if (*s == '.' || *s == '\0') {
+			if (!digits)
+				return -1;
+			v = (v << 8) | part;
+			part = 0;
+			digits = 0;
+			if (*s == '\0')
+				break;
+			if (++dots > 3)
+				return -1;
+		} else {
+			return -1;
+		}
+	}
+	if (dots != 3)
+		return -1;
+	*ip = v;
+	return 0;
+}
+
 int rtl8139_link_up(void)
 {
 	return netif.up && !(inb((uint16_t)(netif.io_base + REG_MSR)) & 0x04); /* bit 2 = LINKB (inverted) */
@@ -289,6 +326,10 @@ int rtl8139_init(void)
 	outl((uint16_t)(io + REG_TCR), 0x03000700);    /* default inter-frame gap and DMA burst */
 	outb((uint16_t)(io + REG_CR), CR_RE | CR_TE);
 	netif.up = 1;
+	netif.ip = IP4(10, 0, 2, 15);       /* QEMU user-mode network defaults until configured otherwise */
+	netif.netmask = IP4(255, 255, 255, 0);
+	netif.gateway = IP4(10, 0, 2, 2);
+	arp_init();
 	irq_install_handler(netif.irq, rtl_irq);
 	pic_unmask(netif.irq);
 	task_create("netrx", rx_task, 0, 6);
