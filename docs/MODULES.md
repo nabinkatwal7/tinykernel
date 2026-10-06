@@ -59,3 +59,19 @@ Everything lives in `kernel/` (code) and `include/` (one header per module).
 Sector 0 superblock (`TFS1`, version 3, geometry), then a free-space bitmap (1 bit per sector, sized to the disk), then the entry table (128 x 32-byte entries: name[20], start, size, flags; flags carry used/directory bits and the parent entry index), then data. Files are contiguous; allocation is first-fit over the bitmap, and a rewrite that no longer fits is relocated. Directories are entries without data, so paths like `a/b/c.txt` resolve component by component.
 
 Older layouts are not mountable; run `format` once.
+
+## Added since (batches 03-06)
+
+| Module | Files | Role |
+| --- | --- | --- |
+| Copy-on-write, demand paging | `paging.c`, `pmm.c`, `user.c` | per-frame reference counts, `PTE_COW`, `fork`, lazy stack and heap |
+| IPC and memory sharing | `shm.c`, `mmapf.c`, `pipe.c`, `pcache.c` | shared memory, file mappings, blocking pipes, page cache; OOM handling in `oom.c` |
+| Debugging | `ksym.c`, `crashdump.c`, `gdbstub.c`, `debug.c` | symbol table, crash dump on disk, GDB remote stub on COM2, stack traces |
+| Shell language | `shell.c`, `script.c`, `arith.c`, `textutil.c` | pipelines, redirection, jobs, scripts, functions, arithmetic, grep/wc/sort/find/diff |
+| Users | `users.c`, `cred.c`, `sha256.c` | `/etc/passwd`, login, salted password hashes, current credentials |
+| Storage | `blk.c`, `blkcmd.c`, `ext2.c`, `fat12.c`, `ata.c` (DMA), `fs.c` (v5: permissions, links, journal) | block layer, partitions, ext2 and FAT16 reading, FAT12 writing, bus-master DMA |
+| Discovery | `ahci.c`, `usb.c`, `usbhid.c` | AHCI ports, USB controllers, HID keyboard report decoder |
+| Network | `dns.c`, `tcp.c` (rewritten), `ip.c` (fragments), `sock.c`, `ntp.c`, `telnetd.c`, `udpdemo.c`, `netstat.c` | resolver, reliable TCP, sockets, time sync, remote shell, statistics |
+| Audio | `sb.c` | Sound Blaster detection and 8-bit PCM playback over ISA DMA |
+
+See `docs/storage.md`, `docs/ahci.md`, `docs/usb.md`, `docs/cow.md` and `docs/ROADMAP.md` for the details.

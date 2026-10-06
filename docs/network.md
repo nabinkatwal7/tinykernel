@@ -32,3 +32,28 @@ A PCI device (vendor `10EC`, device `8139`). Its BAR0 is a 256-byte block of I/O
 Setup: enable PCI bus mastering (command bit 2) so the card can DMA, power on, reset, point `RBSTART` at an 8 KiB + 16 + 1500 byte ring in physical memory, program `RCR`, enable receive and transmit.
 
 Received packets land in the ring as `u16 status, u16 length, data...` (length includes the 4-byte CRC), each padded to 4 bytes; the driver advances its read offset and writes it to `CAPR`. To send, copy the frame into a buffer, write its physical address to `TSAD`, then its length to `TSD` and wait for the OWN/TOK bits.
+
+## The stack above the NIC
+
+* **Transmit queue**: `net_send_frame` copies a frame into the next free one of the four descriptors and returns; a sender
+  only waits when all four are in flight.
+* **ARP** entries age out after 60 s (`arp ttl`) and are refreshed by any packet from the neighbour, which is also how the
+  receive task can answer a peer it has never asked for.
+* **IPv4** splits datagrams over 1480 bytes into fragments and reassembles incoming ones (4 slots, 8 KiB, 15 s).
+* **TCP** (`tcp.c`): listen/accept, a send buffer, retransmission with an RFC 6298 timer (exponential backoff, 8 tries),
+  a sliding window bounded by the peer's advertised window, receiver-side silly-window avoidance and zero-window probes.
+  `tcpstat drop OUT IN SKIP` loses segments on purpose; `tcpsend` and `tcpget` move a checked byte pattern.
+* **DNS** (`dns.c`): A records over UDP with a TTL cache; `nslookup`, and `ping` takes names.
+* **Sockets**: `socket/connect/bind/listen/accept/sendto/recvfrom/resolve` syscalls; a socket is a descriptor, so
+  `read`, `write` and `close` work. User programs: `nc`, `httpget`, `wget`, `httpd`.
+* **Services**: `tcpserve` (echo), `telnetd` (remote shell), `udpecho`, `udpchat`, `ntpdate`.
+
+### Testing against the host
+
+`tools/qemu_drive.py` forwards host port 5602 to guest port 8080 (TCP) and 5601 to 7777 (UDP) and knows how to play the
+other side: `guesttcp:PORT:TEXT` connects to a guest server, `hosttcp:`, `hostsink:`, `hostsrc:` are servers the guest can reach at
+10.0.2.2, `hostudp:` and `hostlisten:` do the same for UDP. Example (TCP sliding window with a slow reader):
+
+```
+python tools/qemu_drive.py --fresh-disk --menu 1 dhcp "hostsrc:9103:60000" "tcpget 10.0.2.2 9103 40 &" "wait:9" tcpstat
+```
