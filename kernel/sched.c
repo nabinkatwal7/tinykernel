@@ -173,6 +173,7 @@ static void reap(void)
 	}
 }
 
+static void wq_remove(task_t *t);
 static void schedule_locked(void)
 {
 	task_t *prev = current, *next = pick_next();
@@ -238,6 +239,8 @@ int task_kill(uint32_t id)
 			}
 			if (t->state == TASK_SLEEPING)
 				sleep_remove(t);
+			if (t->state == TASK_BLOCKED)
+				wq_remove(t);
 			t->state = TASK_DEAD;
 			rc = 0;
 			break;
@@ -282,6 +285,64 @@ void sched_account(uint32_t id, int32_t delta)
 	} while (t != task_head);
 }
 
+void wq_wait(struct waitq *q)
+{
+	current->state = TASK_BLOCKED;
+	current->wq = q;
+	current->wait_next = 0;
+	if (q->tail)
+		q->tail->wait_next = current;
+	else
+		q->head = current;
+	q->tail = current;
+	schedule_locked();
+}
+
+int wq_wake_one(struct waitq *q)
+{
+	uint32_t f = irq_save();
+	task_t *t = q->head;
+
+	if (t) {
+		q->head = t->wait_next;
+		if (!q->head)
+			q->tail = 0;
+		t->wait_next = 0;
+		t->wq = 0;
+		t->state = TASK_READY;
+	}
+	irq_restore(f);
+	return t != 0;
+}
+
+int wq_wake_all(struct waitq *q)
+{
+	int n = 0;
+
+	while (wq_wake_one(q))
+		n++;
+	return n;
+}
+
+/* Take a blocked task out of its wait queue (used when it is killed). */
+static void wq_remove(task_t *t)
+{
+	struct waitq *q = t->wq;
+	task_t **pp, *prev = 0;
+
+	if (!q)
+		return;
+	for (pp = &q->head; *pp && *pp != t; prev = *pp, pp = &(*pp)->wait_next)
+		;
+	if (*pp) {
+		*pp = t->wait_next;
+		if (q->tail == t)
+			q->tail = prev;
+	}
+	t->wq = 0;
+	t->wait_next = 0;
+}
+
 task_t *task_current(void)
 {
 	return current;
@@ -323,7 +384,7 @@ void sched_tick(void)
 
 void sched_dump(void)
 {
-	static const char *const names[] = { "ready", "running", "sleeping", "dead" };
+	static const char *const names[] = { "ready", "running", "sleeping", "dead", "blocked" };
 	uint32_t f = irq_save();
 	task_t *t = task_head;
 

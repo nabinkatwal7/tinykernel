@@ -3,7 +3,13 @@
 
 #include <stdint.h>
 
-typedef enum { TASK_READY, TASK_RUNNING, TASK_SLEEPING, TASK_DEAD } task_state_t;
+typedef enum { TASK_READY, TASK_RUNNING, TASK_SLEEPING, TASK_DEAD, TASK_BLOCKED } task_state_t;
+
+struct task;
+/* FIFO of tasks blocked on something (mutex, semaphore, keyboard...). */
+struct waitq {
+	struct task *head, *tail;
+};
 
 /* Task control block. */
 typedef struct task {
@@ -25,6 +31,8 @@ typedef struct task {
 	int is_idle;
 	struct task *next;     /* circular list of all tasks */
 	struct task *sleep_next; /* wake list, ordered by wake_tick */
+	struct task *wait_next;  /* next task in the wait queue we are blocked on */
+	struct waitq *wq;        /* queue we are blocked on, if BLOCKED */
 } task_t;
 
 void     sched_init(void);   /* adopts the running code as task 0 and creates the idle task */
@@ -34,7 +42,13 @@ void     task_yield(void);
 void     task_sleep(uint32_t ms);
 int      task_kill(uint32_t id);  /* 0 on success */
 task_t  *task_current(void);
-void     sched_tick(void);        /* called from the timer IRQ */
+void     sched_tick(void);
+
+/* Wait queues. wq_wait() must be called with interrupts disabled (irq_save): it blocks the
+   current task until another task or IRQ calls wq_wake_*(), then returns still disabled. */
+void     wq_wait(struct waitq *q);
+int      wq_wake_one(struct waitq *q);   /* 1 if a task was woken */
+int      wq_wake_all(struct waitq *q);   /* number woken */        /* called from the timer IRQ */
 void     sched_dump(void);        /* ps */
 uint32_t task_count(void);
 uint32_t sched_current_id(void);

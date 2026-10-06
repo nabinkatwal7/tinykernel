@@ -15,6 +15,7 @@
 #include "rtc.h"
 #include "sched.h"
 #include "slab.h"
+#include "sync.h"
 #include "timer.h"
 #include "user.h"
 #include "version.h"
@@ -511,6 +512,58 @@ static int cmd_overflow(int argc, char **argv)
 	return 0;
 }
 
+static mutex_t test_mutex = MUTEX_INIT;
+static volatile uint32_t test_counter, test_done;
+static int test_use_lock;
+
+/* Read-modify-write with a yield in the middle: loses updates unless protected. */
+static void mutex_worker(void *arg)
+{
+	int i;
+
+	(void)arg;
+	for (i = 0; i < 200; i++) {
+		uint32_t tmp;
+
+		if (test_use_lock)
+			mutex_lock(&test_mutex);
+		tmp = test_counter;
+		task_yield();
+		test_counter = tmp + 1;
+		if (test_use_lock)
+			mutex_unlock(&test_mutex);
+	}
+	test_done++;
+}
+
+static uint32_t run_counter_race(int use_lock)
+{
+	int i;
+
+	test_use_lock = use_lock;
+	test_counter = 0;
+	test_done = 0;
+	for (i = 0; i < 3; i++)
+		task_create("mtx-worker", mutex_worker, 0, 1);
+	while (test_done < 3)
+		task_sleep(20);
+	return test_counter;
+}
+
+static int cmd_mutextest(int argc, char **argv)
+{
+	uint32_t racy, locked;
+
+	(void)argc;
+	(void)argv;
+	racy = run_counter_race(0);
+	locked = run_counter_race(1);
+	console_printf("3 tasks x 200 increments: without mutex %u, with mutex %u (expected 600)\n",
+		       racy, locked);
+	console_write(locked == 600 ? "mutextest: ok\n" : "mutextest: FAILED\n");
+	return locked != 600;
+}
+
 static int cmd_kill(int argc, char **argv)
 {
 	uint32_t id;
@@ -967,7 +1020,8 @@ static const struct command commands[] = {
 	{ "ps",      "ps",                    "list tasks", cmd_ps },
 	{ "spawn",   "spawn [n]",             "start demo worker tasks", cmd_spawn },
 	{ "overflow", "overflow",             "crash test: kernel stack overflow", cmd_overflow },
-	{ "kill",   "kill <id>",             "stop a task", cmd_kill },
+	{ "mutextest", "mutextest",           "race with/without a mutex", cmd_mutextest },
+	{ "kill",  "kill <id>",             "stop a task", cmd_kill },
 	{ "ls",      "ls",                    "list files", cmd_ls },
 	{ "cat",     "cat <file>",            "print a file", cmd_cat },
 	{ "write",   "write <file> <text>",   "create/replace a file", cmd_write },
