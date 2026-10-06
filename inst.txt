@@ -1,4 +1,3 @@
-Play startup beep,
 Add 'beep' shell command,
 Learn network card basics,
 Write RTL8139 driver,

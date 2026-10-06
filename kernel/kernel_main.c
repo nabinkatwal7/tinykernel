@@ -19,6 +19,7 @@
 #include "sched.h"
 #include "serial.h"
 #include "shell.h"
+#include "speaker.h"
 #include "timer.h"
 #include "vfs.h"
 #include "version.h"
@@ -78,5 +79,7 @@ void kernel_main(void)
 	task_create("status", status_task, 0, 7);
 	bc_start_flusher();
 	console_status(" " KERNEL_NAME " " KERNEL_VERSION);
+	speaker_beep(880, 70); /* power-on chirp */
+	kinfo("speaker: boot beep done");
 	shell_run();
 }
