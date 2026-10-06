@@ -2501,15 +2501,15 @@ static int cmd_icmptest(int argc, char **argv)
 /* ping <ip> [count] */
 static int cmd_ping(int argc, char **argv)
 {
-	uint32_t ip, count = 4, bytes, sent = 0, got = 0, i, rtt_min = 0xFFFFFFFFu, rtt_max = 0, rtt_sum = 0;
+	uint32_t ip, count = 4, size = 32, bytes, sent = 0, got = 0, i, rtt_min = 0xFFFFFFFFu, rtt_max = 0, rtt_sum = 0;
 	char s[16];
 
 	if (!netif.up) {
 		console_write("no network interface\n");
 		return 1;
 	}
-	if (argc < 2 || (argc > 2 && (kstrtoul(argv[2], &count) || !count || count > 100))) {
-		console_write("usage: ping <host or a.b.c.d> [count]\n");
+	if (argc < 2 || (argc > 2 && (kstrtoul(argv[2], &count) || !count || count > 100)) || (argc > 3 && (kstrtoul(argv[3], &size) || size > 8000))) {
+		console_write("usage: ping <host or a.b.c.d> [count [bytes]]\n");
 		return 1;
 	}
 	{
@@ -2520,9 +2520,9 @@ static int cmd_ping(int argc, char **argv)
 			return 1;
 		}
 	}
-	console_printf("PING %s: 32 bytes of data\n", ip_str(ip, s));
+	console_printf("PING %s: %u bytes of data\n", ip_str(ip, s), size);
 	for (i = 0; i < count && !shell_interrupted(); i++) {
-		int rtt = icmp_ping(ip, (uint16_t)(i + 1), 1500, &bytes, 0);
+		int rtt = icmp_ping_size(ip, (uint16_t)(i + 1), size, 1500, &bytes, 0);
 
 		sent++;
 		if (rtt >= 0) {

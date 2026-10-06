@@ -2,6 +2,7 @@
 
 #include "io.h"
 #include "ip.h"
+#include "kmalloc.h"
 #include "kstring.h"
 #include "sched.h"
 #include "timer.h"
@@ -29,11 +30,15 @@ static struct waitq ping_wq;
 
 static void send_echo(uint32_t dst, uint8_t type, uint16_t id, uint16_t seq, const uint8_t *data, uint16_t dlen)
 {
-	uint8_t buf[sizeof(struct icmp_echo) + 1400];
-	struct icmp_echo *e = (struct icmp_echo *)buf;
+	uint8_t *buf;
+	struct icmp_echo *e;
 
-	if (dlen > 1400)
+	if (dlen > IP_REASM_MAX - sizeof *e)
 		return;
+	buf = kmalloc(sizeof *e + dlen); /* large echoes (fragmented on the wire) do not fit on a kernel stack */
+	if (!buf)
+		return;
+	e = (struct icmp_echo *)buf;
 	e->type = type;
 	e->code = 0;
 	e->checksum = 0;
@@ -42,6 +47,7 @@ static void send_echo(uint32_t dst, uint8_t type, uint16_t id, uint16_t seq, con
 	memcpy(buf + sizeof *e, data, dlen);
 	e->checksum = htons(ip_checksum(buf, (uint32_t)(sizeof *e + dlen)));
 	ip_send(dst, IP_PROTO_ICMP, buf, (uint16_t)(sizeof *e + dlen));
+	kfree(buf);
 }
 
 static void icmp_input(uint32_t src, uint32_t dst, const uint8_t *p, uint16_t len)
@@ -70,12 +76,22 @@ static void icmp_input(uint32_t src, uint32_t dst, const uint8_t *p, uint16_t le
 
 int icmp_ping(uint32_t dst, uint16_t seq, uint32_t timeout_ms, uint32_t *bytes, uint8_t *ttl)
 {
-	uint8_t data[PING_DATA];
+	return icmp_ping_size(dst, seq, PING_DATA, timeout_ms, bytes, ttl);
+}
+
+int icmp_ping_size(uint32_t dst, uint16_t seq, uint32_t size, uint32_t timeout_ms, uint32_t *bytes, uint8_t *ttl)
+{
+	uint8_t *data;
 	uint32_t deadline_ticks, flags;
-	int i;
+	uint32_t i;
 
 	(void)ttl;
-	for (i = 0; i < PING_DATA; i++)
+	if (size > IP_REASM_MAX - sizeof(struct icmp_echo))
+		return -1;
+	data = kmalloc(size);
+	if (!data)
+		return -1;
+	for (i = 0; i < size; i++)
 		data[i] = (uint8_t)('a' + i % 23); /* the classic abcdef... filler */
 	flags = irq_save();
 	want_seq = seq;
@@ -85,7 +101,8 @@ int icmp_ping(uint32_t dst, uint16_t seq, uint32_t timeout_ms, uint32_t *bytes, 
 	irq_restore(flags);
 
 	sent_tick = timer_ticks();
-	send_echo(dst, ICMP_ECHO_REQUEST, PING_ID, seq, data, PING_DATA);
+	send_echo(dst, ICMP_ECHO_REQUEST, PING_ID, seq, data, (uint16_t)size);
+	kfree(data);
 	stats.echo_requests_out++;
 
 	deadline_ticks = sent_tick + timeout_ms * timer_hz() / 1000;

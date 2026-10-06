@@ -56,6 +56,7 @@ static const struct test tests[] = {
 	{ "icmp loopback",         "icmptest",            0, 1 },
 	{ "udp loopback",          "udp test",            0, 1 },
 	{ "tx queue",              "txtest",              0, 1 },
+	{ "ip fragmentation",      "ping 127.0.0.1 1 4000", 0, 1 },
 };
 #define NTESTS (sizeof tests / sizeof tests[0])
 

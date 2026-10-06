@@ -73,6 +73,8 @@ static void counters(void)
 	console_printf("  arp:     %d cached neighbour(s)\n", arp);
 	console_printf("  ip:      %u packets received (%u bad, %u not for us), %u sent (%u failed to resolve)\n", ip.rx_packets, ip.rx_bad,
 		       ip.rx_not_for_us, ip.tx_packets, ip.tx_arp_fail);
+	console_printf("  ip frag: %u fragments in, %u datagrams reassembled, %u fragments sent, %u timed out, %u dropped\n", ip.frags_in, ip.reassembled,
+		       ip.frags_out, ip.reasm_timeouts, ip.reasm_dropped);
 	console_printf("  icmp:    echo requests %u in / %u out, replies %u in / %u out\n", icmp.echo_requests_in, icmp.echo_requests_out,
 		       icmp.echo_replies_in, icmp.echo_replies_out);
 	console_printf("  udp:     %u received, %u sent, %u without a socket, %u bad checksum, %u dropped\n", udp.rx, udp.tx, udp.rx_no_socket,
