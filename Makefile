@@ -67,7 +67,7 @@ $(BUILD)/%.elf: user/%.elf.asm user/user.ld | $(BUILD)
 
 # C user programs: user/c/NAME.c -> build/c_NAME.elf, linked with the C runtime in user/lib.
 UCFLAGS  := -m32 -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie             -fno-asynchronous-unwind-tables -mgeneral-regs-only -Wall -Wextra -Iuser/lib
-ULIB_OBJS := $(BUILD)/ucrt0.o $(BUILD)/ulib.o $(BUILD)/ustring.o $(BUILD)/ustdio.o
+ULIB_OBJS := $(BUILD)/ucrt0.o $(BUILD)/ulib.o $(BUILD)/ustring.o $(BUILD)/ustdio.o $(BUILD)/umalloc.o
 
 $(BUILD)/ucrt0.o: user/lib/crt0.S | $(BUILD)
 	$(CC) $(UCFLAGS) -c $< -o $@
@@ -79,6 +79,9 @@ $(BUILD)/ustring.o: user/lib/ustring.c $(wildcard user/lib/*.h) | $(BUILD)
 	$(CC) $(UCFLAGS) -c $< -o $@
 
 $(BUILD)/ustdio.o: user/lib/ustdio.c $(wildcard user/lib/*.h) | $(BUILD)
+	$(CC) $(UCFLAGS) -c $< -o $@
+
+$(BUILD)/umalloc.o: user/lib/umalloc.c $(wildcard user/lib/*.h) | $(BUILD)
 	$(CC) $(UCFLAGS) -c $< -o $@
 
 $(BUILD)/uc_%.o: user/c/%.c $(wildcard user/lib/*.h) | $(BUILD)

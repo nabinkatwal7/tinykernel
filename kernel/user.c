@@ -20,6 +20,18 @@
 
 static int active;
 static volatile int abort_requested;
+static uint32_t brk, brk_min; /* program break: the heap lives between the image and the stack */
+
+/* Move the break by delta bytes; returns the old break or (uint32_t)-1. */
+uint32_t user_sbrk(int32_t delta)
+{
+	uint32_t old = brk, top = USER_END - STACK_RESERVE;
+
+	if (delta < 0 ? old - brk_min < (uint32_t)-delta : delta > 0 && top - old < (uint32_t)delta)
+		return (uint32_t)-1;
+	brk += (uint32_t)delta;
+	return old;
+}
 
 void user_request_abort(void)
 {
@@ -57,14 +69,14 @@ int user_install_builtin(const char *name)
 }
 
 #define ARGS_MAX 16
-#define STACK_RESERVE (16 * 1024) /* top of the window is the stack; programs may not load there */
 
 /*
  * Find the program (disk first, then built-ins), then place it in the program window: ELF files
  * are loaded segment by segment, anything else is treated as a flat binary linked at USER_BASE.
  * Returns 0 and the entry point, or a negative value (-1 not found, -2 bad/too big image).
  */
-static int load_image(const char *name, uint8_t *dst, uint32_t *size, uint32_t *entry)
+static int load_image(const char *name, uint8_t *dst, uint32_t *size, uint32_t *entry,
+		      uint32_t *image_end)
 {
 	const uint8_t *img = 0;
 	uint8_t *heap_copy = 0;
@@ -97,7 +109,7 @@ static int load_image(const char *name, uint8_t *dst, uint32_t *size, uint32_t *
 		return -1;
 
 	if (elf_is_elf(img, len)) {
-		rc = elf_load(img, len, dst, USER_BASE, limit, entry);
+		rc = elf_load(img, len, dst, USER_BASE, limit, entry, image_end);
 		if (rc)
 			console_printf("bad ELF image (error %d)\n", rc);
 	} else if (len > limit) {
@@ -105,6 +117,7 @@ static int load_image(const char *name, uint8_t *dst, uint32_t *size, uint32_t *
 	} else {
 		memcpy(dst, img, len);
 		*entry = USER_BASE;
+		*image_end = USER_BASE + len;
 	}
 	*size = len;
 	kfree(heap_copy);
@@ -170,7 +183,7 @@ int user_run(const char *name)
 
 int user_run_args(const char *name, int argc, char **argv)
 {
-	uint32_t size, entry = USER_BASE, esp0, saved_esp0, frames = 0, udir = 0, saved_dir, i;
+	uint32_t size, entry = USER_BASE, image_end = USER_BASE, esp0, saved_esp0, frames = 0, udir = 0, saved_dir, i;
 	volatile int marker;
 	task_t *t = task_current();
 	int rc;
@@ -190,7 +203,7 @@ int user_run_args(const char *name, int argc, char **argv)
 		if (paging_map(udir, USER_BASE + i * PAGE_SIZE, frames + i * PAGE_SIZE,
 			       PTE_RW | PTE_US))
 			goto fail;
-	switch (load_image(name, (uint8_t *)frames, &size, &entry)) { /* kernel writes via the identity map */
+	switch (load_image(name, (uint8_t *)frames, &size, &entry, &image_end)) { /* kernel writes via the identity map */
 	case 0:
 		break;
 	case -1:
@@ -213,6 +226,7 @@ int user_run_args(const char *name, int argc, char **argv)
 	t->pgdir = udir;
 	paging_switch(udir);
 	abort_requested = 0;
+	brk_min = brk = (image_end + 15) & ~15u;
 	active = 1;
 	rc = enter_user(entry, push_args(frames, argc > ARGS_MAX ? ARGS_MAX : argc, argv));
 	active = 0;

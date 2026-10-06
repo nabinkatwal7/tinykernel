@@ -8,10 +8,10 @@ int elf_is_elf(const uint8_t *img, uint32_t size)
 }
 
 int elf_load(const uint8_t *img, uint32_t size, uint8_t *mem, uint32_t base, uint32_t limit,
-	     uint32_t *entry)
+	     uint32_t *entry, uint32_t *end)
 {
 	const struct elf32_ehdr *eh = (const struct elf32_ehdr *)img;
-	uint32_t i, loaded = 0;
+	uint32_t i, loaded = 0, top = base;
 
 	if (!elf_is_elf(img, size))
 		return -1;
@@ -38,9 +38,12 @@ int elf_load(const uint8_t *img, uint32_t size, uint8_t *mem, uint32_t base, uin
 		memcpy(mem + off, img + ph->offset, ph->filesz);
 		memset(mem + off + ph->filesz, 0, ph->memsz - ph->filesz);
 		loaded++;
+		if (ph->vaddr + ph->memsz > top)
+			top = ph->vaddr + ph->memsz;
 	}
 	if (!loaded || eh->entry < base || eh->entry >= base + limit)
 		return -7;
 	*entry = eh->entry;
+	*end = top;
 	return 0;
 }

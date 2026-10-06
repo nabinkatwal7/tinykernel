@@ -101,6 +101,9 @@ void syscall_dispatch(struct regs *r)
 		}
 		break;
 	}
+	case SYS_SBRK:
+		r->eax = user_sbrk((int32_t)r->ebx);
+		break;
 	case SYS_GETPID:
 		r->eax = task_current()->id;
 		break;
