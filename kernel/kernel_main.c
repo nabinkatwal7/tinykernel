@@ -1,4 +1,5 @@
 #include "console.h"
+#include "keyboard.h"
 
 void kernel_main(void)
 {
@@ -8,7 +9,7 @@ void kernel_main(void)
 	console_putchar('\n');
 	console_printf("kernel %s boot=%d\n", "ok", 1);
 
-	for (;;) {
-		/* idle */
-	}
+	console_write("Type something:\n");
+	for (;;)
+		console_putchar(keyboard_getchar());
 }

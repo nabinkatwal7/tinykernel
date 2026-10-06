@@ -16,7 +16,7 @@ KERNEL_ELF     := $(BUILD)/kernel.elf
 KERNEL_BIN     := $(BUILD)/kernel.bin
 BOOT_BIN       := $(BUILD)/boot.bin
 IMAGE          := $(BUILD)/os-image.bin
-OBJS           := $(BUILD)/multiboot.o $(BUILD)/console.o $(BUILD)/kernel_main.o
+OBJS           := $(BUILD)/multiboot.o $(BUILD)/console.o $(BUILD)/keyboard.o $(BUILD)/kernel_main.o
 
 .PHONY: all clean run run-multiboot
 
@@ -28,7 +28,10 @@ $(BUILD)/multiboot.o: kernel/multiboot.c | $(BUILD)
 $(BUILD)/console.o: kernel/console.c include/console.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/kernel_main.o: kernel/kernel_main.c include/console.h | $(BUILD)
+$(BUILD)/keyboard.o: kernel/keyboard.c include/keyboard.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/kernel_main.o: kernel/kernel_main.c include/console.h include/keyboard.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/kernel.pe: $(OBJS) kernel/linker.ld
