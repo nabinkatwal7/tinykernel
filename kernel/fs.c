@@ -2,16 +2,20 @@
 
 #include "ata.h"
 #include "klog.h"
+#include "kmalloc.h"
 #include "kstring.h"
 
 #define FS_MAGIC     0x31534654u /* "TFS1" */
-#define FS_VERSION   2
-#define DIR_LBA      1
+#define FS_VERSION   3
 #define DIR_SECTORS  8     /* 8 * 512 / 32 = 128 entries */
-#define DATA_START   9
 #define FLAG_USED    1u
 #define FLAG_DIR     2u
 #define ROOT         0xFFu /* parent value meaning "the root directory" */
+
+/* Disk layout, fixed at format time and stored in the superblock:
+ *   0 superblock | bm_lba.. free-space bitmap (1 bit per sector) | dir_lba.. entry table | data */
+static uint32_t total_sectors, bm_lba, bm_sectors, dir_lba, data_start;
+static uint8_t *bitmap;   /* bit set = sector in use */
 
 struct dirent {
 	char name[FS_NAME_MAX];
@@ -52,7 +56,36 @@ static uint32_t parent(int i) { return (dir[i].flags >> 8) & 0xFF; }
 
 static int flush_dir(void)
 {
-	return ata_write(DIR_LBA, DIR_SECTORS, dir) ? FS_EIO : FS_OK;
+	return ata_write(dir_lba, DIR_SECTORS, dir) ? FS_EIO : FS_OK;
+}
+
+static int flush_bitmap(void)
+{
+	return ata_write(bm_lba, bm_sectors, bitmap) ? FS_EIO : FS_OK;
+}
+
+static int bit_get(uint32_t sec)
+{
+	return bitmap[sec >> 3] & (1u << (sec & 7));
+}
+
+static void mark(uint32_t start, uint32_t n, int used_flag)
+{
+	uint32_t i;
+
+	for (i = start; i < start + n; i++) {
+		if (used_flag)
+			bitmap[i >> 3] |= (uint8_t)(1u << (i & 7));
+		else
+			bitmap[i >> 3] &= (uint8_t)~(1u << (i & 7));
+	}
+}
+
+/* Mark the data sectors of entry i free/used (directories own none). */
+static void mark_entry(int i, int used_flag)
+{
+	if (!is_dir(i) && dir[i].size)
+		mark(dir[i].start, sectors_for(dir[i].size), used_flag);
 }
 
 static int name_ok(const char *name)
@@ -135,30 +168,24 @@ static int resolve(const char *path)
 	return i < 0 ? FS_ENOENT : i;
 }
 
-/* First-fit: find n free contiguous sectors, or 0 if the disk is too full/fragmented. */
+/* First-fit over the bitmap: n free contiguous sectors, or 0 if there is no such run. */
 static uint32_t alloc_extent(uint32_t n)
 {
-	uint32_t cand = DATA_START, total = ata_sectors();
-	int moved, i;
+	uint32_t run = 0, start = 0, sec;
 
 	if (n == 0)
-		return DATA_START;
-	do {
-		moved = 0;
-		for (i = 0; i < FS_MAX_FILES; i++) {
-			uint32_t s, e;
-
-			if (!used(i) || is_dir(i))
-				continue;
-			s = dir[i].start;
-			e = s + sectors_for(dir[i].size);
-			if (cand < e && cand + n > s) { /* overlaps this file: jump past it */
-				cand = e;
-				moved = 1;
-			}
+		return data_start;
+	for (sec = data_start; sec < total_sectors; sec++) {
+		if (bit_get(sec)) {
+			run = 0;
+			continue;
 		}
-	} while (moved);
-	return cand + n <= total ? cand : 0;
+		if (run++ == 0)
+			start = sec;
+		if (run == n)
+			return start;
+	}
+	return 0;
 }
 
 static int free_slot(void)
@@ -181,13 +208,25 @@ int fs_mount(void)
 	uint32_t sb[SECTOR_SIZE / 4];
 
 	mounted = 0;
+	kfree(bitmap);
+	bitmap = 0;
 	if (!ata_present())
 		return FS_ENOMOUNT;
 	if (ata_read(0, 1, sb))
 		return FS_EIO;
 	if (sb[0] != FS_MAGIC || sb[1] != FS_VERSION)
 		return FS_ENOMOUNT;
-	if (ata_read(DIR_LBA, DIR_SECTORS, dir))
+	total_sectors = sb[2];
+	bm_lba = sb[3];
+	bm_sectors = sb[4];
+	dir_lba = sb[5];
+	data_start = sb[6];
+	if (total_sectors != ata_sectors() || bm_sectors == 0 || data_start >= total_sectors)
+		return FS_ENOMOUNT;
+	bitmap = kmalloc(bm_sectors * SECTOR_SIZE);
+	if (!bitmap)
+		return FS_ENOSPC;
+	if (ata_read(bm_lba, bm_sectors, bitmap) || ata_read(dir_lba, DIR_SECTORS, dir))
 		return FS_EIO;
 	mounted = 1;
 	return FS_OK;
@@ -199,17 +238,33 @@ int fs_format(void)
 
 	if (!ata_present())
 		return FS_ENOMOUNT;
+	kfree(bitmap);
+	total_sectors = ata_sectors();
+	bm_lba = 1;
+	bm_sectors = (total_sectors + SECTOR_SIZE * 8 - 1) / (SECTOR_SIZE * 8);
+	dir_lba = bm_lba + bm_sectors;
+	data_start = dir_lba + DIR_SECTORS;
+	if (data_start >= total_sectors)
+		return FS_ENOSPC; /* disk too small to hold the metadata */
+	bitmap = kcalloc(bm_sectors, SECTOR_SIZE);
+	if (!bitmap)
+		return FS_ENOSPC;
+	mark(0, data_start, 1); /* superblock, bitmap and entry table are never allocatable */
+
 	memset(sb, 0, sizeof sb);
 	sb[0] = FS_MAGIC;
 	sb[1] = FS_VERSION;
-	sb[2] = ata_sectors();
+	sb[2] = total_sectors;
+	sb[3] = bm_lba;
+	sb[4] = bm_sectors;
+	sb[5] = dir_lba;
+	sb[6] = data_start;
 	memset(dir, 0, sizeof dir);
-	if (ata_write(0, 1, sb))
-		return FS_EIO;
-	if (flush_dir())
+	if (ata_write(0, 1, sb) || flush_bitmap() || flush_dir())
 		return FS_EIO;
 	mounted = 1;
-	klog(LOG_INFO, "fs: formatted %u sectors", ata_sectors());
+	klog(LOG_INFO, "fs: formatted %u sectors (bitmap %u, data from %u)", total_sectors, bm_sectors,
+	     data_start);
 	return FS_OK;
 }
 
@@ -244,7 +299,8 @@ int fs_write(const char *path, const void *data, uint32_t size)
 		if (is_dir(idx))
 			return FS_EISDIR;
 		saved = dir[idx];
-		dir[idx].flags = 0; /* free the old extent while we look for space */
+		mark_entry(idx, 0); /* free the old extent while we look for space */
+		dir[idx].flags = 0;
 	} else {
 		idx = free_slot();
 		if (idx < 0)
@@ -255,6 +311,8 @@ int fs_write(const char *path, const void *data, uint32_t size)
 	start = alloc_extent(n);
 	if (!start) {
 		dir[idx] = saved;
+		if (saved.flags)
+			mark_entry(idx, 1);
 		return FS_ENOSPC;
 	}
 
@@ -277,10 +335,15 @@ int fs_write(const char *path, const void *data, uint32_t size)
 	dir[idx].start = start;
 	dir[idx].size = size;
 	dir[idx].flags = FLAG_USED | ((uint32_t)par << 8);
+	mark(start, n, 1);
+	if (flush_bitmap())
+		return FS_EIO;
 	return flush_dir();
 
 io_error:
 	dir[idx] = saved;
+	if (saved.flags)
+		mark_entry(idx, 1);
 	return FS_EIO;
 }
 
@@ -363,7 +426,10 @@ int fs_delete(const char *path)
 		return idx;
 	if (idx == (int)ROOT || is_dir(idx))
 		return FS_EISDIR;
+	mark_entry(idx, 0);
 	memset(&dir[idx], 0, sizeof dir[idx]);
+	if (flush_bitmap())
+		return FS_EIO;
 	return flush_dir();
 }
 
@@ -431,7 +497,10 @@ int fs_rename(const char *from, const char *to)
 	if (victim >= 0) {
 		if (is_dir(victim) || is_dir(src))
 			return FS_EEXIST;
+		mark_entry(victim, 0);
 		memset(&dir[victim], 0, sizeof dir[victim]); /* replace the old file */
+		if (flush_bitmap())
+			return FS_EIO;
 	}
 	kstrlcpy(dir[src].name, leaf, FS_NAME_MAX);
 	dir[src].flags = (dir[src].flags & ~(0xFFu << 8)) | ((uint32_t)par << 8);
@@ -461,64 +530,41 @@ int fs_list(const char *path, struct fs_stat *out, int max)
 
 uint32_t fs_free_sectors(void)
 {
-	uint32_t usedsec = DATA_START;
-	int i;
+	uint32_t free_count = 0, sec;
 
-	for (i = 0; i < FS_MAX_FILES; i++)
-		if (used(i) && !is_dir(i))
-			usedsec += sectors_for(dir[i].size);
-	return ata_sectors() > usedsec ? ata_sectors() - usedsec : 0;
+	if (!mounted)
+		return 0;
+	for (sec = 0; sec < total_sectors; sec++)
+		free_count += !bit_get(sec);
+	return free_count;
 }
 
 int fs_info(struct fs_info *out)
 {
-	uint32_t cand = DATA_START, total = ata_sectors(), best = 0;
-	int i, moved;
+	uint32_t sec, run = 0;
+	int i;
 
 	if (!mounted)
 		return FS_ENOMOUNT;
 	memset(out, 0, sizeof *out);
-	out->total_sectors = total;
-	out->used_sectors = DATA_START;
+	out->total_sectors = total_sectors;
 	for (i = 0; i < FS_MAX_FILES; i++) {
-		if (!used(i)) {
+		if (!used(i))
 			out->free_entries++;
-		} else if (is_dir(i)) {
+		else if (is_dir(i))
 			out->dirs++;
-		} else {
+		else
 			out->files++;
-			out->used_sectors += sectors_for(dir[i].size);
+	}
+	for (sec = 0; sec < total_sectors; sec++) {
+		if (bit_get(sec)) {
+			out->used_sectors++;
+			run = 0;
+		} else {
+			out->free_sectors++;
+			if (++run > out->largest_free)
+				out->largest_free = run;
 		}
 	}
-	out->free_sectors = total > out->used_sectors ? total - out->used_sectors : 0;
-
-	/* Largest hole: sweep the extents in address order. */
-	for (;;) {
-		uint32_t next = total; /* start of the next file after 'cand' */
-
-		moved = 0;
-		for (i = 0; i < FS_MAX_FILES; i++) {
-			uint32_t s, e;
-
-			if (!used(i) || is_dir(i) || !dir[i].size)
-				continue;
-			s = dir[i].start;
-			e = s + sectors_for(dir[i].size);
-			if (cand >= s && cand < e) {
-				cand = e;
-				moved = 1;
-			} else if (s >= cand && s < next) {
-				next = s;
-			}
-		}
-		if (moved)
-			continue;
-		if (next - cand > best)
-			best = next - cand;
-		if (next >= total)
-			break;
-		cand = next;
-	}
-	out->largest_free = best;
 	return FS_OK;
 }
