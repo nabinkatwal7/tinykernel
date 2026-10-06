@@ -64,6 +64,11 @@ int  vfs_unlink(const char *path);
 int  vfs_mkdir(const char *path);
 int  vfs_rmdir(const char *path);
 int  vfs_list(const char *path, struct vfs_dirent *out, int max);
+/* Canonical absolute form of 'path' (relative paths start at 'base'): duplicate slashes collapse,
+   '.' disappears, '..' removes the previous component (the root is its own parent), no trailing
+   slash. Returns 0, or FS_EINVAL if the result would not fit in 'size' bytes. */
+int  vfs_normalize(const char *base, const char *path, char *out, uint32_t size);
+
 const char *vfs_getcwd(void);          /* current working directory (absolute) */
 int  vfs_chdir(const char *path);        /* 0, FS_ENOENT or FS_ENOTDIR */
 void vfs_print_mounts(void);

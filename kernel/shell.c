@@ -1125,6 +1125,53 @@ static int cmd_touch(int argc, char **argv)
 	return rc ? fs_fail(argv[1], rc) : 0;
 }
 
+/* pathtest: table-driven check of vfs_normalize(). */
+static int cmd_pathtest(int argc, char **argv)
+{
+	static const struct { const char *base, *in, *want; } t[] = {
+		{ "/", "a/b", "/a/b" },
+		{ "/x", "a", "/x/a" },
+		{ "/x/y", "..", "/x" },
+		{ "/x/y", "../z", "/x/z" },
+		{ "/x", "../../..", "/" },
+		{ "/x", "/abs//path/", "/abs/path" },
+		{ "/x", "./a/./b/.", "/x/a/b" },
+		{ "/x", "/a/b/../../c", "/c" },
+		{ "/x", "", "/x" },
+		{ "/", "/", "/" },
+		{ "/", "///", "/" },
+		{ "/x", "a/../../..", "/" },
+		{ "/x", "..a/.b/...", "/x/..a/.b/..." },
+	};
+	char out[VFS_PATH_MAX];
+	int i, fails = 0;
+
+	(void)argc;
+	(void)argv;
+	for (i = 0; i < (int)(sizeof t / sizeof t[0]); i++) {
+		int rc = vfs_normalize(t[i].base, t[i].in, out, sizeof out);
+
+		if (rc || kstrcmp(out, t[i].want)) {
+			console_printf("  FAIL: (%s) + (%s) -> '%s', want '%s'\n", t[i].base, t[i].in,
+				       rc ? "error" : out, t[i].want);
+			fails++;
+		}
+	}
+	{
+		char tiny[4];
+
+		if (vfs_normalize("/", "abcdef", tiny, sizeof tiny) == FS_OK) {
+			console_write("  FAIL: overflow not detected\n");
+			fails++;
+		}
+	}
+	if (fails)
+		console_printf("pathtest: %d check(s) failed\n", fails);
+	else
+		console_write("pathtest: all checks passed\n");
+	return fails != 0;
+}
+
 static int cmd_cd(int argc, char **argv)
 {
 	const char *target = argc > 1 ? argv[1] : "/";
@@ -1561,6 +1608,7 @@ static const struct command commands[] = {
 	{ "cat",     "cat <file>",            "print a file", cmd_cat },
 	{ "write",   "write <file> <text>",   "create/replace a file", cmd_write },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
+	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },
 	{ "pwd",     "pwd",                   "print the working directory", cmd_pwd },
 	{ "mkdir",   "mkdir <dir>",           "create a directory", cmd_mkdir },

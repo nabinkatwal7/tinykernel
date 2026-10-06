@@ -180,17 +180,62 @@ static struct mount *resolve(const char *path, const char **rest)
 /* Current working directory: always an absolute path with no trailing slash (except "/"). */
 static char cwd[VFS_PATH_MAX] = "/";
 
-/* Absolute path for 'path': as given if it starts with '/', else relative to the cwd. */
+int vfs_normalize(const char *base, const char *path, char *out, uint32_t size)
+{
+	/* Components of base (if path is relative) followed by those of path, as (start,len) pairs. */
+	struct { const char *p; uint32_t n; } comp[VFS_PATH_MAX];
+	int depth = 0;
+	uint32_t o = 0;
+	int pass, i;
+
+	for (pass = 0; pass < 2; pass++) {
+		const char *s = pass == 0 ? (path[0] == '/' ? "" : base) : path;
+
+		for (;;) {
+			uint32_t n = 0;
+
+			while (*s == '/')
+				s++;
+			if (!*s)
+				break;
+			while (s[n] && s[n] != '/')
+				n++;
+			if (n == 1 && s[0] == '.') {
+				/* current directory: nothing */
+			} else if (n == 2 && s[0] == '.' && s[1] == '.') {
+				if (depth)
+					depth--; /* at the root, '..' stays at the root */
+			} else if (depth < VFS_PATH_MAX) {
+				comp[depth].p = s;
+				comp[depth].n = n;
+				depth++;
+			} else {
+				return FS_EINVAL;
+			}
+			s += n;
+		}
+	}
+	if (size < 2)
+		return FS_EINVAL;
+	out[o++] = '/';
+	for (i = 0; i < depth; i++) {
+		if (o + comp[i].n + 1 >= size)
+			return FS_EINVAL;
+		memcpy(out + o, comp[i].p, comp[i].n);
+		o += comp[i].n;
+		if (i + 1 < depth)
+			out[o++] = '/';
+	}
+	out[o] = '\0';
+	return FS_OK;
+}
+
+/* Absolute, normalized path for 'path' (relative paths start at the cwd). Falls back to the
+   unnormalized text if it is too long, so the lookup fails instead of hitting the wrong file. */
 static void make_absolute(const char *path, char *full, size_t size)
 {
-	if (path[0] == '/') {
-		kstrlcpy(full, path, size);
-	} else if (!kstrcmp(cwd, "/")) {
-		full[0] = '/';
-		kstrlcpy(full + 1, path, size - 1);
-	} else {
-		ksnprintf(full, size, "%s/%s", cwd, path);
-	}
+	if (vfs_normalize(cwd, path, full, (uint32_t)size))
+		kstrlcpy(full, "/?", size); /* no such mount/file */
 }
 
 static struct mount *lookup(const char *path, char *full, size_t size, const char **rest)
