@@ -1,4 +1,3 @@
-Enumerate PCI devices,
 Add 'lspci' shell command,
 Detect CPU with CPUID,
 Add 'cpuinfo' shell command,

@@ -11,6 +11,7 @@
 #include "kmalloc.h"
 #include "kprintf.h"
 #include "paging.h"
+#include "pci.h"
 #include "pic.h"
 #include "pmm.h"
 #include "sched.h"
@@ -56,6 +57,7 @@ void kernel_main(void)
 	sti();
 	klog(LOG_INFO, "interrupts enabled");
 
+	pci_scan();
 	vfs_init();
 	if (ata_init() == 0) {
 		if (ata_dev_present(1) && fat12_mount(1) != FS_OK)

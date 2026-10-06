@@ -29,6 +29,19 @@ static inline uint16_t inw(uint16_t port)
 	return v;
 }
 
+static inline void outl(uint16_t port, uint32_t v)
+{
+	__asm__ volatile ("outl %0, %1" : : "a"(v), "Nd"(port));
+}
+
+static inline uint32_t inl(uint16_t port)
+{
+	uint32_t v;
+
+	__asm__ volatile ("inl %1, %0" : "=a"(v) : "Nd"(port));
+	return v;
+}
+
 static inline void sti(void) { __asm__ volatile ("sti" : : : "memory"); }
 static inline void cli(void) { __asm__ volatile ("cli" : : : "memory"); }
 static inline void hlt(void) { __asm__ volatile ("hlt" : : : "memory"); }
