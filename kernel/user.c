@@ -2,6 +2,7 @@
 
 #include "console.h"
 #include "elf.h"
+#include "env.h"
 #include "fs.h"
 #include "gdt.h"
 #include "io.h"
@@ -20,6 +21,7 @@ extern const uint8_t builtin_fault_start[], builtin_fault_end[];
 extern const uint8_t builtin_evil_start[], builtin_evil_end[];
 extern const uint8_t builtin_spin_start[], builtin_spin_end[];
 extern const uint8_t builtin_args_start[], builtin_args_end[];
+extern const uint8_t builtin_envdump_start[], builtin_envdump_end[];
 extern const uint8_t builtin_helloelf_start[], builtin_helloelf_end[];
 
 struct builtin {
@@ -34,6 +36,7 @@ static const struct builtin builtins[] = {
 	{ "evil",    builtin_evil_start,    builtin_evil_end },
 	{ "spin",    builtin_spin_start,    builtin_spin_end },
 	{ "args",    builtin_args_start,    builtin_args_end },
+	{ "envdump", builtin_envdump_start, builtin_envdump_end },
 	{ "helloelf", builtin_helloelf_start, builtin_helloelf_end },
 };
 #define NBUILTIN (sizeof builtins / sizeof builtins[0])
@@ -131,11 +134,28 @@ static int load_image(const char *name, uint8_t *dst, uint32_t *size, uint32_t *
 	return rc ? -2 : 0;
 }
 
-/* Lay out argc/argv at the top of the program's stack; returns the initial user esp. */
+/*
+ * Lay out the initial user stack (top down): argument strings, environment strings, the argv and
+ * envp pointer arrays (NULL terminated), then envp, argv, argc - so [esp]=argc, [esp+4]=argv,
+ * [esp+8]=envp. Returns the initial user esp.
+ */
 static uint32_t push_args(uint32_t frames, int argc, char **argv)
 {
-	uint32_t sp = USER_END, ptrs[ARGS_MAX + 1], base = frames - USER_BASE;
-	int i;
+	uint32_t sp = USER_END, ptrs[ARGS_MAX + 1], eptrs[ENV_MAX + 1], base = frames - USER_BASE;
+	uint32_t envp_va;
+	int i, nenv = env_count();
+	char entry[ENV_NAME_MAX + ENV_VAL_MAX + 2];
+
+	for (i = 0; i < nenv; i++) {
+		uint32_t len;
+
+		env_entry(i, entry, sizeof entry);
+		len = (uint32_t)kstrlen(entry) + 1;
+		sp -= len;
+		memcpy((void *)(base + sp), entry, len);
+		eptrs[i] = sp;
+	}
+	eptrs[nenv] = 0;
 
 	for (i = 0; i < argc; i++) { /* strings first, last argument at the highest address */
 		uint32_t len = (uint32_t)kstrlen(argv[i]) + 1;
@@ -145,12 +165,17 @@ static uint32_t push_args(uint32_t frames, int argc, char **argv)
 		ptrs[i] = sp;
 	}
 	sp &= ~3u;
+	sp -= 4 * (uint32_t)(nenv + 1);
+	memcpy((void *)(base + sp), eptrs, 4 * (uint32_t)(nenv + 1));
+	envp_va = sp;
 	ptrs[argc] = 0;
 	sp -= 4 * (uint32_t)(argc + 1);
 	memcpy((void *)(base + sp), ptrs, 4 * (uint32_t)(argc + 1));
 	{
 		uint32_t argv_va = sp;
 
+		sp -= 4;
+		*(uint32_t *)(base + sp) = envp_va;
 		sp -= 4;
 		*(uint32_t *)(base + sp) = argv_va;
 		sp -= 4;

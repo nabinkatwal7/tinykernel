@@ -30,6 +30,11 @@ _builtin_args_start:
 	.incbin "build/args.bin"
 _builtin_args_end:
 
+.globl _builtin_envdump_start, _builtin_envdump_end
+_builtin_envdump_start:
+	.incbin "build/envdump.bin"
+_builtin_envdump_end:
+
 .globl _builtin_helloelf_start, _builtin_helloelf_end
 _builtin_helloelf_start:
 	.incbin "build/helloelf.elf"

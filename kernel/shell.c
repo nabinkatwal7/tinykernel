@@ -3,6 +3,7 @@
 #include "ata.h"
 #include "console.h"
 #include "debug.h"
+#include "env.h"
 #include "fs.h"
 #include "io.h"
 #include "keyboard.h"
@@ -143,6 +144,61 @@ static int readline(char *buf, int max)
 			console_putchar((char)k);
 		}
 	}
+}
+
+/* ---------------- variable expansion ---------------- */
+
+static int last_status;
+
+/*
+ * Expands $NAME and $? in a command line. Single quotes and \$ keep the dollar literal.
+ * Unset variables expand to nothing. The result is truncated to fit.
+ */
+static void expand(const char *in, char *out, int size)
+{
+	int o = 0, single = 0;
+
+	while (*in && o < size - 1) {
+		char c = *in;
+
+		if (c == '\'' )
+			single = !single;
+		if (c == '\\' && in[1] == '$') { /* keep the backslash for the parser, skip expansion */
+			out[o++] = c;
+			in++;
+			if (o < size - 1)
+				out[o++] = *in++;
+			continue;
+		}
+		if (c == '$' && !single && (in[1] == '?' || in[1] == '_' || (in[1] >= 'A' && in[1] <= 'Z')
+					    || (in[1] >= 'a' && in[1] <= 'z'))) {
+			char name[ENV_NAME_MAX];
+			const char *val;
+			int n = 0;
+
+			in++;
+			if (*in == '?') {
+				in++;
+				ksnprintf(name, sizeof name, "%d", last_status);
+				val = name;
+			} else {
+				while ((*in >= 'A' && *in <= 'Z') || (*in >= 'a' && *in <= 'z') || *in == '_'
+				       || (*in >= '0' && *in <= '9')) {
+					if (n < ENV_NAME_MAX - 1)
+						name[n++] = *in;
+					in++;
+				}
+				name[n] = '\0';
+				val = env_get(name);
+			}
+			while (val && *val && o < size - 1)
+				out[o++] = *val++;
+			continue;
+		}
+		out[o++] = c;
+		in++;
+	}
+	out[o] = '\0';
 }
 
 /* ---------------- parser ---------------- */
@@ -855,6 +911,48 @@ static int cmd_waittest(int argc, char **argv)
 	return !(code_a == 42 && code_b == -1);
 }
 
+/* export NAME=value | export (list) */
+static int cmd_export(int argc, char **argv)
+{
+	int i;
+	char entry[ENV_NAME_MAX + ENV_VAL_MAX + 2];
+
+	if (argc < 2) {
+		for (i = 0; env_entry(i, entry, sizeof entry) == 0; i++)
+			console_printf("%s\n", entry);
+		return 0;
+	}
+	for (i = 1; i < argc; i++) {
+		char *eq = argv[i];
+
+		while (*eq && *eq != '=')
+			eq++;
+		if (!*eq) {
+			console_printf("export: expected NAME=value, got '%s'\n", argv[i]);
+			return 1;
+		}
+		*eq = '\0';
+		if (env_set(argv[i], eq + 1)) {
+			console_printf("export: cannot set '%s' (bad name or table full)\n", argv[i]);
+			return 1;
+		}
+	}
+	return 0;
+}
+
+static int cmd_unset(int argc, char **argv)
+{
+	int i, rc = 0;
+
+	if (argc < 2) {
+		console_write("usage: unset <NAME>...\n");
+		return 1;
+	}
+	for (i = 1; i < argc; i++)
+		rc |= env_unset(argv[i]) ? 1 : 0;
+	return rc;
+}
+
 static int cmd_nice(int argc, char **argv)
 {
 	uint32_t id, prio;
@@ -1360,6 +1458,8 @@ static const struct command commands[] = {
 	{ "pstree",  "pstree [demo]",         "task tree by parent", cmd_pstree },
 	{ "forktest", "forktest",             "fork-style task cloning", cmd_forktest },
 	{ "waittest", "waittest",             "exit codes via task_wait", cmd_waittest },
+	{ "export",  "export [NAME=value]",   "set/list environment variables", cmd_export },
+	{ "unset",   "unset <NAME>",          "remove an environment variable", cmd_unset },
 	{ "nice",    "nice <id> <prio>",      "set a task priority", cmd_nice },
 	{ "priotest", "priotest",             "priority + aging scheduler test", cmd_priotest },
 	{ "kill",  "kill <id>",             "stop a task", cmd_kill },
@@ -1394,18 +1494,22 @@ int shell_exec(const char *line)
 	const struct command *c;
 	int argc;
 
-	kstrlcpy(copy, line, sizeof copy);
+	expand(line, copy, sizeof copy);
 	argc = parse(copy, argv, ARGV_MAX);
 	if (argc == 0)
 		return 0;
 
 	cmd_table = commands;
-	for (c = commands; c->name; c++)
-		if (!kstrcmp(c->name, argv[0]))
-			return c->fn(argc, argv);
+	for (c = commands; c->name; c++) {
+		if (!kstrcmp(c->name, argv[0])) {
+			last_status = c->fn(argc, argv);
+			return last_status;
+		}
+	}
 
 	console_printf("unknown command: %s (try 'help')\n", argv[0]);
-	return 127;
+	last_status = 127;
+	return last_status;
 }
 
 void shell_run(void)
@@ -1414,6 +1518,9 @@ void shell_run(void)
 
 	console_printf("%s %s - type 'help' for commands\n", KERNEL_NAME, KERNEL_VERSION);
 	keyboard_set_sigint(sigint);
+	env_set("USER", "root");
+	env_set("SHELL", "tinysh");
+	env_set("TERM", "vga80x25");
 	for (;;) {
 		interrupted = 0;
 		prompt();

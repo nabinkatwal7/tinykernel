@@ -11,7 +11,10 @@ BUILD = os.path.join(ROOT, "build")
 KEYS = {" ": "spc", "\n": "ret", ".": "dot", "-": "minus", "/": "slash", ",": "comma",
         "=": "equal", ";": "semicolon", "'": "apostrophe", "\\": "backslash", "_": "shift-minus",
         '"': "shift-apostrophe", ":": "shift-semicolon", "!": "shift-1", "(": "shift-9",
-        ")": "shift-0", "*": "shift-8", "+": "shift-equal", "?": "shift-slash"}
+        ")": "shift-0", "*": "shift-8", "+": "shift-equal", "?": "shift-slash",
+        "$": "shift-4", "%": "shift-5", "#": "shift-3", "@": "shift-2", "^": "shift-6", "&": "shift-7",
+        "[": "bracket_left", "]": "bracket_right", "{": "shift-bracket_left", "}": "shift-bracket_right",
+        "<": "shift-comma", ">": "shift-dot", "|": "shift-backslash", "`": "grave_accent", "~": "shift-grave_accent"}
 
 def key(c):
     if c in KEYS: return KEYS[c]
