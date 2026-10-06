@@ -1,4 +1,3 @@
-Add 'cp' shell command,
 Add 'mv' shell command,
 Add 'stat' shell command,
 Add 'df' shell command,

@@ -1153,6 +1153,67 @@ static int cmd_append(int argc, char **argv)
 	return rc ? fs_fail(argv[1], rc) : 0;
 }
 
+/* Last path component. */
+static const char *base_name(const char *path)
+{
+	const char *slash = path;
+
+	while (*path) {
+		if (*path == '/' && path[1])
+			slash = path + 1;
+		path++;
+	}
+	return slash;
+}
+
+/* If 'dst' names an existing directory, the real destination is dst/basename(src). */
+static void dest_path(const char *src, const char *dst, char *out, size_t size)
+{
+	struct vfs_stat st;
+
+	if (vfs_stat(dst, &st) == FS_OK && st.is_dir)
+		ksnprintf(out, size, "%s/%s", dst, base_name(src));
+	else
+		kstrlcpy(out, dst, size);
+}
+
+static int cmd_cp(int argc, char **argv)
+{
+	char dst[VFS_PATH_MAX], *buf;
+	struct vfs_stat st;
+	int n, rc;
+
+	if (argc != 3) {
+		console_write("usage: cp <source> <destination>\n");
+		return 1;
+	}
+	if (need_fs())
+		return 1;
+	rc = vfs_stat(argv[1], &st);
+	if (rc < 0)
+		return fs_fail(argv[1], rc);
+	if (st.is_dir) {
+		console_write("cp: copying directories is not supported\n");
+		return 1;
+	}
+	dest_path(argv[1], argv[2], dst, sizeof dst);
+	if (st.size == 0)
+		return (rc = vfs_write(dst, "", 0)) ? fs_fail(dst, rc) : 0;
+	buf = kmalloc(st.size);
+	if (!buf) {
+		console_write("out of memory\n");
+		return 1;
+	}
+	n = vfs_read(argv[1], buf, st.size);
+	if (n < 0) {
+		kfree(buf);
+		return fs_fail(argv[1], n);
+	}
+	rc = vfs_write(dst, buf, (uint32_t)n);
+	kfree(buf);
+	return rc ? fs_fail(dst, rc) : 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -1650,6 +1711,7 @@ static const struct command commands[] = {
 	{ "cat",     "cat <file>",            "print a file", cmd_cat },
 	{ "write",   "write <file> <text>",   "create/replace a file", cmd_write },
 	{ "append",  "append <file> <text>",  "append a line to a file", cmd_append },
+	{ "cp",      "cp <src> <dst>",        "copy a file", cmd_cp },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },
