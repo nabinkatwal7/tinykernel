@@ -2,6 +2,7 @@
 
 #include "io.h"
 #include "pic.h"
+#include "sched.h"
 
 #define KBD_DATA   0x60
 #define KBD_STATUS 0x64
@@ -28,6 +29,7 @@ static const char map_shift[58] = {
 static volatile int buf[BUF_SIZE];
 static volatile unsigned head, tail;
 static volatile int irq_mode;
+static struct waitq kb_wq; /* tasks blocked in keyboard_getkey() */
 static int shift, ctrl, caps, e0;
 
 static void push(int k)
@@ -122,6 +124,7 @@ static void keyboard_irq(struct regs *r)
 		if (!aux)
 			handle_scancode(sc);
 	}
+	wq_wake_one(&kb_wq); /* a key (or at least a scancode) arrived */
 }
 
 void keyboard_init(void)
@@ -137,9 +140,9 @@ void keyboard_use_irq(void)
 	irq_mode = 1;
 }
 
-int keyboard_trygetkey(void)
+/* Interrupts must be off. */
+static int pop_locked(void)
 {
-	uint32_t f = irq_save();
 	int k = -1;
 
 	if (!irq_mode)
@@ -148,19 +151,30 @@ int keyboard_trygetkey(void)
 		k = buf[tail];
 		tail = (tail + 1) % BUF_SIZE;
 	}
+	return k;
+}
+
+int keyboard_trygetkey(void)
+{
+	uint32_t f = irq_save();
+	int k = pop_locked();
+
 	irq_restore(f);
 	return k;
 }
 
+/* Sleeps on a wait queue until IRQ1 delivers a key: a blocked reader costs no CPU. */
 int keyboard_getkey(void)
 {
 	for (;;) {
-		int k = keyboard_trygetkey();
+		uint32_t f = irq_save();
+		int k = pop_locked();
 
+		if (k < 0 && irq_mode)
+			wq_wait(&kb_wq); /* atomic with the empty check: no lost wakeup */
+		irq_restore(f);
 		if (k >= 0)
 			return k;
-		if (irq_mode)
-			__asm__ volatile ("sti; hlt" : : : "memory");
 	}
 }
 
