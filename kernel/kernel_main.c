@@ -59,7 +59,7 @@ void kernel_main(void)
 		klog(LOG_INFO, "fs: %s", rc == FS_OK ? "mounted" : fs_strerror(rc));
 	}
 
-	task_create("status", status_task, 0, 1);
+	task_create("status", status_task, 0, 7);
 	console_status(" " KERNEL_NAME " " KERNEL_VERSION);
 	shell_run();
 }

@@ -3,6 +3,11 @@
 
 #include <stdint.h>
 
+#define PRIO_MIN     1
+#define PRIO_DEFAULT 5
+#define PRIO_MAX     9
+#define AGING_TICKS  20 /* every this many waiting ticks a task's effective priority rises by 1 */
+
 typedef enum { TASK_READY, TASK_RUNNING, TASK_SLEEPING, TASK_DEAD, TASK_BLOCKED } task_state_t;
 
 struct task;
@@ -21,7 +26,8 @@ typedef struct task {
 	uint32_t id;
 	char name[16];
 	task_state_t state;
-	uint32_t priority;     /* scales the time slice (1 = default) */
+	uint32_t priority;     /* 1 (lowest) .. 9 (highest), default PRIO_DEFAULT */
+	uint32_t waited;       /* ticks spent READY without running: raises effective priority */
 	uint32_t slice_left;   /* ticks left in the current quantum */
 	uint32_t wake_tick;    /* when SLEEPING */
 	uint32_t cpu_ticks;    /* total ticks spent running, for ps */
@@ -41,6 +47,7 @@ void     task_exit(void) __attribute__((noreturn));
 void     task_yield(void);
 void     task_sleep(uint32_t ms);
 int      task_kill(uint32_t id);  /* 0 on success */
+int      task_set_priority(uint32_t id, uint32_t prio); /* 0 on success */
 task_t  *task_current(void);
 void     sched_tick(void);
 

@@ -484,7 +484,7 @@ static int cmd_spawn(int argc, char **argv)
 	for (i = 0; i < n; i++) {
 		serial++;
 		ksnprintf(name, sizeof name, "worker%u", serial);
-		if (!task_create(name, worker, (void *)serial, 1)) {
+		if (!task_create(name, worker, (void *)serial, PRIO_DEFAULT)) {
 			console_write("out of memory\n");
 			return 1;
 		}
@@ -512,7 +512,7 @@ static int cmd_overflow(int argc, char **argv)
 	(void)argc;
 	(void)argv;
 	console_write("starting a task that recurses forever (system will stop)...\n");
-	task_create("overflow", overflow_main, 0, 1);
+	task_create("overflow", overflow_main, 0, PRIO_DEFAULT);
 	return 0;
 }
 
@@ -548,7 +548,7 @@ static uint32_t run_counter_race(int use_lock)
 	test_counter = 0;
 	test_done = 0;
 	for (i = 0; i < 3; i++)
-		task_create("mtx-worker", mutex_worker, 0, 1);
+		task_create("mtx-worker", mutex_worker, 0, PRIO_DEFAULT);
 	while (test_done < 3)
 		task_sleep(20);
 	return test_counter;
@@ -599,7 +599,7 @@ static int cmd_semtest(int argc, char **argv)
 	sem_inside = sem_max = 0;
 	test_done = 0;
 	for (i = 0; i < 5; i++)
-		task_create("sem-worker", sem_worker, 0, 1);
+		task_create("sem-worker", sem_worker, 0, PRIO_DEFAULT);
 	while (test_done < 5)
 		task_sleep(20);
 	console_printf("max concurrent holders: %d (limit 2), final permits: %d\n", sem_max,
@@ -709,10 +709,10 @@ static int cmd_prodcons(int argc, char **argv)
 	test_done = 0;
 	sem_init(&pc_empty, PC_SLOTS);
 	sem_init(&pc_full, 0);
-	c1 = task_create("consumer1", consumer, (void *)1, 1);
-	c2 = task_create("consumer2", consumer, (void *)2, 1);
-	task_create("producer1", producer, (void *)1, 1);
-	task_create("producer2", producer, (void *)2, 1);
+	c1 = task_create("consumer1", consumer, (void *)1, PRIO_DEFAULT);
+	c2 = task_create("consumer2", consumer, (void *)2, PRIO_DEFAULT);
+	task_create("producer1", producer, (void *)1, PRIO_DEFAULT);
+	task_create("producer2", producer, (void *)2, PRIO_DEFAULT);
 	while (test_done < 2 || pc_count_out < 2 * PC_ITEMS)
 		task_sleep(50);
 	task_kill(c1->id); /* consumers loop forever; stop them (they are blocked or sleeping) */
@@ -720,6 +720,51 @@ static int cmd_prodcons(int argc, char **argv)
 	ok = pc_sum_in == pc_sum_out && pc_count_out == 2 * PC_ITEMS;
 	console_printf("produced sum %u, consumed sum %u, items %u: %s\n", pc_sum_in, pc_sum_out,
 		       pc_count_out, ok ? "ok" : "FAILED");
+	return !ok;
+}
+
+static int cmd_nice(int argc, char **argv)
+{
+	uint32_t id, prio;
+
+	if (argc < 3 || kstrtoul(argv[1], &id) || kstrtoul(argv[2], &prio)
+	    || task_set_priority(id, prio)) {
+		console_printf("usage: nice <id> <priority %d-%d>\n", PRIO_MIN, PRIO_MAX);
+		return 1;
+	}
+	return 0;
+}
+
+static volatile uint32_t busy_end, busy_cpu[3];
+
+static void busy_main(void *arg)
+{
+	uint32_t slot = (uint32_t)arg;
+
+	while ((int32_t)(timer_ticks() - busy_end) < 0)
+		; /* burn CPU until the deadline; the timer preempts us */
+	busy_cpu[slot] = task_current()->cpu_ticks;
+	test_done++;
+}
+
+/* Three CPU hogs at priority 8, 5 and 2 for 3 s: priority decides the share, aging stops starvation. */
+static int cmd_priotest(int argc, char **argv)
+{
+	static const uint32_t prio[3] = { 8, 5, 2 };
+	int i, ok;
+
+	(void)argc;
+	(void)argv;
+	test_done = 0;
+	busy_end = timer_ticks() + 3 * timer_hz();
+	for (i = 0; i < 3; i++)
+		task_create("busy", busy_main, (void *)i, prio[i]);
+	while (test_done < 3)
+		task_sleep(50);
+	for (i = 0; i < 3; i++)
+		console_printf("priority %u: %u cpu ticks\n", prio[i], busy_cpu[i]);
+	ok = busy_cpu[0] > busy_cpu[1] && busy_cpu[1] > busy_cpu[2] && busy_cpu[2] > 0;
+	console_write(ok ? "priotest: ok (ordered by priority, nobody starved)\n" : "priotest: FAILED\n");
 	return !ok;
 }
 
@@ -1180,6 +1225,8 @@ static const struct command commands[] = {
 	{ "semtest", "semtest",             "semaphore limits concurrency", cmd_semtest },
 	{ "spintest", "spintest",             "spinlock IRQ-safety self-test", cmd_spintest },
 	{ "prodcons", "prodcons",             "producer/consumer demo", cmd_prodcons },
+	{ "nice",    "nice <id> <prio>",      "set a task priority", cmd_nice },
+	{ "priotest", "priotest",             "priority + aging scheduler test", cmd_priotest },
 	{ "kill",  "kill <id>",             "stop a task", cmd_kill },
 	{ "ls",      "ls",                    "list files", cmd_ls },
 	{ "cat",     "cat <file>",            "print a file", cmd_cat },

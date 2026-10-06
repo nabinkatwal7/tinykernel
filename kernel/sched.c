@@ -12,7 +12,7 @@
 #include "timer.h"
 
 #define TASK_STACK_SIZE 8192
-#define BASE_SLICE      5 /* ticks per quantum at priority 1 */
+#define BASE_SLICE      5 /* ticks per quantum */
 
 static task_t *task_head;   /* circular list */
 static task_t *current;
@@ -83,7 +83,7 @@ void sched_init(void)
 	t->pgdir = paging_kernel_dir();
 	t->id = next_id++;
 	t->state = TASK_RUNNING;
-	t->priority = 1;
+	t->priority = PRIO_DEFAULT;
 	t->slice_left = BASE_SLICE;
 	t->esp0 = 0x90000; /* the boot stack top; only used if a ring 3 task starts here */
 	list_append(t);
@@ -124,7 +124,7 @@ task_t *task_create(const char *name, void (*entry)(void *), void *arg, uint32_t
 	t->pgdir = paging_kernel_dir();
 	t->entry = entry;
 	t->arg = arg;
-	t->priority = priority ? priority : 1;
+	t->priority = priority < PRIO_MIN ? PRIO_MIN : priority > PRIO_MAX ? PRIO_MAX : priority;
 	t->state = TASK_READY;
 
 	flags = irq_save();
@@ -139,17 +139,29 @@ static int runnable(task_t *t)
 	return !t->is_idle && (t->state == TASK_READY || t->state == TASK_RUNNING);
 }
 
-/* Round-robin: scan the ring starting after the current task so everyone gets a turn. */
+/* Effective priority = base priority + one level per AGING_TICKS spent waiting. */
+static uint32_t effective(task_t *t)
+{
+	return t->priority + t->waited / AGING_TICKS;
+}
+
+/*
+ * Highest effective priority wins. The ring is scanned starting after the current task and only a
+ * strictly better task replaces the best one, so equal priorities still rotate round-robin, and
+ * aging guarantees a low-priority task eventually overtakes a busy high-priority one.
+ */
 static task_t *pick_next(void)
 {
-	task_t *t = current->next;
+	task_t *t = current->next, *best = 0;
 
 	do {
-		if (runnable(t))
-			return t;
+		if (runnable(t) && (!best || effective(t) > effective(best)))
+			best = t;
 		t = t->next;
 	} while (t != current->next);
-	return idle;
+	if (best)
+		best->waited = 0;
+	return best ? best : idle;
 }
 
 /* Free tasks that have exited. Never touches the one we are running on. */
@@ -182,14 +194,14 @@ static void schedule_locked(void)
 		if (prev->state == TASK_RUNNING)
 			prev->state = TASK_READY;
 		next->state = TASK_RUNNING;
-		next->slice_left = BASE_SLICE * next->priority;
+		next->slice_left = BASE_SLICE;
 		current = next;
 		gdt_set_kernel_stack(next->esp0);
 		paging_switch(next->pgdir);
 		switch_context(&prev->esp, next->esp);
 	} else {
 		prev->state = TASK_RUNNING;
-		prev->slice_left = BASE_SLICE * prev->priority;
+		prev->slice_left = BASE_SLICE;
 	}
 	reap();
 }
@@ -223,6 +235,26 @@ void task_exit(void)
 	schedule_locked();
 	for (;;)
 		hlt();
+}
+
+int task_set_priority(uint32_t id, uint32_t prio)
+{
+	task_t *t = task_head;
+	uint32_t f = irq_save();
+	int rc = -1;
+
+	if (prio >= PRIO_MIN && prio <= PRIO_MAX) {
+		do {
+			if (t->id == id && !t->is_idle && t->state != TASK_DEAD) {
+				t->priority = prio;
+				rc = 0;
+				break;
+			}
+			t = t->next;
+		} while (t != task_head);
+	}
+	irq_restore(f);
+	return rc;
 }
 
 int task_kill(uint32_t id)
@@ -377,6 +409,15 @@ void sched_tick(void)
 		t->state = TASK_READY;
 	}
 
+	{
+		task_t *t = task_head;
+
+		do { /* everyone who wanted the CPU this tick but did not get it ages */
+			if (runnable(t) && t != current)
+				t->waited++;
+			t = t->next;
+		} while (t != task_head);
+	}
 	current->cpu_ticks++;
 	if (current->is_idle || current->slice_left == 0 || --current->slice_left == 0)
 		schedule_locked();
