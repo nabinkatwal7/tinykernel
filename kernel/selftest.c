@@ -40,6 +40,7 @@ static const struct test tests[] = {
 	{ "ram disk",              "ramdisk test",        0, 0 },
 	{ "loopback device",       "losetup test",        1, 0 },
 	{ "partition table",       "fdisk test",          0, 0 },
+	{ "ext2 read-only driver", "ext2 test",           0, 0 },
 	{ "filesystem",            "fstest",              1, 0 },
 	{ "fs journal replay",     "jtest",               1, 0 },
 	{ "pipes and redirection", "shtest",              1, 0 },

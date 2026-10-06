@@ -17,5 +17,8 @@ int ext2_read_super(struct blkdev *dev, struct ext2_super *sb);   /* 0, FS_ENOMO
 
 /* shell commands */
 int cmd_ext2info(int argc, char **argv);   /* ext2info DEVICE */
+int cmd_ext2(int argc, char **argv);       /* ext2 mount DEVICE /PATH | ext2 umount /PATH */
+int ext2_mount(const char *devname, const char *where);   /* read-only; 0 or FS_E* */
+int ext2_umount(const char *where);
 
 #endif

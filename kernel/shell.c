@@ -4105,6 +4105,7 @@ static const struct command commands[] = {
 	{ "losetup", "losetup NAME FILE", "present a file as a block device", cmd_losetup },
 	{ "fdisk", "fdisk DEVICE", "show and register MBR partitions", cmd_fdisk },
 	{ "ext2info", "ext2info DEVICE", "describe an ext2 volume", cmd_ext2info },
+	{ "ext2", "ext2 mount DEV /PATH", "mount an ext2 volume (read-only)", cmd_ext2 },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
