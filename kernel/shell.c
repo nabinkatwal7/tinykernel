@@ -1156,10 +1156,16 @@ static int cmd_smpaffinity(int argc, char **argv)
 	return where_ran[0] != cpu;
 }
 
+static int job_kill(const char *spec); /* "%n": the job table is near the end of the file */
+static int cmd_jobs(int argc, char **argv);
+static int cmd_fg(int argc, char **argv);
+
 static int cmd_kill(int argc, char **argv)
 {
 	uint32_t id;
 
+	if (argc > 1 && argv[1][0] == '%')
+		return job_kill(argv[1]);
 	if (argc < 2 || kstrtoul(argv[1], &id)) {
 		console_write("usage: kill <id>\n");
 		return 1;
@@ -3474,6 +3480,8 @@ static const struct command commands[] = {
 	{ "gdbstub", "gdbstub",               "stop in a GDB remote stub on COM2", cmd_gdbstub },
 	{ "pipetest", "pipetest",             "test pipes between two tasks", cmd_pipetest },
 	{ "shtest",  "shtest",                "test pipelines and redirection", cmd_shtest },
+	{ "jobs",    "jobs",                  "list background jobs", cmd_jobs },
+	{ "fg",      "fg [%n]",               "wait for a background job", cmd_fg },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
@@ -3603,6 +3611,88 @@ static void report_jobs(void)
 			jobs[i].used = 0;
 		}
 	}
+}
+
+/* "%2" or "2" names job 2; no argument means the newest job. */
+static struct job *job_find(const char *spec)
+{
+	struct job *best = 0;
+	uint32_t id = 0;
+	int i;
+
+	if (spec) {
+		if (*spec == '%')
+			spec++;
+		if (kstrtoul(spec, &id))
+			return 0;
+	}
+	for (i = 0; i < MAX_JOBS; i++) {
+		if (!jobs[i].used)
+			continue;
+		if (spec ? jobs[i].id == (int)id : (!best || jobs[i].id > best->id))
+			best = &jobs[i];
+	}
+	return best;
+}
+
+static int job_kill(const char *spec)
+{
+	struct job *j = job_find(spec);
+
+	if (!j) {
+		console_printf("no such job: %s\n", spec);
+		return 1;
+	}
+	if (!j->done && task_kill(j->tid)) {
+		console_write("cannot kill that job\n");
+		return 1;
+	}
+	if (!j->done) {
+		j->status = -1;
+		j->done = 1;
+	}
+	console_printf("[%d] killed  %s\n", j->id, j->cmd);
+	j->used = 0;
+	return 0;
+}
+
+/* jobs : list the background jobs */
+static int cmd_jobs(int argc, char **argv)
+{
+	int i, n = 0;
+
+	(void)argc;
+	(void)argv;
+	for (i = 0; i < MAX_JOBS; i++) {
+		if (!jobs[i].used)
+			continue;
+		console_printf("[%d] %-8s task %u  %s\n", jobs[i].id, jobs[i].done ? "Done" : "Running", jobs[i].tid,
+			       jobs[i].cmd);
+		n++;
+	}
+	if (!n)
+		console_write("no jobs\n");
+	return 0;
+}
+
+/* fg [%n] : wait for a background job to finish (Ctrl+C leaves it running) */
+static int cmd_fg(int argc, char **argv)
+{
+	struct job *j = job_find(argc > 1 ? argv[1] : 0);
+	int status;
+
+	if (!j) {
+		console_write("fg: no such job\n");
+		return 1;
+	}
+	console_printf("%s\n", j->cmd);
+	while (!j->done && !shell_interrupted())
+		task_sleep(20);
+	if (!j->done)
+		return 130;
+	status = j->status;
+	j->used = 0;
+	return status;
 }
 
 static int exec_command(const char *line);
