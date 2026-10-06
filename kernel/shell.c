@@ -13,6 +13,7 @@
 #include "paging.h"
 #include "pmm.h"
 #include "sched.h"
+#include "slab.h"
 #include "timer.h"
 #include "user.h"
 #include "version.h"
@@ -590,6 +591,51 @@ static int cmd_pgtest(int argc, char **argv)
 	return fails != 0;
 }
 
+static int cmd_slabinfo(int argc, char **argv)
+{
+	(void)argc;
+	(void)argv;
+	slab_print_stats();
+	return 0;
+}
+
+/* Slab churn: spans several slabs, frees out of order, checks nothing leaks. */
+static int cmd_slabtest(int argc, char **argv)
+{
+	static struct slab_cache cache;
+	static void *obj[200];
+	uint32_t before = pmm_free_frames(), i;
+	int fails = 0;
+
+	(void)argc;
+	(void)argv;
+	slab_cache_init(&cache, "slabtest", 100);
+	for (i = 0; i < 200; i++) {
+		obj[i] = slab_alloc(&cache);
+		CHECK(obj[i], "allocation succeeded");
+		if (!obj[i])
+			return 1;
+		memset(obj[i], (int)(i & 0xFF), 100);
+	}
+	CHECK(cache.nslabs >= 200 / cache.per_slab, "spans several slabs");
+	for (i = 0; i < 200; i += 2)
+		slab_free(&cache, obj[i]);
+	for (i = 1; i < 200; i += 2) {
+		uint8_t *p = obj[i];
+
+		CHECK(p[0] == (uint8_t)i && p[99] == (uint8_t)i, "surviving object intact");
+		slab_free(&cache, obj[i]);
+	}
+	CHECK(cache.in_use == 0, "all objects returned");
+	CHECK(cache.nslabs == 1, "empty slabs released except one spare");
+	CHECK(before - pmm_free_frames() == 1, "only the spare slab frame is still held");
+	if (fails)
+		console_printf("slabtest: %d check(s) failed\n", fails);
+	else
+		console_write("slabtest: all checks passed\n");
+	return fails != 0;
+}
+
 static int cmd_disk(int argc, char **argv)
 {
 	uint8_t sec[SECTOR_SIZE];
@@ -774,7 +820,9 @@ static const struct command commands[] = {
 	{ "format",  "format",                "erase the disk and make a filesystem", cmd_format },
 	{ "fstest",  "fstest",                "self-test the filesystem", cmd_fstest },
 	{ "pgtest",  "pgtest",                "self-test address spaces", cmd_pgtest },
-	{ "disk",   "disk [lba]",            "disk info / dump a sector", cmd_disk },
+	{ "slabinfo", "slabinfo",             "show slab caches", cmd_slabinfo },
+	{ "slabtest", "slabtest",             "self-test the slab allocator", cmd_slabtest },
+	{ "disk",  "disk [lba]",            "disk info / dump a sector", cmd_disk },
 	{ "install", "install [name]",        "list/copy built-in programs to disk", cmd_install },
 	{ "run",     "run <program>",         "run a program in user mode", cmd_run },
 	{ "history", "history",               "show command history", cmd_history },

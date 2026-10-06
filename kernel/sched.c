@@ -7,6 +7,7 @@
 #include "kmalloc.h"
 #include "kstring.h"
 #include "paging.h"
+#include "slab.h"
 #include "timer.h"
 
 #define TASK_STACK_SIZE 8192
@@ -16,6 +17,7 @@ static task_t *task_head;   /* circular list */
 static task_t *current;
 static task_t *idle;
 static uint32_t next_id;
+static struct slab_cache task_cache;
 
 static void idle_main(void *arg)
 {
@@ -48,7 +50,10 @@ static void list_append(task_t *t)
 
 void sched_init(void)
 {
-	task_t *t = kcalloc(1, sizeof *t);
+	task_t *t;
+
+	slab_cache_init(&task_cache, "task_t", sizeof(task_t));
+	t = slab_alloc(&task_cache);
 
 	kstrlcpy(t->name, "kmain", sizeof t->name);
 	t->pgdir = paging_kernel_dir();
@@ -67,7 +72,7 @@ void sched_init(void)
 
 task_t *task_create(const char *name, void (*entry)(void *), void *arg, uint32_t priority)
 {
-	task_t *t = kcalloc(1, sizeof *t);
+	task_t *t = slab_alloc(&task_cache);
 	uint32_t *sp;
 	uint32_t flags;
 
@@ -75,7 +80,7 @@ task_t *task_create(const char *name, void (*entry)(void *), void *arg, uint32_t
 		return 0;
 	t->stack = kmalloc(TASK_STACK_SIZE);
 	if (!t->stack) {
-		kfree(t);
+		slab_free(&task_cache, t);
 		return 0;
 	}
 	sp = (uint32_t *)((uint8_t *)t->stack + TASK_STACK_SIZE);
@@ -136,7 +141,7 @@ static void reap(void)
 		if (task_head == t)
 			task_head = prev;
 		kfree(t->stack);
-		kfree(t);
+		slab_free(&task_cache, t);
 	}
 }
 

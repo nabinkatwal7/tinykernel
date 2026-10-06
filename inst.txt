@@ -1,4 +1,3 @@
-Implement slab allocator,
 Add heap corruption detector,
 Implement kernel stack guard pages,
 Add memory usage per task,
