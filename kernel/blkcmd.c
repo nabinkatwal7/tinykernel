@@ -3,6 +3,7 @@
 #include "console.h"
 #include "fs.h"
 #include "kstring.h"
+#include "vfs.h"
 
 /* Shell commands for the block layer. */
 
@@ -92,6 +93,26 @@ int cmd_losetup(int argc, char **argv)
 	if (argc == 3) {
 		rc = loop_attach(argv[1], argv[2]);
 		return rc ? fail(argv[2], rc) : 0;
+	}
+	if (argc == 2 && !kstrcmp(argv[1], "test")) { /* a file as a disk: write through the device, detach, attach again, read back */
+		static uint8_t content[4096];
+		uint8_t sec[512], back[512];
+		int bad = 0, i;
+
+		for (i = 0; i < 512; i++)
+			sec[i] = (uint8_t)(i * 3 + 1);
+		if (vfs_write("looptest.img", content, sizeof content) || loop_attach("looptest", "looptest.img"))
+			return 1;
+		bad += blk_write(blk_find("looptest"), 5, 1, sec) != 0;
+		bad += blk_read(blk_find("looptest"), 8, 1, back) == 0; /* past the end */
+		blk_remove("looptest"); /* flushes to the file */
+		if (loop_attach("looptest", "looptest.img"))
+			return 1;
+		bad += blk_read(blk_find("looptest"), 5, 1, back) != 0 || memcmp(back, sec, 512);
+		blk_remove("looptest");
+		vfs_unlink("looptest.img");
+		console_printf("losetup test: %d errors: %s\n", bad, bad ? "FAILED" : "ok");
+		return bad != 0;
 	}
 	console_write("usage: losetup NAME FILE | losetup -d NAME | losetup -s NAME\n");
 	return 1;
