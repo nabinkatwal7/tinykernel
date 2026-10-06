@@ -18,6 +18,7 @@ BOOT_BIN       := $(BUILD)/boot.bin
 IMAGE          := $(BUILD)/os-image.bin
 DISK           := $(BUILD)/disk.img
 DISK_SECTORS   := 2048
+FATIMG         := $(BUILD)/fat.img
 
 C_SRCS  := $(wildcard kernel/*.c)
 S_SRCS  := $(wildcard kernel/*.S)
@@ -38,11 +39,12 @@ USER_BINS := $(FLAT_PROGS:%=$(BUILD)/%.bin) $(ELF_PROGS:%=$(BUILD)/%.elf) $(C_PR
 
 # Headless run: serial log to build/serial.log, no window.
 QEMU_DISKS := -drive format=raw,file=$(IMAGE),if=floppy \
-              -drive format=raw,file=$(DISK),if=ide,index=0 -boot a
+              -drive format=raw,file=$(DISK),if=ide,index=0 \
+              -drive format=raw,file=$(FATIMG),if=ide,index=1 -boot a
 
 .PHONY: all clean clean-disk run run-headless
 
-all: $(IMAGE)
+all: $(IMAGE) $(FATIMG)
 
 $(BUILD)/%.o: kernel/%.c $(HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -117,10 +119,17 @@ $(DISK): | $(BUILD)
 $(BUILD):
 	mkdir -p $(BUILD)
 
-run: $(IMAGE) $(DISK)
+# Host tool + sample FAT12 floppy image (the files under fatroot/), attached as the IDE slave.
+$(BUILD)/mkfat12.exe: tools/mkfat12.c | $(BUILD)
+	gcc -O1 -o $@ $<
+
+$(FATIMG): $(BUILD)/mkfat12.exe $(wildcard fatroot/* fatroot/*/*)
+	$(BUILD)/mkfat12.exe $@ fatroot
+
+run: $(IMAGE) $(DISK) $(FATIMG)
 	$(QEMU) $(QEMU_DISKS) -serial file:$(BUILD)/serial.log
 
-run-headless: $(IMAGE) $(DISK)
+run-headless: $(IMAGE) $(DISK) $(FATIMG)
 	$(QEMU) $(QEMU_DISKS) -display none -serial file:$(BUILD)/serial.log
 
 clean-disk:

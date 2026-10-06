@@ -6,6 +6,7 @@
 #include "debug.h"
 #include "editor.h"
 #include "env.h"
+#include "fat12.h"
 #include "fs.h"
 #include "io.h"
 #include "keyboard.h"
@@ -1361,6 +1362,64 @@ static int cmd_fscorrupt(int argc, char **argv)
 	return 0;
 }
 
+/* fat info | fat ls [path] | fat cat <path>: read the FAT12 floppy image on the IDE slave. */
+static int cmd_fat(int argc, char **argv)
+{
+	struct fat12_entry ent[32];
+	const char *sub = argc > 1 ? argv[1] : "";
+	int n, i;
+
+	if (!fat12_mounted() && fat12_mount(1) != FS_OK) {
+		console_write("fat: no FAT12 disk on the IDE slave\n");
+		return 1;
+	}
+	if (!kstrcmp(sub, "info")) {
+		uint32_t total, clusters, cbytes;
+
+		fat12_info(&total, &clusters, &cbytes);
+		console_printf("FAT12 volume: %u sectors, %u clusters of %u bytes\n", total, clusters, cbytes);
+		return 0;
+	}
+	if (!kstrcmp(sub, "ls")) {
+		const char *path = argc > 2 ? argv[2] : "/";
+
+		n = fat12_list(path, ent, 32);
+		if (n < 0)
+			return fs_fail(path, n);
+		for (i = 0; i < n; i++)
+			console_printf("  %-12s %7u bytes%s\n", ent[i].name, ent[i].size,
+				       ent[i].is_dir ? "  <dir>" : "");
+		console_printf("%d entr%s\n", n, n == 1 ? "y" : "ies");
+		return 0;
+	}
+	if (!kstrcmp(sub, "cat") && argc > 2) {
+		struct fat12_entry st;
+		char *buf;
+
+		n = fat12_stat(argv[2], &st);
+		if (n < 0)
+			return fs_fail(argv[2], n);
+		if (st.is_dir)
+			return fs_fail(argv[2], FS_EISDIR);
+		buf = kmalloc(st.size + 1);
+		if (!buf) {
+			console_write("out of memory\n");
+			return 1;
+		}
+		n = fat12_read(argv[2], buf, st.size);
+		if (n < 0) {
+			kfree(buf);
+			return fs_fail(argv[2], n);
+		}
+		buf[n] = '\0';
+		console_write(buf);
+		kfree(buf);
+		return 0;
+	}
+	console_write("usage: fat info | fat ls [path] | fat cat <path>\n");
+	return 1;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -1871,6 +1930,7 @@ static const struct command commands[] = {
 	{ "sync",    "sync",                  "flush cached writes to disk", cmd_sync },
 	{ "fsck",    "fsck [-r]",             "check (and repair) the filesystem", cmd_fsck },
 	{ "fscorrupt", "fscorrupt <0-3>",     "damage the fs for testing fsck", cmd_fscorrupt },
+	{ "fat",     "fat info|ls|cat",       "read the FAT12 image on the IDE slave", cmd_fat },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },

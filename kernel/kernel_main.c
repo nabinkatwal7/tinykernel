@@ -1,6 +1,7 @@
 #include "ata.h"
 #include "bcache.h"
 #include "console.h"
+#include "fat12.h"
 #include "fs.h"
 #include "gdt.h"
 #include "idt.h"
@@ -57,6 +58,8 @@ void kernel_main(void)
 
 	vfs_init();
 	if (ata_init() == 0) {
+		if (ata_dev_present(1) && fat12_mount(1) != FS_OK)
+			klog(LOG_INFO, "ata: drive 1 is not FAT12");
 		int rc = fs_mount();
 
 		klog(LOG_INFO, "fs: %s", rc == FS_OK ? "mounted" : fs_strerror(rc));

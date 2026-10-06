@@ -38,7 +38,8 @@ def main():
     port = 55000 + os.getpid() % 1000
     q = subprocess.Popen(["qemu-system-i386",
         "-drive", f"format=raw,file={os.path.join(BUILD,'os-image.bin')},if=floppy",
-        "-drive", f"format=raw,file={disk},if=ide,index=0", "-boot", "a",
+        "-drive", f"format=raw,file={disk},if=ide,index=0",
+        "-drive", f"format=raw,file={os.path.join(BUILD,'fat.img')},if=ide,index=1", "-boot", "a",
         "-display", "none", "-serial", f"file:{serial}",
         "-monitor", f"tcp:127.0.0.1:{port},server,nowait"])
     time.sleep(1.5)

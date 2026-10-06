@@ -1,0 +1,2 @@
+notes inside a subdirectory
+second line
