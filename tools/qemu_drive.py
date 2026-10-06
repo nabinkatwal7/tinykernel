@@ -42,7 +42,7 @@ def main():
     q = subprocess.Popen(["qemu-system-i386",
         "-drive", f"format=raw,file={os.path.join(BUILD,'os-image.bin')},if=floppy",
         "-drive", f"format=raw,file={disk},if=ide,index=0",
-        "-drive", f"format=raw,file={os.path.join(BUILD,'fat.img')},if=ide,index=1", "-boot", "a",
+        "-drive", f"format=raw,file={os.environ.get('FATIMG', os.path.join(BUILD,'fat.img'))},if=ide,index=1", "-boot", "a",
         "-smp", "2", "-netdev", "user,id=n0,hostfwd=udp::5601-:7777,hostfwd=tcp::5602-:8080", "-object", f"filter-dump,id=f0,netdev=n0,file={os.path.join(BUILD, 'net-test.pcap')}", "-device", "rtl8139,netdev=n0",
         "-display", "none",
         "-chardev", f"socket,id=s0,host=127.0.0.1,port={port + 1},server=on,wait=off,logfile={serial}",

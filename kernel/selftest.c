@@ -38,6 +38,7 @@ static const struct test tests[] = {
 	{ "user: devices",         "run devtest",         0, 0 },
 	{ "user: kernel isolation", "run evil",           0, 0 }, /* must be killed: see below */
 	{ "filesystem",            "fstest",              1, 0 },
+	{ "fs journal replay",     "jtest",               1, 0 },
 	{ "pipes and redirection", "shtest",              1, 0 },
 	{ "fsck on a clean disk",  "fsck",                1, 0 },
 	{ "user: open/close",      "run opentest",        1, 0 },
@@ -46,6 +47,7 @@ static const struct test tests[] = {
 	{ "user: seek",            "run seektest",        1, 0 },
 	{ "user: descriptors",     "run fdtest",          1, 0 },
 	{ "user: pipe syscall",    "run pipetest",        0, 0 },
+	{ "user: file locks",      "run locktest",        1, 0 },
 	{ "icmp loopback",         "icmptest",            0, 1 },
 	{ "udp loopback",          "udp test",            0, 1 },
 };

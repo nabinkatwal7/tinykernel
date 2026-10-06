@@ -2,21 +2,33 @@
 
 #include "ata.h"
 #include "bcache.h"
+#include "clock.h"
+#include "cred.h"
 #include "klog.h"
 #include "kprintf.h"
 #include "kmalloc.h"
 #include "kstring.h"
 
 #define FS_MAGIC     0x31534654u /* "TFS1" */
-#define FS_VERSION   3
+#define FS_VERSION   5
+#define JOURNAL_MAGIC 0x4C4E524Au /* "JRNL" */
 #define DIR_SECTORS  8     /* 8 * 512 / 32 = 128 entries */
+#define META_SECTORS 4     /* 4 * 512 / 16 = one fs_meta per entry */
 #define FLAG_USED    1u
 #define FLAG_DIR     2u
+#define FLAG_LINK    4u     /* a symbolic link: the file contents are the target path */
 #define ROOT         0xFFu /* parent value meaning "the root directory" */
 
 /* Disk layout, fixed at format time and stored in the superblock:
- *   0 superblock | bm_lba.. free-space bitmap (1 bit per sector) | dir_lba.. entry table | data */
-static uint32_t total_sectors, bm_lba, bm_sectors, dir_lba, data_start;
+ *   0 superblock | bm_lba.. free-space bitmap (1 bit per sector) | dir_lba.. entry table | metadata |
+ *   jr_lba.. journal | data
+ * The journal makes metadata updates atomic: the new entry table, metadata and bitmap are written to the journal
+ * first and sealed with a commit record; only then are they written to their real places. A crash in between is
+ * repaired at the next mount by replaying the committed journal; a crash before the commit record leaves the
+ * old, consistent state untouched. (File data is written before the commit, like ext3's "ordered" mode.) */
+static uint32_t total_sectors, bm_lba, bm_sectors, dir_lba, jr_lba, data_start;
+static uint32_t jr_seq;
+static int crash_after_journal; /* test hook: stop right after the commit record, as if the power failed */
 static uint8_t *bitmap;   /* bit set = sector in use */
 
 struct dirent {
@@ -27,6 +39,7 @@ struct dirent {
 };
 
 static struct dirent dir[FS_MAX_FILES]; /* exactly DIR_SECTORS sectors */
+static struct fs_meta meta[FS_MAX_FILES]; /* exactly META_SECTORS sectors, same index as dir[] */
 static int mounted;
 
 const char *fs_strerror(int err)
@@ -41,6 +54,8 @@ const char *fs_strerror(int err)
 	case FS_ENOMOUNT:  return "no formatted disk (try 'format')";
 	case FS_ETOOBIG:   return "buffer too small";
 	case FS_EISDIR:    return "is a directory";
+	case FS_EACCES:    return "permission denied";
+	case FS_EBUSY:     return "resource busy (locked)";
 	case FS_ENOTDIR:   return "not a directory";
 	case FS_ENOTEMPTY: return "directory not empty";
 	case FS_EROFS:     return "read-only filesystem";
@@ -55,16 +70,148 @@ static uint32_t sectors_for(uint32_t size)
 
 static int used(int i)      { return dir[i].flags & FLAG_USED; }
 static int is_dir(int i)    { return dir[i].flags & FLAG_DIR; }
+static int is_link(int i)   { return dir[i].flags & FLAG_LINK; }
+
+/*
+ * Hard links: several directory entries may name the same extent (same start sector and size). The extent is
+ * freed only when the last name goes, and writing through one name moves every name to the new extent.
+ */
+static int same_extent(int a, int b)
+{
+	return a != b && used(b) && !is_dir(b) && !is_link(b) && dir[b].size && dir[b].start == dir[a].start
+	       && dir[b].size == dir[a].size;
+}
+
+static int link_count(int i)
+{
+	int j, n = 1;
+
+	if (is_dir(i) || is_link(i) || !dir[i].size)
+		return 1;
+	for (j = 0; j < FS_MAX_FILES; j++)
+		n += same_extent(i, j);
+	return n;
+}
 static uint32_t parent(int i) { return (dir[i].flags >> 8) & 0xFF; }
+
+struct journal_header {
+	uint32_t magic, seq, sectors, checksum;
+};
+
+static uint32_t checksum_of(const void *p, uint32_t bytes, uint32_t sum)
+{
+	const uint8_t *b = p;
+	uint32_t i;
+
+	for (i = 0; i < bytes; i++)
+		sum = (sum << 5) + sum + b[i]; /* djb2-style */
+	return sum;
+}
+
+static uint32_t journal_checksum(const void *d, const void *m, const void *bm)
+{
+	uint32_t sum = 5381;
+
+	sum = checksum_of(d, DIR_SECTORS * SECTOR_SIZE, sum);
+	sum = checksum_of(m, META_SECTORS * SECTOR_SIZE, sum);
+	return checksum_of(bm, bm_sectors * SECTOR_SIZE, sum);
+}
+
+static int write_in_place(const void *d, const void *m, const void *bm)
+{
+	if (bc_write(dir_lba, DIR_SECTORS, d) || bc_write(dir_lba + DIR_SECTORS, META_SECTORS, m)
+	    || bc_write(bm_lba, bm_sectors, bm))
+		return FS_EIO;
+	return FS_OK;
+}
+
+static void journal_retire(void)
+{
+	uint8_t zero[SECTOR_SIZE];
+
+	memset(zero, 0, sizeof zero);
+	bc_write(jr_lba, 1, zero);
+}
+
+/* Atomically publish the in-memory entry table, metadata and bitmap (see the layout comment above). */
+static int commit_meta(void)
+{
+	uint8_t sector[SECTOR_SIZE];
+	struct journal_header *h = (struct journal_header *)sector;
+
+	if (bc_write(jr_lba + 1, DIR_SECTORS, dir) || bc_write(jr_lba + 1 + DIR_SECTORS, META_SECTORS, meta)
+	    || bc_write(jr_lba + 1 + DIR_SECTORS + META_SECTORS, bm_sectors, bitmap))
+		return FS_EIO;
+	if (bc_flush() < 0) /* the copy must be on disk before the commit record */
+		return FS_EIO;
+	memset(sector, 0, sizeof sector);
+	h->magic = JOURNAL_MAGIC;
+	h->seq = ++jr_seq;
+	h->sectors = DIR_SECTORS + META_SECTORS + bm_sectors;
+	h->checksum = journal_checksum(dir, meta, bitmap);
+	if (bc_write(jr_lba, 1, sector) || bc_flush() < 0)
+		return FS_EIO;
+	if (crash_after_journal) {
+		crash_after_journal = 0;
+		return FS_EIO; /* "power failure": committed in the journal, not yet in place */
+	}
+	if (write_in_place(dir, meta, bitmap) || bc_flush() < 0)
+		return FS_EIO;
+	journal_retire();
+	return FS_OK;
+}
+
+/* At mount: apply a committed journal that never reached its real place. Returns 1 if it replayed one. */
+static int journal_replay(void)
+{
+	uint8_t sector[SECTOR_SIZE];
+	const struct journal_header *h = (const struct journal_header *)sector;
+	void *d, *m, *bm;
+	int replayed = 0;
+
+	if (bc_read(jr_lba, 1, sector) || h->magic != JOURNAL_MAGIC || h->sectors != DIR_SECTORS + META_SECTORS + bm_sectors)
+		return 0;
+	d = kmalloc((size_t)(h->sectors) * SECTOR_SIZE);
+	if (!d)
+		return 0;
+	m = (uint8_t *)d + DIR_SECTORS * SECTOR_SIZE;
+	bm = (uint8_t *)m + META_SECTORS * SECTOR_SIZE;
+	if (!bc_read(jr_lba + 1, h->sectors, d) && journal_checksum(d, m, bm) == h->checksum) {
+		write_in_place(d, m, bm);
+		bc_flush();
+		replayed = 1;
+	}
+	kfree(d);
+	journal_retire();
+	return replayed;
+}
 
 static int flush_dir(void)
 {
-	return bc_write(dir_lba, DIR_SECTORS, dir) ? FS_EIO : FS_OK;
+	return commit_meta();
 }
 
+static uint32_t now_secs(void)
+{
+	struct timespec ts;
+
+	return clock_gettime(CLOCK_REALTIME, &ts) ? 0 : ts.tv_sec;
+}
+
+/* Owner, group, permissions and times of a brand-new entry: created by the current user. */
+static void meta_new(int i, int dir_flag)
+{
+	meta[i].mode = dir_flag ? 0755 : 0644;
+	meta[i].uid = cred_uid();
+	meta[i].gid = cred_gid();
+	meta[i].flags = 0;
+	meta[i].mtime = meta[i].ctime = now_secs();
+}
+
+/* The bitmap travels with every commit (flush_dir), so there is nothing separate to write. */
 static int flush_bitmap(void)
 {
-	return bc_write(bm_lba, bm_sectors, bitmap) ? FS_EIO : FS_OK;
+	return FS_OK;
 }
 
 static int bit_get(uint32_t sec)
@@ -201,6 +348,12 @@ static int free_slot(void)
 	return -1;
 }
 
+/* Test hook for 'jtest': make the next metadata commit "crash" after the journal is sealed. */
+void fs_test_crash_next_commit(void)
+{
+	crash_after_journal = 1;
+}
+
 int fs_mounted(void)
 {
 	return mounted;
@@ -224,12 +377,17 @@ int fs_mount(void)
 	bm_sectors = sb[4];
 	dir_lba = sb[5];
 	data_start = sb[6];
-	if (total_sectors != ata_fs_sectors() || bm_sectors == 0 || data_start >= total_sectors)
+	jr_lba = sb[7];
+	if (total_sectors != ata_fs_sectors() || bm_sectors == 0 || data_start >= total_sectors
+	    || jr_lba != dir_lba + DIR_SECTORS + META_SECTORS)
 		return FS_ENOMOUNT;
 	bitmap = kmalloc(bm_sectors * SECTOR_SIZE);
 	if (!bitmap)
 		return FS_ENOSPC;
-	if (bc_read(bm_lba, bm_sectors, bitmap) || bc_read(dir_lba, DIR_SECTORS, dir))
+	if (journal_replay())
+		klog(LOG_WARN, "fs: replayed the journal after an unclean shutdown");
+	if (bc_read(bm_lba, bm_sectors, bitmap) || bc_read(dir_lba, DIR_SECTORS, dir)
+	    || bc_read(dir_lba + DIR_SECTORS, META_SECTORS, meta))
 		return FS_EIO;
 	mounted = 1;
 	return FS_OK;
@@ -246,7 +404,8 @@ int fs_format(void)
 	bm_lba = 1;
 	bm_sectors = (total_sectors + SECTOR_SIZE * 8 - 1) / (SECTOR_SIZE * 8);
 	dir_lba = bm_lba + bm_sectors;
-	data_start = dir_lba + DIR_SECTORS;
+	jr_lba = dir_lba + DIR_SECTORS + META_SECTORS;
+	data_start = jr_lba + 1 + DIR_SECTORS + META_SECTORS + bm_sectors;
 	if (data_start >= total_sectors)
 		return FS_ENOSPC; /* disk too small to hold the metadata */
 	bitmap = kcalloc(bm_sectors, SECTOR_SIZE);
@@ -262,8 +421,11 @@ int fs_format(void)
 	sb[4] = bm_sectors;
 	sb[5] = dir_lba;
 	sb[6] = data_start;
+	sb[7] = jr_lba;
 	memset(dir, 0, sizeof dir);
-	if (bc_write(0, 1, sb) || flush_bitmap() || flush_dir())
+	memset(meta, 0, sizeof meta);
+	journal_retire();
+	if (bc_write(0, 1, sb) || flush_dir())
 		return FS_EIO;
 	mounted = 1;
 	klog(LOG_INFO, "fs: formatted %u sectors (bitmap %u, data from %u)", total_sectors, bm_sectors,
@@ -286,8 +448,10 @@ int fs_write(const char *path, const void *data, uint32_t size)
 	const uint8_t *src = data;
 	char leaf[FS_NAME_MAX];
 	struct dirent saved;
+	struct fs_meta saved_meta;
 	uint32_t n = sectors_for(size), start, i;
-	int par, idx;
+	uint8_t sib[FS_MAX_FILES]; /* other names of the extent being replaced (hard links) */
+	int par, idx, j;
 
 	if (!mounted)
 		return FS_ENOMOUNT;
@@ -297,11 +461,15 @@ int fs_write(const char *path, const void *data, uint32_t size)
 	if (!name_ok(leaf))
 		return FS_EINVAL;
 
+	memset(sib, 0, sizeof sib);
 	idx = find_in((uint32_t)par, leaf);
 	if (idx >= 0) {
 		if (is_dir(idx))
 			return FS_EISDIR;
+		for (j = 0; j < FS_MAX_FILES; j++)
+			sib[j] = (uint8_t)same_extent(idx, j);
 		saved = dir[idx];
+		saved_meta = meta[idx];
 		mark_entry(idx, 0); /* free the old extent while we look for space */
 		dir[idx].flags = 0;
 	} else {
@@ -309,11 +477,13 @@ int fs_write(const char *path, const void *data, uint32_t size)
 		if (idx < 0)
 			return FS_ENOSPC;
 		memset(&saved, 0, sizeof saved);
+		memset(&saved_meta, 0, sizeof saved_meta);
 	}
 
 	start = alloc_extent(n);
 	if (!start) {
 		dir[idx] = saved;
+		meta[idx] = saved_meta;
 		if (saved.flags)
 			mark_entry(idx, 1);
 		return FS_ENOSPC;
@@ -338,6 +508,19 @@ int fs_write(const char *path, const void *data, uint32_t size)
 	dir[idx].start = start;
 	dir[idx].size = size;
 	dir[idx].flags = FLAG_USED | ((uint32_t)par << 8);
+	if (saved.flags) { /* replacing a file keeps its owner and mode */
+		meta[idx] = saved_meta;
+		meta[idx].mtime = now_secs();
+	} else {
+		meta_new(idx, 0);
+	}
+	for (j = 0; j < FS_MAX_FILES; j++) { /* hard links follow the new contents */
+		if (sib[j]) {
+			dir[j].start = start;
+			dir[j].size = size;
+			meta[j].mtime = meta[idx].mtime;
+		}
+	}
 	mark(start, n, 1);
 	if (flush_bitmap())
 		return FS_EIO;
@@ -345,6 +528,7 @@ int fs_write(const char *path, const void *data, uint32_t size)
 
 io_error:
 	dir[idx] = saved;
+	meta[idx] = saved_meta;
 	if (saved.flags)
 		mark_entry(idx, 1);
 	return FS_EIO;
@@ -380,14 +564,120 @@ int fs_stat(const char *path, struct fs_stat *st)
 	memset(st, 0, sizeof *st);
 	if (idx == (int)ROOT) {
 		st->is_dir = 1;
+		st->meta.mode = 0755;
 		return FS_OK;
 	}
+	st->meta = meta[idx];
 	kstrlcpy(st->name, dir[idx].name, FS_NAME_MAX);
 	st->size = dir[idx].size;
 	st->start_lba = dir[idx].start;
 	st->sectors = sectors_for(dir[idx].size);
 	st->is_dir = is_dir(idx) ? 1 : 0;
+	st->is_link = is_link(idx) ? 1 : 0;
+	st->nlink = link_count(idx);
 	return FS_OK;
+}
+
+int fs_link(const char *existing, const char *path)
+{
+	char leaf[FS_NAME_MAX];
+	int src = fs_entry(existing), par, idx;
+
+	if (src < 0)
+		return src;
+	if (src == (int)ROOT || is_dir(src))
+		return FS_EISDIR;
+	if (is_link(src) || !dir[src].size)
+		return FS_EINVAL; /* empty files own no extent that could be shared */
+	par = walk_parent(path, leaf);
+	if (par < 0)
+		return par;
+	if (!name_ok(leaf))
+		return FS_EINVAL;
+	if (find_in((uint32_t)par, leaf) >= 0)
+		return FS_EEXIST;
+	idx = free_slot();
+	if (idx < 0)
+		return FS_ENOSPC;
+	memset(&dir[idx], 0, sizeof dir[idx]);
+	kstrlcpy(dir[idx].name, leaf, FS_NAME_MAX);
+	dir[idx].start = dir[src].start;
+	dir[idx].size = dir[src].size;
+	dir[idx].flags = FLAG_USED | ((uint32_t)par << 8);
+	meta[idx] = meta[src];
+	meta[idx].ctime = now_secs();
+	return flush_dir();
+}
+
+int fs_symlink(const char *target, const char *path)
+{
+	int rc, idx;
+
+	if (!target[0] || kstrlen(target) >= FS_NAME_MAX * 4)
+		return FS_EINVAL;
+	if (fs_entry(path) >= 0)
+		return FS_EEXIST;
+	rc = fs_write(path, target, (uint32_t)kstrlen(target));
+	if (rc)
+		return rc;
+	idx = fs_entry(path);
+	if (idx < 0)
+		return idx;
+	dir[idx].flags |= FLAG_LINK;
+	meta[idx].mode = 0777;
+	return flush_dir();
+}
+
+int fs_readlink(const char *path, char *buf, uint32_t cap)
+{
+	int idx = fs_entry(path), n;
+
+	if (idx < 0)
+		return idx;
+	if (idx == (int)ROOT || !is_link(idx))
+		return FS_EINVAL;
+	n = fs_read(path, buf, cap - 1);
+	if (n < 0)
+		return n;
+	buf[n] = '\0';
+	return n;
+}
+
+int fs_chmod(const char *path, uint16_t mode)
+{
+	int idx = fs_entry(path);
+
+	if (idx < 0)
+		return idx;
+	if (idx == (int)ROOT)
+		return FS_EINVAL;
+	meta[idx].mode = mode & 0777;
+	return flush_dir();
+}
+
+int fs_chown(const char *path, uint16_t uid, uint16_t gid)
+{
+	int idx = fs_entry(path);
+
+	if (idx < 0)
+		return idx;
+	if (idx == (int)ROOT)
+		return FS_EINVAL;
+	meta[idx].uid = uid;
+	meta[idx].gid = gid;
+	return flush_dir();
+}
+
+int fs_touch(const char *path, uint32_t mtime)
+{
+	int idx = fs_entry(path);
+
+	if (idx < 0)
+		return idx;
+	if (idx == (int)ROOT)
+		return FS_EINVAL;
+	meta[idx].mtime = mtime ? mtime : now_secs();
+	return flush_dir();
 }
 
 int fs_read(const char *path, void *buf, uint32_t cap)
@@ -429,8 +719,10 @@ int fs_delete(const char *path)
 		return idx;
 	if (idx == (int)ROOT || is_dir(idx))
 		return FS_EISDIR;
-	mark_entry(idx, 0);
+	if (link_count(idx) == 1)
+		mark_entry(idx, 0); /* the last name frees the data */
 	memset(&dir[idx], 0, sizeof dir[idx]);
+	memset(&meta[idx], 0, sizeof meta[idx]);
 	if (flush_bitmap())
 		return FS_EIO;
 	return flush_dir();
@@ -456,6 +748,7 @@ int fs_mkdir(const char *path)
 	memset(&dir[idx], 0, sizeof dir[idx]);
 	kstrlcpy(dir[idx].name, leaf, FS_NAME_MAX);
 	dir[idx].flags = FLAG_USED | FLAG_DIR | ((uint32_t)par << 8);
+	meta_new(idx, 1);
 	return flush_dir();
 }
 
@@ -473,6 +766,7 @@ int fs_rmdir(const char *path)
 		if (used(i) && parent(i) == (uint32_t)idx)
 			return FS_ENOTEMPTY;
 	memset(&dir[idx], 0, sizeof dir[idx]);
+	memset(&meta[idx], 0, sizeof meta[idx]);
 	return flush_dir();
 }
 
@@ -500,8 +794,10 @@ int fs_rename(const char *from, const char *to)
 	if (victim >= 0) {
 		if (is_dir(victim) || is_dir(src))
 			return FS_EEXIST;
-		mark_entry(victim, 0);
+		if (link_count(victim) == 1)
+			mark_entry(victim, 0);
 		memset(&dir[victim], 0, sizeof dir[victim]); /* replace the old file */
+		memset(&meta[victim], 0, sizeof meta[victim]);
 		if (flush_bitmap())
 			return FS_EIO;
 	}
@@ -526,6 +822,9 @@ int fs_list(const char *path, struct fs_stat *out, int max)
 		out[n].start_lba = dir[i].start;
 		out[n].sectors = sectors_for(dir[i].size);
 		out[n].is_dir = is_dir(i) ? 1 : 0;
+		out[n].is_link = is_link(i) ? 1 : 0;
+		out[n].nlink = link_count(i);
+		out[n].meta = meta[i];
 		n++;
 	}
 	return n;
@@ -570,6 +869,17 @@ int fs_info(struct fs_info *out)
 		}
 	}
 	return FS_OK;
+}
+
+/* Is there an earlier entry naming exactly the same extent (a hard link, not damage)? */
+static int twin_before(int i)
+{
+	int j;
+
+	for (j = 0; j < i; j++)
+		if (same_extent(i, j))
+			return 1;
+	return 0;
 }
 
 /* ---- fsck ---- */
@@ -633,7 +943,7 @@ int fs_check(int repair, void (*report)(const char *msg), struct fs_check_result
 				bad = 1;
 			} else {
 				for (s = dir[i].start; s < dir[i].start + n; s++) {
-					if (claimed[s >> 3] & (1u << (s & 7))) {
+					if ((claimed[s >> 3] & (1u << (s & 7))) && !twin_before(i)) {
 						PROBLEM(repair, "'%s': sector %u is also used by another file", dir[i].name, s);
 						bad = 1;
 						break;
@@ -701,14 +1011,14 @@ int fs_debug_corrupt(int kind)
 		for (i = (int)total_sectors - 1; i >= (int)data_start; i--)
 			if (!bit_get((uint32_t)i)) {
 				mark((uint32_t)i, 1, 1);
-				return flush_bitmap();
+				return flush_dir();
 			}
 		return FS_ENOSPC;
 	case 1: /* a used sector claimed free */
 		for (i = 0; i < FS_MAX_FILES; i++)
 			if (used(i) && !is_dir(i) && dir[i].size) {
 				mark(dir[i].start, 1, 0);
-				return flush_bitmap();
+				return flush_dir();
 			}
 		return FS_ENOENT;
 	case 2: /* orphan: point an entry at a parent that does not exist */

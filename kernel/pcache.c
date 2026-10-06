@@ -114,6 +114,10 @@ void pcache_stats(struct pcache_stats *out)
 
 int pcache_read(const char *path, void *buf, uint32_t cap)
 {
+	int perm = vfs_access(path, VFS_R);
+
+	if (perm)
+		return perm;
 	char abs[VFS_PATH_MAX];
 	uint32_t h, size, i, npages, copied = 0;
 	int n;

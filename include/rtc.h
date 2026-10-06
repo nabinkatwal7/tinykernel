@@ -9,6 +9,7 @@ struct rtc_time {
 };
 
 void     rtc_read(struct rtc_time *t);     /* consistent snapshot, binary values, 24-hour */
+void     rtc_from_unix(uint32_t secs, struct rtc_time *t); /* the inverse of rtc_unix */
 uint32_t rtc_unix(const struct rtc_time *t); /* seconds since 1970-01-01 (UTC as the RTC says) */
 
 #endif

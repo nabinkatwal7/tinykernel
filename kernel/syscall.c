@@ -218,6 +218,9 @@ void syscall_dispatch(struct regs *r)
 	case SYS_CLS:
 		console_clear();
 		break;
+	case SYS_FLOCK:
+		r->eax = (uint32_t)file_flock((int)r->ebx, (int)r->ecx);
+		break;
 	case SYS_GFX: {
 		const int *a = (const int *)r->ecx;
 

@@ -3,6 +3,7 @@
 #include "console.h"
 #include "vfs.h"
 #include "io.h"
+#include "sched.h"
 #include "keyboard.h"
 #include "pipe.h"
 #include "kmalloc.h"
@@ -25,12 +26,14 @@ struct ofile {
 	int dirty;
 	const struct vfs_device *dev; /* OBJ_DEV */
 	struct pipe *pipe;            /* OBJ_PIPE_R / OBJ_PIPE_W */
+	int lock;                     /* 0 none, LOCK_SH or LOCK_EX (as a number 1 / 2) */
 };
 
 #define NOBJ (FILE_MAX_OPEN + 3 + 8) /* files, the console, and a few pipe ends */
 
 static struct ofile objs[NOBJ];
 static int fdtab[FILE_FD_MAX]; /* index into objs, or -1 */
+static struct waitq lock_wq;   /* tasks waiting for a file lock */
 
 /* cooked console input: one line is gathered at a time and handed out in pieces */
 static char linebuf[128];
@@ -80,6 +83,8 @@ static int release(struct ofile *o)
 			rc = vfs_write(o->name, o->buf, o->size);
 		kfree(o->buf);
 	}
+	if (o->lock)
+		wq_wake_all(&lock_wq); /* its lock goes with it */
 	if (o->kind == OBJ_PIPE_R)
 		pipe_close_read(o->pipe);
 	else if (o->kind == OBJ_PIPE_W)
@@ -148,6 +153,12 @@ int file_open(const char *path, int flags)
 	}
 	if (rc == FS_OK && st.is_dir)
 		return FS_EINVAL;
+	if (rc == FS_OK) { /* an existing file: may this user read / write it? */
+		int denied = vfs_access(path, (writable(flags) ? VFS_W : 0) | ((flags & O_WRONLY) ? 0 : VFS_R));
+
+		if (denied)
+			return denied;
+	}
 	if (writable(flags) && !vfs_can_write(path))
 		return FS_EROFS; /* read-only mount (FAT12, /proc) */
 	size = rc == FS_OK ? (int)st.size : rc;
@@ -200,6 +211,53 @@ int file_close(int fd)
 		return FS_EINVAL;
 	fdtab[fd] = -1;
 	return release(o);
+}
+
+int file_flock(int fd, int op)
+{
+	struct ofile *o = get(fd);
+	uint32_t f;
+	int want, i;
+
+	if (!o || o->kind != OBJ_FILE)
+		return FS_EINVAL;
+	f = irq_save();
+	if (op & LOCK_UN) {
+		o->lock = 0;
+		wq_wake_all(&lock_wq);
+		irq_restore(f);
+		return FS_OK;
+	}
+	if (!(op & (LOCK_SH | LOCK_EX))) {
+		irq_restore(f);
+		return FS_EINVAL;
+	}
+	want = (op & LOCK_EX) ? LOCK_EX : LOCK_SH;
+	for (;;) {
+		int conflict = 0;
+
+		for (i = 0; i < NOBJ; i++) {
+			const struct ofile *p = &objs[i];
+
+			if (p != o && p->kind == OBJ_FILE && p->lock && !kstrcmp(p->name, o->name)
+			    && (want == LOCK_EX || p->lock == LOCK_EX))
+				conflict = 1;
+		}
+		if (!conflict)
+			break;
+		if (op & LOCK_NB) {
+			irq_restore(f);
+			return FS_EBUSY;
+		}
+		wq_wait(&lock_wq, WAIT_OTHER);
+		if (get(fd) != o) { /* closed while we waited */
+			irq_restore(f);
+			return FS_EINVAL;
+		}
+	}
+	o->lock = want;
+	irq_restore(f);
+	return FS_OK;
 }
 
 int file_pipe(int fds[2])

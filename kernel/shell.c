@@ -12,7 +12,10 @@
 #include "cpustat.h"
 #include "cpu.h"
 #include "crashdump.h"
+#include "cred.h"
 #include "debug.h"
+#include "sha256.h"
+#include "users.h"
 #include "gdbstub.h"
 #include "dhcp.h"
 #include "editor.h"
@@ -146,7 +149,7 @@ static void set_line(char *buf, int *len, const char *text)
 static void prompt(void)
 {
 	console_set_color(COLOR_LIGHT_GREEN, COLOR_BLACK);
-	console_printf("tiny:%s> ", vfs_getcwd());
+	console_printf("tiny:%s%c ", vfs_getcwd(), cred_uid() ? '$' : '>');
 	console_set_color(COLOR_WHITE, COLOR_BLACK);
 }
 
@@ -1412,6 +1415,18 @@ static int cmd_smpaffinity(int argc, char **argv)
 	return where_ran[0] != cpu;
 }
 
+static int cmd_useradd(int argc, char **argv);
+static int cmd_logout(int argc, char **argv);
+static int cmd_passwd(int argc, char **argv);
+static int cmd_ln(int argc, char **argv);
+static int cmd_readlink(int argc, char **argv);
+static int cmd_whoami(int argc, char **argv);
+static int cmd_id(int argc, char **argv);
+static int cmd_su(int argc, char **argv);
+static int cmd_exit(int argc, char **argv);
+static int cmd_chmod(int argc, char **argv);
+static int cmd_chown(int argc, char **argv);
+static int cmd_sha256(int argc, char **argv);
 static int job_kill(const char *spec); /* "%n": the job table is near the end of the file */
 static int cmd_jobs(int argc, char **argv);
 static int cmd_fg(int argc, char **argv);
@@ -1448,18 +1463,66 @@ static int fs_fail(const char *what, int rc)
 	return 1;
 }
 
+/* "drwxr-xr-x" */
+static void mode_string(int kind, unsigned mode, char out[11]) /* kind: 'd', 'l' or '-' */
+{
+	static const char rwx[] = "rwxrwxrwx";
+	int i;
+
+	out[0] = (char)kind;
+	for (i = 0; i < 9; i++)
+		out[1 + i] = mode & (0400u >> i) ? rwx[i] : '-';
+	out[10] = '\0';
+}
+
+/* "2026-10-06 15:04", or dashes when the filesystem keeps no times */
+static void time_string(uint32_t secs, char out[17])
+{
+	struct rtc_time t;
+
+	if (!secs) {
+		kstrlcpy(out, "-               ", 17);
+		return;
+	}
+	rtc_from_unix(secs, &t);
+	ksnprintf(out, 17, "%04d-%02d-%02d %02d:%02d", t.year, t.month, t.day, t.hour, t.minute);
+}
+
+/* ls [-l] [path] */
 static int cmd_ls(int argc, char **argv)
 {
 	struct vfs_dirent ent[FS_MAX_FILES];
-	const char *path = argc > 1 ? argv[1] : vfs_getcwd();
-	int n, i;
+	int a = 1, longfmt = 0, n, i;
+	const char *path;
 
+	if (a < argc && !kstrcmp(argv[a], "-l")) {
+		longfmt = 1;
+		a++;
+	}
+	path = a < argc ? argv[a] : vfs_getcwd();
 	n = vfs_list(path, ent, FS_MAX_FILES);
 	if (n < 0)
 		return fs_fail(path, n);
-	for (i = 0; i < n; i++)
-		console_printf("  %-19s %6u bytes%s\n", ent[i].name, ent[i].size,
-			       ent[i].is_dir ? "  <dir>" : "");
+	for (i = 0; i < n; i++) {
+		char ms[11], ts[17];
+
+		if (!longfmt) {
+			console_printf("  %-19s %6u bytes%s\n", ent[i].name, ent[i].size,
+				       ent[i].is_dir ? "  <dir>" : "");
+			continue;
+		}
+		mode_string(ent[i].is_link ? 'l' : ent[i].is_dir ? 'd' : '-', ent[i].mode, ms);
+		time_string(ent[i].mtime, ts);
+		console_printf("%s %3u %3u %7u %s %s", ms, ent[i].uid, ent[i].gid, ent[i].size, ts, ent[i].name);
+		if (ent[i].is_link) {
+			char full[VFS_PATH_MAX], target[VFS_PATH_MAX];
+
+			ksnprintf(full, sizeof full, "%s/%s", path, ent[i].name);
+			if (vfs_readlink(full, target, sizeof target) >= 0)
+				console_printf(" -> %s", target);
+		}
+		console_putchar('\n');
+	}
 	console_printf("%d entr%s", n, n == 1 ? "y" : "ies");
 	if (fs_mounted() && !kstrcmp(path, "/"))
 		console_printf(", %u KiB free", fs_free_sectors() / 2);
@@ -1660,7 +1723,7 @@ static int cmd_stat(int argc, char **argv)
 		return 1;
 	}
 	for (i = 1; i < argc; i++) {
-		int r = vfs_stat(argv[i], &st);
+		int r = vfs_lstat(argv[i], &st); /* a link is described, not followed */
 
 		if (r) {
 			rc = fs_fail(argv[i], r);
@@ -1668,8 +1731,20 @@ static int cmd_stat(int argc, char **argv)
 		}
 		vfs_normalize(vfs_getcwd(), argv[i], abs, sizeof abs);
 		console_printf("  File: %s\n  Type: %s\n  Size: %u bytes\n", abs,
-			       st.dev ? "character device" : st.is_dir ? "directory" : "regular file",
+			       st.dev ? "character device" : st.is_link ? "symbolic link" : st.is_dir ? "directory" : "regular file",
 			       st.size);
+		{
+			char ms[11], mt[17], ct[17];
+
+			mode_string(st.is_link ? 'l' : st.is_dir ? 'd' : '-', st.mode, ms);
+			time_string(st.mtime, mt);
+			time_string(st.ctime, ct);
+			console_printf("  Links: %d\n", st.nlink > 0 ? st.nlink : 1);
+			console_printf("  Mode: %s (0%u%u%u)  Owner: %s  Group: %u\n", ms, (st.mode >> 6) & 7u,
+				       (st.mode >> 3) & 7u, st.mode & 7u, user_name_of(st.uid), st.gid);
+			if (st.mtime)
+				console_printf("  Modified: %s\n  Created:  %s\n", mt, ct);
+		}
 		if (!st.dev && !st.is_dir && kstrncmp(abs, "/dev/", 5) && kstrncmp(abs, "/proc/", 6)
 		    && fs_stat(abs, &fst) == FS_OK)
 			console_printf("  Disk: sector %u, %u sector(s)\n", fst.start_lba, fst.sectors);
@@ -2851,6 +2926,10 @@ static int cmd_touch(int argc, char **argv)
 		console_write("usage: touch <file>\n");
 		return 1;
 	}
+	if (vfs_size(argv[1]) >= 0) { /* an existing file: just bring its modification time up to date */
+		rc = vfs_touch(argv[1], 0);
+		return rc ? fs_fail(argv[1], rc) : 0;
+	}
 	rc = vfs_create(argv[1]);
 	return rc ? fs_fail(argv[1], rc) : 0;
 }
@@ -3460,6 +3539,34 @@ static int cmd_calc(int argc, char **argv)
 	return 0;
 }
 
+/* jtest : simulate a power failure between the journal commit and the in-place write; the remount must replay it */
+static int cmd_jtest(int argc, char **argv)
+{
+	int rc, ok = 1;
+
+	(void)argc;
+	(void)argv;
+	if (need_fs())
+		return 1;
+	vfs_unlink("jt1.txt");
+	vfs_unlink("jt2.txt");
+	rc = vfs_write("jt1.txt", "one", 3);
+	ok &= rc == 0;
+	fs_test_crash_next_commit();
+	rc = vfs_write("jt2.txt", "two", 3); /* fails: the "power" went out before it reached its place */
+	console_printf("write during the crash returned %d (expected an error)\n", rc);
+	ok &= rc != 0;
+	rc = fs_mount(); /* reboot: reads the tables and replays the journal */
+	ok &= rc == 0;
+	ok &= vfs_size("jt1.txt") == 3;
+	ok &= vfs_size("jt2.txt") == 3; /* only there if the journal was replayed */
+	console_printf("after remount: jt1=%d jt2=%d bytes\n", vfs_size("jt1.txt"), vfs_size("jt2.txt"));
+	vfs_unlink("jt1.txt");
+	vfs_unlink("jt2.txt");
+	console_printf("jtest: %s\n", ok ? "ok" : "FAILED");
+	return !ok;
+}
+
 /* panic [message] : test the panic path and its stack trace */
 static int cmd_panic(int argc, char **argv)
 {
@@ -3978,6 +4085,19 @@ static const struct command commands[] = {
 	{ "find",    "find [dir] [-name pat]", "search a directory tree", tu_find },
 	{ "diff",    "diff file1 file2",      "compare two files line by line", tu_diff },
 	{ "calc",    "calc EXPRESSION",       "evaluate an integer expression", cmd_calc },
+	{ "useradd", "useradd NAME PASSWORD",  "add a user (root only)", cmd_useradd },
+	{ "passwd",  "passwd [user]",         "change a password", cmd_passwd },
+	{ "sha256",  "sha256 text",           "SHA-256 digest of some text", cmd_sha256 },
+	{ "chmod",   "chmod MODE FILE...",    "change permissions (octal or u+x style)", cmd_chmod },
+	{ "chown",   "chown USER[:GROUP] FILE...", "change the owner (root only)", cmd_chown },
+	{ "whoami", "whoami",                "print the current user", cmd_whoami },
+	{ "id",      "id",                    "numeric user and group ids", cmd_id },
+	{ "su",      "su [user]",             "switch user (exit returns)", cmd_su },
+	{ "exit",    "exit",                  "leave an su session, or log out", cmd_exit },
+	{ "ln",      "ln [-s] TARGET LINK",   "make a hard or symbolic link", cmd_ln },
+	{ "readlink", "readlink LINK",        "print the target of a symbolic link", cmd_readlink },
+	{ "logout",  "logout",                "end the session and show the login prompt", cmd_logout },
+	{ "jtest",   "jtest",                 "journal crash-recovery test", cmd_jtest },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
@@ -4587,6 +4707,455 @@ static int complete(char *buf, int *len, int max, int *cur)
 	return 1;
 }
 
+/* ---------------- login ---------------- */
+
+static int login_wanted = 1; /* ask who is there before the next prompt */
+static int su_top;           /* nested su sessions */
+
+/* Reads a line without echoing it. */
+static void read_secret(char *buf, int max)
+{
+	int len = 0;
+
+	for (;;) {
+		int k = keyboard_getkey();
+
+		if (k == '\n') {
+			console_putchar('\n');
+			buf[len] = '\0';
+			return;
+		}
+		if (k == '\b') {
+			if (len)
+				len--;
+		} else if (k >= 32 && k < 127 && len < max - 1) {
+			buf[len++] = (char)k;
+		}
+	}
+}
+
+static void start_session(const struct user *u)
+{
+	cred_set(u->uid, u->gid);
+	env_set("USER", u->name);
+	env_set("HOME", u->home);
+	if (vfs_chdir(u->home))
+		vfs_chdir("/");
+	console_printf("Welcome, %s.\n", u->name);
+}
+
+/* With a user database: ask for a name and password until they match. Without one the system is single-user root. */
+static void do_login(void)
+{
+	struct user u;
+	char name[USER_NAME_MAX + 8], pw[64];
+
+	if (!users_exist()) {
+		cred_set(0, 0);
+		return;
+	}
+	for (;;) {
+		console_write("login: ");
+		readline(name, sizeof name);
+		if (!name[0])
+			continue;
+		console_write("password: ");
+		read_secret(pw, sizeof pw);
+		if (!user_find_name(name, &u) && user_verify(&u, pw)) {
+			start_session(&u);
+			return;
+		}
+		console_write("Login incorrect\n");
+		task_sleep(1000);
+	}
+}
+
+/* logout : end the session; the login prompt returns (does nothing without a user database) */
+static int cmd_logout(int argc, char **argv)
+{
+	(void)argc;
+	(void)argv;
+	if (!users_exist()) {
+		console_write("no user database: nobody to log out (see useradd)\n");
+		return 1;
+	}
+	cred_set(0, 0);
+	su_top = 0;
+	login_wanted = 1;
+	return 0;
+}
+
+/* passwd [USER] : change a password (you must know the old one unless you are root) */
+static int cmd_passwd(int argc, char **argv)
+{
+	struct user u;
+	char old[64], one[64], two[64];
+	int rc;
+
+	if (!users_exist()) {
+		console_write("passwd: no user database (see useradd)\n");
+		return 1;
+	}
+	if (argc > 1) {
+		rc = user_find_name(argv[1], &u);
+	} else {
+		rc = user_find_uid(cred_uid(), &u);
+	}
+	if (rc) {
+		console_write("passwd: no such user\n");
+		return 1;
+	}
+	if (cred_uid() && cred_uid() != u.uid) {
+		console_write("passwd: you may only change your own password\n");
+		return 1;
+	}
+	if (cred_uid()) {
+		console_write("old password: ");
+		read_secret(old, sizeof old);
+		if (!user_verify(&u, old)) {
+			console_write("passwd: wrong password\n");
+			return 1;
+		}
+	}
+	console_write("new password: ");
+	read_secret(one, sizeof one);
+	console_write("again: ");
+	read_secret(two, sizeof two);
+	if (kstrcmp(one, two) || !one[0]) {
+		console_write("passwd: the passwords differ (or are empty); nothing changed\n");
+		return 1;
+	}
+	rc = user_set_password(u.name, one);
+	if (rc) {
+		console_printf("passwd: %s\n", fs_strerror(rc));
+		return 1;
+	}
+	console_printf("password for %s changed\n", u.name);
+	return 0;
+}
+
+/* sha256 TEXT... : the SHA-256 digest of the arguments joined with spaces */
+static int cmd_sha256(int argc, char **argv)
+{
+	static const char hex[] = "0123456789abcdef";
+	char text[LINE_MAX], out[65];
+	uint8_t digest[32];
+	int i, n = 0;
+
+	for (i = 1; i < argc; i++)
+		n += ksnprintf(text + n, sizeof text - (size_t)n, "%s%s", i > 1 ? " " : "", argv[i]);
+	text[n] = '\0';
+	sha256(text, (size_t)n, digest);
+	for (i = 0; i < 32; i++) {
+		out[i * 2] = hex[digest[i] >> 4];
+		out[i * 2 + 1] = hex[digest[i] & 15];
+	}
+	out[64] = '\0';
+	console_printf("%s\n", out);
+	return 0;
+}
+
+/* New mode from "755" or from symbolic changes like "u+x", "go-w", "a=r" (several separated by commas). */
+static int parse_mode(const char *spec, unsigned old, unsigned *out)
+{
+	unsigned mode = old;
+
+	if (*spec >= '0' && *spec <= '7') {
+		mode = 0;
+		for (; *spec; spec++) {
+			if (*spec < '0' || *spec > '7')
+				return -1;
+			mode = mode * 8 + (unsigned)(*spec - '0');
+		}
+		if (mode > 0777)
+			return -1;
+		*out = mode;
+		return 0;
+	}
+	while (*spec) {
+		unsigned who = 0, bits = 0, mask = 0;
+		char op;
+		int i;
+
+		for (; *spec == 'u' || *spec == 'g' || *spec == 'o' || *spec == 'a'; spec++)
+			who |= *spec == 'u' ? 1u : *spec == 'g' ? 2u : *spec == 'o' ? 4u : 7u;
+		if (!who)
+			who = 7;
+		op = *spec++;
+		if (op != '+' && op != '-' && op != '=')
+			return -1;
+		for (; *spec == 'r' || *spec == 'w' || *spec == 'x'; spec++)
+			bits |= *spec == 'r' ? 4u : *spec == 'w' ? 2u : 1u;
+		for (i = 0; i < 3; i++) /* spread the rwx bits over the selected classes */
+			if (who & (1u << i))
+				mask |= 7u << (6 - 3 * i);
+		{
+			unsigned spread = 0;
+
+			for (i = 0; i < 3; i++)
+				if (who & (1u << i))
+					spread |= bits << (6 - 3 * i);
+			if (op == '+')
+				mode |= spread;
+			else if (op == '-')
+				mode &= ~spread;
+			else
+				mode = (mode & ~mask) | spread;
+		}
+		if (*spec == ',')
+			spec++;
+		else if (*spec)
+			return -1;
+	}
+	*out = mode;
+	return 0;
+}
+
+/* chmod MODE FILE... : "chmod 640 f", "chmod u+x f", "chmod go-rwx f" */
+static int cmd_chmod(int argc, char **argv)
+{
+	int i, rc = 0;
+
+	if (argc < 3) {
+		console_write("usage: chmod MODE FILE...   (octal like 644, or u+x, go-w, a=r)\n");
+		return 1;
+	}
+	for (i = 2; i < argc; i++) {
+		struct vfs_stat st;
+		unsigned mode;
+		int r = vfs_stat(argv[i], &st);
+
+		if (r < 0) {
+			rc = fs_fail(argv[i], r);
+			continue;
+		}
+		if (parse_mode(argv[1], st.mode, &mode)) {
+			console_printf("chmod: bad mode '%s'\n", argv[1]);
+			return 1;
+		}
+		r = vfs_chmod(argv[i], (uint16_t)mode);
+		if (r)
+			rc = fs_fail(argv[i], r);
+	}
+	return rc;
+}
+
+/* A user given by name or by number. */
+static int resolve_user(const char *s, uint16_t *uid, uint16_t *gid)
+{
+	struct user u;
+	uint32_t n;
+
+	if (!user_find_name(s, &u)) {
+		*uid = u.uid;
+		*gid = u.gid;
+		return 0;
+	}
+	if (!kstrtoul(s, &n)) {
+		*uid = (uint16_t)n;
+		*gid = (uint16_t)n;
+		return 0;
+	}
+	return -1;
+}
+
+/* chown USER[:GROUP-UID] FILE... : root only. The group is given as a user name or a number. */
+static int cmd_chown(int argc, char **argv)
+{
+	char owner[USER_NAME_MAX + USER_NAME_MAX + 2], *colon;
+	uint16_t uid, gid, dummy;
+	int i, rc = 0;
+
+	if (argc < 3) {
+		console_write("usage: chown USER[:GROUP] FILE...\n");
+		return 1;
+	}
+	kstrlcpy(owner, argv[1], sizeof owner);
+	colon = owner;
+	while (*colon && *colon != ':')
+		colon++;
+	if (*colon)
+		*colon++ = '\0';
+	if (resolve_user(owner, &uid, &gid)) {
+		console_printf("chown: unknown user '%s'\n", owner);
+		return 1;
+	}
+	if (*colon && resolve_user(colon, &dummy, &gid)) {
+		console_printf("chown: unknown group '%s'\n", colon);
+		return 1;
+	}
+	for (i = 2; i < argc; i++) {
+		int r = vfs_chown(argv[i], uid, gid);
+
+		if (r)
+			rc = fs_fail(argv[i], r);
+	}
+	return rc;
+}
+
+static const char *whoami_name(void)
+{
+	return cred_uid() || users_exist() ? user_name_of(cred_uid()) : "root";
+}
+
+/* whoami : the name of the current user */
+static int cmd_whoami(int argc, char **argv)
+{
+	(void)argc;
+	(void)argv;
+	console_printf("%s\n", whoami_name());
+	return 0;
+}
+
+/* id : numeric user and group ids */
+static int cmd_id(int argc, char **argv)
+{
+	(void)argc;
+	(void)argv;
+	console_printf("uid=%u(%s) gid=%u\n", cred_uid(), whoami_name(), cred_gid());
+	return 0;
+}
+
+/* su [user] switches to another user (root by default) inside the same session; 'exit' comes back. */
+#define SU_DEPTH 4
+
+static struct su_saved {
+	uint16_t uid, gid;
+	char user[USER_NAME_MAX], home[USER_HOME_MAX], cwd[VFS_PATH_MAX];
+} su_stack[SU_DEPTH];
+static int su_top;
+
+static int cmd_su(int argc, char **argv)
+{
+	struct user u;
+	const char *target = argc > 1 ? argv[1] : "root";
+	struct su_saved *s;
+	char pw[64];
+
+	if (!users_exist()) {
+		console_write("su: no user database (see useradd)\n");
+		return 1;
+	}
+	if (user_find_name(target, &u)) {
+		console_printf("su: unknown user %s\n", target);
+		return 1;
+	}
+	if (cred_uid()) { /* only root switches without a password */
+		console_write("password: ");
+		read_secret(pw, sizeof pw);
+		if (!user_verify(&u, pw)) {
+			console_write("su: authentication failure\n");
+			return 1;
+		}
+	}
+	if (su_top >= SU_DEPTH) {
+		console_write("su: too many nested sessions\n");
+		return 1;
+	}
+	s = &su_stack[su_top++];
+	s->uid = cred_uid();
+	s->gid = cred_gid();
+	kstrlcpy(s->user, env_get("USER") ? env_get("USER") : "root", sizeof s->user);
+	kstrlcpy(s->home, env_get("HOME") ? env_get("HOME") : "/", sizeof s->home);
+	kstrlcpy(s->cwd, vfs_getcwd(), sizeof s->cwd);
+	cred_set(u.uid, u.gid);
+	env_set("USER", u.name);
+	env_set("HOME", u.home);
+	return 0;
+}
+
+/* exit : leave an 'su' session, or log out */
+static int cmd_exit(int argc, char **argv)
+{
+	(void)argc;
+	(void)argv;
+	if (su_top > 0) {
+		struct su_saved *s = &su_stack[--su_top];
+
+		cred_set(s->uid, s->gid);
+		env_set("USER", s->user);
+		env_set("HOME", s->home);
+		vfs_chdir(s->cwd);
+		return 0;
+	}
+	return cmd_logout(0, 0);
+}
+
+/* ln [-s] TARGET LINK : make a hard link, or with -s a symbolic link */
+static int cmd_ln(int argc, char **argv)
+{
+	int rc;
+
+	if (argc == 3) { /* a hard link: another name for the same file */
+		rc = vfs_link(argv[1], argv[2]);
+		return rc ? fs_fail(argv[2], rc) : 0;
+	}
+	if (argc != 4 || kstrcmp(argv[1], "-s")) {
+		console_write("usage: ln TARGET LINKNAME   (hard link)  |  ln -s TARGET LINKNAME   (symbolic)\n");
+		return 1;
+	}
+	rc = vfs_symlink(argv[2], argv[3]);
+	return rc ? fs_fail(argv[3], rc) : 0;
+}
+
+/* readlink LINK : print where a symbolic link points */
+static int cmd_readlink(int argc, char **argv)
+{
+	char target[VFS_PATH_MAX];
+	int n;
+
+	if (argc != 2) {
+		console_write("usage: readlink LINK\n");
+		return 1;
+	}
+	n = vfs_readlink(argv[1], target, sizeof target);
+	if (n < 0)
+		return fs_fail(argv[1], n);
+	console_printf("%s\n", target);
+	return 0;
+}
+
+/* useradd NAME PASSWORD : add a user (root only). The first user must be "root". */
+static int cmd_useradd(int argc, char **argv)
+{
+	struct user u;
+	char home[USER_HOME_MAX];
+	uint16_t uid = 0;
+	int rc;
+
+	if (argc != 3) {
+		console_write("usage: useradd NAME PASSWORD   (the first user must be root)\n");
+		return 1;
+	}
+	if (cred_uid()) {
+		console_write("useradd: permission denied\n");
+		return 1;
+	}
+	if (!users_exist() && kstrcmp(argv[1], "root")) {
+		console_write("useradd: create root first: useradd root PASSWORD\n");
+		return 1;
+	}
+	if (kstrcmp(argv[1], "root")) {
+		for (uid = 1000; !user_find_uid(uid, &u); uid++)
+			;
+		ksnprintf(home, sizeof home, "/home/%s", argv[1]);
+	} else {
+		kstrlcpy(home, "/", sizeof home);
+	}
+	rc = user_add(argv[1], argv[2], uid, uid, home);
+	if (rc) {
+		console_printf("useradd: %s\n", fs_strerror(rc));
+		return 1;
+	}
+	if (uid) { /* a home directory owned by the new user */
+		vfs_mkdir("/home");
+		if (!vfs_mkdir(home))
+			vfs_chown(home, uid, uid);
+	}
+	console_printf("added %s (uid %u)\n", argv[1], uid);
+	return 0;
+}
+
 void shell_run(void)
 {
 	char line[LINE_MAX];
@@ -4604,6 +5173,10 @@ void shell_run(void)
 	}
 	for (;;) {
 		interrupted = 0;
+		if (login_wanted) {
+			login_wanted = 0;
+			do_login();
+		}
 		report_jobs();
 		prompt();
 		readline(line, sizeof line);

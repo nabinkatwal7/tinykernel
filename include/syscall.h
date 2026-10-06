@@ -40,6 +40,7 @@
 #define SYS_TRYKEY  35 /* a key if one is waiting, else -1 (never blocks) */
 #define SYS_PUTAT   36 /* ebx = column, ecx = row, edx = (attribute << 8) | character: write straight to the text screen */
 #define SYS_CLS     37 /* clear the screen */
+#define SYS_FLOCK   39 /* ebx = fd, ecx = LOCK_SH / LOCK_EX / LOCK_UN, optionally | LOCK_NB */
 #define SYS_GFX     38 /* ebx = operation, ecx = int[6] of arguments: the 320x200 graphics screen (see GFX_* below) */
 #define GFX_ENTER   0  /* switch to graphics mode */
 #define GFX_LEAVE   1  /* back to text mode */
