@@ -1,4 +1,3 @@
-Read date and time from RTC,
 Add 'date' shell command,
 Add 'time' command for timing,
 Implement sleep queue with wake list,
