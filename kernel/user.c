@@ -14,6 +14,7 @@
 extern const uint8_t builtin_hello_start[], builtin_hello_end[];
 extern const uint8_t builtin_counter_start[], builtin_counter_end[];
 extern const uint8_t builtin_fault_start[], builtin_fault_end[];
+extern const uint8_t builtin_evil_start[], builtin_evil_end[];
 
 struct builtin {
 	const char *name;
@@ -24,6 +25,7 @@ static const struct builtin builtins[] = {
 	{ "hello",   builtin_hello_start,   builtin_hello_end },
 	{ "counter", builtin_counter_start, builtin_counter_end },
 	{ "fault",   builtin_fault_start,   builtin_fault_end },
+	{ "evil",    builtin_evil_start,    builtin_evil_end },
 };
 #define NBUILTIN (sizeof builtins / sizeof builtins[0])
 

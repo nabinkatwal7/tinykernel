@@ -14,3 +14,8 @@ _builtin_counter_end:
 _builtin_fault_start:
 	.incbin "build/fault.bin"
 _builtin_fault_end:
+
+.globl _builtin_evil_start, _builtin_evil_end
+_builtin_evil_start:
+	.incbin "build/evil.bin"
+_builtin_evil_end:

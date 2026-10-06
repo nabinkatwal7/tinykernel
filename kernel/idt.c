@@ -4,6 +4,7 @@
 #include "debug.h"
 #include "gdt.h"
 #include "klog.h"
+#include "paging.h"
 #include "pic.h"
 #include "syscall.h"
 #include "user.h"
@@ -67,10 +68,9 @@ void irq_install_handler(int irq, irq_handler_t h)
 static void exception(struct regs *r)
 {
 	const char *name = exc_names[r->int_no];
-	uint32_t cr2 = 0;
 
 	if (r->int_no == 14)
-		__asm__ volatile ("movl %%cr2, %0" : "=r"(cr2));
+		paging_fault(r);
 
 	if (r->cs & 3) { /* fault in a user program: kill it, keep the kernel alive */
 		console_printf("\n[user fault] %s at eip=%08x (err=%x)\n", name, r->eip, r->err_code);
@@ -81,8 +81,6 @@ static void exception(struct regs *r)
 	console_set_color(COLOR_WHITE, COLOR_RED);
 	console_printf("\n*** EXCEPTION: %s ***\n", name);
 	debug_dump_regs(r);
-	if (r->int_no == 14)
-		console_printf("cr2=%08x\n", cr2);
 	panic("unhandled CPU exception %u (%s)", r->int_no, name);
 }
 

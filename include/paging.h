@@ -12,4 +12,8 @@ void     paging_init(void);
 int      paging_enabled(void);
 uint32_t paging_kernel_dir(void);
 
+/* Exception 14: decode CR2 + error code; kills a faulting user program, panics on kernel faults. */
+struct regs;
+void     paging_fault(struct regs *r);
+
 #endif

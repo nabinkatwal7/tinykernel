@@ -24,7 +24,7 @@ S_SRCS  := $(wildcard kernel/*.S)
 OBJS    := $(patsubst kernel/%.c,$(BUILD)/%.o,$(C_SRCS)) \
            $(patsubst kernel/%.S,$(BUILD)/%.o,$(S_SRCS))
 HEADERS := $(wildcard include/*.h)
-USER_BINS := $(BUILD)/hello.bin $(BUILD)/counter.bin $(BUILD)/fault.bin
+USER_BINS := $(BUILD)/hello.bin $(BUILD)/counter.bin $(BUILD)/fault.bin $(BUILD)/evil.bin
 
 # Headless run: serial log to build/serial.log, no window.
 QEMU_DISKS := -drive format=raw,file=$(IMAGE),if=floppy \

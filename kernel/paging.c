@@ -1,5 +1,8 @@
 #include "paging.h"
 
+#include "console.h"
+#include "debug.h"
+#include "idt.h"
 #include "klog.h"
 #include "kstring.h"
 #include "pmm.h"
@@ -57,6 +60,25 @@ void paging_init(void)
 	enabled = 1;
 	klog(LOG_INFO, "paging: on, %u tables identity-map %u MiB, cr3=%x", tables, MAP_BYTES >> 20,
 	     (uint32_t)kdir);
+}
+
+void paging_fault(struct regs *r)
+{
+	uint32_t addr;
+	const char *kind = !(r->err_code & 1) ? "page not present"
+		: (r->err_code & 2) ? "write to read-only page" : "protection violation";
+
+	__asm__ volatile ("movl %%cr2, %0" : "=r"(addr));
+	if (r->cs & 3) {
+		console_printf("\n[user fault] page fault: %s at %08x (eip=%08x)\n", kind, addr,
+			       r->eip);
+		klog(LOG_WARN, "user page fault: %s addr=%x eip=%x", kind, addr, r->eip);
+		user_abort();
+	}
+	console_set_color(COLOR_WHITE, COLOR_RED);
+	console_printf("\n*** PAGE FAULT: %s at %08x ***\n", kind, addr);
+	debug_dump_regs(r);
+	panic("kernel page fault at %x (%s) eip=%x", addr, kind, r->eip);
 }
 
 int paging_enabled(void)
