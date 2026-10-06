@@ -1,4 +1,3 @@
-Add 'sleep' and 'yes' user programs,
 Port small shell utilities to user mode,
 Add file permissions and owners,
 Add users and login prompt,

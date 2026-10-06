@@ -31,6 +31,7 @@ void console_printf(const char *fmt, ...);
 /* Output capture: while active, console output is appended to the buffer instead of being shown
    (serial too). Used by the self-test runner. */
 void console_capture_begin(char *buf, unsigned cap);
+int  console_capture_full(void);    /* 1 while a capture is active and its buffer has no room left */
 int  console_capture_end(void);      /* returns the number of characters captured */
 
 void console_set_color(uint8_t fg, uint8_t bg);

@@ -674,7 +674,7 @@ static int cmd_sleep(int argc, char **argv)
 	uint32_t ms;
 
 	if (argc < 2 || kstrtoul(argv[1], &ms)) {
-		console_write("usage: sleep <ms>\n");
+		console_write("usage: msleep <ms>\n");
 		return 1;
 	}
 	while (ms && !interrupted) { /* Ctrl+C aware */
@@ -3829,7 +3829,7 @@ static int cmd_demo(int argc, char **argv)
 		"meminfo",
 		"memtest",
 		"spawn 2",
-		"sleep 2600",
+		"msleep 2600",
 		"ps",
 		"format",
 		"write hello.txt Written by the demo",
@@ -3868,7 +3868,7 @@ static const struct command commands[] = {
 	{ "date",    "date",                  "show the real-time clock", cmd_date },
 	{ "time",    "time <cmd...>",         "time a command", cmd_time },
 	{ "timer",   "timer [every] <ms> <txt>", "kernel timers: set/list/cancel", cmd_timer },
-	{ "sleep",   "sleep <ms>",            "sleep via the scheduler", cmd_sleep },
+	{ "msleep",  "msleep <ms>",           "sleep via the scheduler (milliseconds; see also the sleep program)", cmd_sleep },
 	{ "meminfo", "meminfo",               "memory map, frames and heap", cmd_meminfo },
 	{ "memtest", "memtest",               "stress test the allocator", cmd_memtest },
 	{ "hog",     "hog <bytes>",           "hold heap memory (shows in ps)", cmd_hog },

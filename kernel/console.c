@@ -142,6 +142,11 @@ void console_capture_begin(char *buf, unsigned cap)
 	irq_restore(f);
 }
 
+int console_capture_full(void)
+{
+	return cap_buf && cap_len + 1 >= cap_size;
+}
+
 int console_capture_end(void)
 {
 	uint32_t f = irq_save();
