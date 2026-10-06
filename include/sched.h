@@ -10,6 +10,7 @@ typedef struct task {
 	uint32_t esp;          /* saved kernel stack pointer while not running */
 	uint32_t esp0;         /* kernel stack the CPU switches to on ring3 -> ring0 */
 	uint32_t guard;        /* physical/virtual address of the unmapped stack guard page */
+	uint32_t heap_bytes;   /* live kmalloc bytes owned by this task */
 	uint32_t pgdir;        /* physical address of this task's page directory */
 	uint32_t id;
 	char name[16];
@@ -35,6 +36,8 @@ task_t  *task_current(void);
 void     sched_tick(void);        /* called from the timer IRQ */
 void     sched_dump(void);        /* ps */
 uint32_t task_count(void);
+uint32_t sched_current_id(void);
+void     sched_account(uint32_t id, int32_t delta); /* adjust a task's heap_bytes */
 const char *sched_guard_owner(uint32_t addr); /* task whose guard page contains addr */
 
 /* switch.S */

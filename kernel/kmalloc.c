@@ -4,6 +4,7 @@
 #include "klog.h"
 #include "kstring.h"
 #include "pmm.h"
+#include "sched.h"
 
 /*
  * One contiguous arena carved into physically adjacent blocks. Each block has a 16-byte header
@@ -21,7 +22,8 @@ struct block {
 	uint32_t magic;
 	uint32_t size;      /* payload bytes */
 	uint32_t prev_size; /* payload bytes of the previous block, 0 for the first */
-	uint32_t req;       /* bytes the caller asked for; a canary follows them */
+	uint32_t req : 22;   /* bytes the caller asked for; a canary follows them */
+	uint32_t owner : 10; /* id of the allocating task, for per-task accounting */
 };
 
 static uint8_t *arena;
@@ -92,6 +94,8 @@ void *kmalloc(size_t size)
 			}
 			b->magic = MAGIC_USED;
 			b->req = (uint32_t)size;
+			b->owner = sched_current_id() & 0x3FF;
+			sched_account(b->owner, (int32_t)b->size);
 			*(uint32_t *)((uint8_t *)b + HDR + size) = CANARY;
 			rover = next_of(b) ? next_of(b) : (struct block *)arena;
 			irq_restore(flags);
@@ -140,6 +144,7 @@ void kfree(void *p)
 	flags = irq_save();
 	if (block_damaged(b))
 		klog(LOG_ERROR, "heap: block %p corrupted (overflow or underflow), freeing anyway", p);
+	sched_account(b->owner, -(int32_t)b->size);
 	b->magic = MAGIC_FREE;
 
 	n = next_of(b);

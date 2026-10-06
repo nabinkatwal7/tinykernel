@@ -236,6 +236,26 @@ const char *sched_guard_owner(uint32_t addr)
 	return 0;
 }
 
+uint32_t sched_current_id(void)
+{
+	return current ? current->id : 0;
+}
+
+void sched_account(uint32_t id, int32_t delta)
+{
+	task_t *t = task_head;
+
+	if (!t)
+		return;
+	do {
+		if (t->id == id) {
+			t->heap_bytes += (uint32_t)delta;
+			return;
+		}
+		t = t->next;
+	} while (t != task_head);
+}
+
 task_t *task_current(void)
 {
 	return current;
@@ -280,11 +300,12 @@ void sched_dump(void)
 	uint32_t f = irq_save();
 	task_t *t = task_head;
 
-	console_write("ID   NAME        STATE     PRIO  CPU-TICKS\n");
+	console_write("ID   NAME        STATE     PRIO  CPU-TICKS  HEAP    STACK\n");
 	do {
 		if (t->state != TASK_DEAD)
-			console_printf("%-4u %-11s %-9s %-5u %u\n", t->id, t->name, names[t->state],
-				       t->priority, t->cpu_ticks);
+			console_printf("%-4u %-11s %-9s %-5u %-10u %-7u %u\n", t->id, t->name,
+				       names[t->state], t->priority, t->cpu_ticks, t->heap_bytes,
+				       t->stack ? TASK_STACK_SIZE : 0u);
 		t = t->next;
 	} while (t != task_head);
 	irq_restore(f);

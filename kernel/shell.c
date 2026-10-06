@@ -254,6 +254,42 @@ static int cmd_memtest(int argc, char **argv)
 	return bad != 0;
 }
 
+/* Holds heap blocks on purpose so the per-task accounting in 'ps' has something to show. */
+static void *hogs[8];
+
+static int cmd_hog(int argc, char **argv)
+{
+	uint32_t n;
+	int i;
+
+	if (argc < 2 || kstrtoul(argv[1], &n) || n == 0) {
+		console_write("usage: hog <bytes>   (see 'ps', undo with 'unhog')\n");
+		return 1;
+	}
+	for (i = 0; i < 8; i++) {
+		if (!hogs[i]) {
+			hogs[i] = kmalloc(n);
+			console_printf(hogs[i] ? "held %u bytes at %p\n" : "out of memory\n", n, hogs[i]);
+			return hogs[i] == 0;
+		}
+	}
+	console_write("8 blocks already held\n");
+	return 1;
+}
+
+static int cmd_unhog(int argc, char **argv)
+{
+	int i;
+
+	(void)argc;
+	(void)argv;
+	for (i = 0; i < 8; i++) {
+		kfree(hogs[i]);
+		hogs[i] = 0;
+	}
+	return 0;
+}
+
 static int cmd_heapcheck(int argc, char **argv)
 {
 	int errors, bad = 0;
@@ -843,6 +879,8 @@ static const struct command commands[] = {
 	{ "sleep",   "sleep <ms>",            "sleep via the scheduler", cmd_sleep },
 	{ "meminfo", "meminfo",               "memory map, frames and heap", cmd_meminfo },
 	{ "memtest", "memtest",               "stress test the allocator", cmd_memtest },
+	{ "hog",     "hog <bytes>",           "hold heap memory (shows in ps)", cmd_hog },
+	{ "unhog",   "unhog",                 "release held heap memory", cmd_unhog },
 	{ "heapcheck", "heapcheck [test]",    "verify the heap / test the detector", cmd_heapcheck },
 	{ "hexdump", "hexdump <addr> [len]",  "dump memory", cmd_hexdump },
 	{ "vmap",    "vmap <virt> <phys> [ro]", "map a page", cmd_vmap },
