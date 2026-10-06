@@ -1,4 +1,3 @@
-Add argument passing to programs,
 Add environment variables,
 Add user-space C runtime,
 Write tiny libc string functions,

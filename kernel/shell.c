@@ -1213,10 +1213,10 @@ static int cmd_run(int argc, char **argv)
 	int rc;
 
 	if (argc < 2) {
-		console_write("usage: run <program>   (see 'install' for built-ins)\n");
+		console_write("usage: run <program> [args...]   (see 'install' for built-ins)\n");
 		return 1;
 	}
-	rc = user_run(argv[1]);
+	rc = user_run_args(argv[1], argc - 1, argv + 1);
 	console_printf("[exit code %d]\n", rc);
 	return rc != 0;
 }

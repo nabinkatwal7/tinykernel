@@ -10,6 +10,8 @@
 /* Loads the named program (file on disk first, then built-in) and runs it in ring 3.
    Returns its exit code, or a negative value if it could not be started. */
 int  user_run(const char *name);
+/* Same, passing argv[0..argc-1] on the user stack: [esp] = argc, [esp+4] = argv. */
+int  user_run_args(const char *name, int argc, char **argv);
 void user_abort(void) __attribute__((noreturn)); /* called from the fault handler */
 void user_exit(int code) __attribute__((noreturn));
 int  user_is_active(void);

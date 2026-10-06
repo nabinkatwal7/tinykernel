@@ -25,6 +25,11 @@ _builtin_spin_start:
 	.incbin "build/spin.bin"
 _builtin_spin_end:
 
+.globl _builtin_args_start, _builtin_args_end
+_builtin_args_start:
+	.incbin "build/args.bin"
+_builtin_args_end:
+
 .globl _builtin_helloelf_start, _builtin_helloelf_end
 _builtin_helloelf_start:
 	.incbin "build/helloelf.elf"
