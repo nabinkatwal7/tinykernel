@@ -3023,6 +3023,16 @@ static int cmd_shtest(int argc, char **argv)
 	ok &= sh_expect("echo $((shv*shv+1))", "17\n");
 	ok &= sh_expect("let shv=shv*2", "");
 	ok &= sh_expect("echo $shv $((shv > 7 && shv < 9))", "8 1\n");
+	{
+		static const char script[] = "# loop with continue, then an if/else\nshi=0\nwhile test $shi -lt 4\ndo\n"
+					     "  let shi=shi+1\n  if test $shi = 2\n  then\n    continue\n  fi\n  echo n$shi\n"
+					     "done\nif test $shi -eq 4\nthen\n  echo four\nelse\n  echo other\nfi\n";
+
+		vfs_write("sht.sh", script, sizeof script - 1);
+		ok &= sh_expect("sh sht.sh", "n1\nn3\nn4\nfour\n");
+		vfs_unlink("sht.sh");
+		env_unset("shi");
+	}
 	ok &= sh_expect("echo x > sht.txt", "");
 	ok &= sh_expect("echo y >> sht.txt", "");
 	ok &= sh_expect("cat sht.txt", "x\ny\n");
@@ -3079,6 +3089,72 @@ static int cmd_let(int argc, char **argv)
 		}
 	}
 	return rc;
+}
+
+static int test_int(const char *s, int32_t *v)
+{
+	return arith_eval(s, v);
+}
+
+/* test EXPR : status 0 if true. -z S, -n S, -e/-f/-d PATH, A = B, A != B, A -eq|-ne|-lt|-le|-gt|-ge B, ! EXPR */
+static int cmd_test(int argc, char **argv)
+{
+	struct vfs_stat st;
+	int neg = 0, n;
+	char **a = argv + 1;
+	int r = 0;
+
+	argc--;
+	if (argc > 0 && !kstrcmp(a[0], "!")) {
+		neg = 1;
+		a++;
+		argc--;
+	}
+	n = argc;
+	if (n == 1) {
+		r = a[0][0] != 0;
+	} else if (n == 2 && !kstrcmp(a[0], "-z")) {
+		r = a[1][0] == 0;
+	} else if (n == 2 && !kstrcmp(a[0], "-n")) {
+		r = a[1][0] != 0;
+	} else if (n == 2 && (!kstrcmp(a[0], "-e") || !kstrcmp(a[0], "-f") || !kstrcmp(a[0], "-d"))) {
+		r = vfs_stat(a[1], &st) == FS_OK;
+		if (r && a[0][1] == 'f')
+			r = !st.is_dir;
+		else if (r && a[0][1] == 'd')
+			r = st.is_dir;
+	} else if (n == 3 && !kstrcmp(a[1], "=")) {
+		r = !kstrcmp(a[0], a[2]);
+	} else if (n == 3 && !kstrcmp(a[1], "!=")) {
+		r = kstrcmp(a[0], a[2]) != 0;
+	} else if (n == 3 && a[1][0] == '-') {
+		int32_t x, y;
+
+		if (test_int(a[0], &x) || test_int(a[2], &y)) {
+			console_write("test: integer expression expected\n");
+			return 2;
+		}
+		if (!kstrcmp(a[1], "-eq"))
+			r = x == y;
+		else if (!kstrcmp(a[1], "-ne"))
+			r = x != y;
+		else if (!kstrcmp(a[1], "-lt"))
+			r = x < y;
+		else if (!kstrcmp(a[1], "-le"))
+			r = x <= y;
+		else if (!kstrcmp(a[1], "-gt"))
+			r = x > y;
+		else if (!kstrcmp(a[1], "-ge"))
+			r = x >= y;
+		else {
+			console_printf("test: unknown operator %s\n", a[1]);
+			return 2;
+		}
+	} else if (n != 0) {
+		console_write("test: bad expression\n");
+		return 2;
+	}
+	return (r != 0) == !neg ? 0 : 1;
 }
 
 /* panic [message] : test the panic path and its stack trace */
@@ -3587,6 +3663,7 @@ static const struct command commands[] = {
 	{ "fg",      "fg [%n]",               "wait for a background job", cmd_fg },
 	{ "sh",      "sh <script> [args]",    "run a shell script", cmd_sh },
 	{ "let",     "let NAME=expr",         "integer arithmetic on shell variables", cmd_let },
+	{ "test",    "test EXPR",             "evaluate a condition (status 0 = true)", cmd_test },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
