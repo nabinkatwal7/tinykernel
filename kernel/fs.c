@@ -1,6 +1,7 @@
 #include "fs.h"
 
 #include "ata.h"
+#include "bcache.h"
 #include "klog.h"
 #include "kmalloc.h"
 #include "kstring.h"
@@ -56,12 +57,12 @@ static uint32_t parent(int i) { return (dir[i].flags >> 8) & 0xFF; }
 
 static int flush_dir(void)
 {
-	return ata_write(dir_lba, DIR_SECTORS, dir) ? FS_EIO : FS_OK;
+	return bc_write(dir_lba, DIR_SECTORS, dir) ? FS_EIO : FS_OK;
 }
 
 static int flush_bitmap(void)
 {
-	return ata_write(bm_lba, bm_sectors, bitmap) ? FS_EIO : FS_OK;
+	return bc_write(bm_lba, bm_sectors, bitmap) ? FS_EIO : FS_OK;
 }
 
 static int bit_get(uint32_t sec)
@@ -212,7 +213,7 @@ int fs_mount(void)
 	bitmap = 0;
 	if (!ata_present())
 		return FS_ENOMOUNT;
-	if (ata_read(0, 1, sb))
+	if (bc_read(0, 1, sb))
 		return FS_EIO;
 	if (sb[0] != FS_MAGIC || sb[1] != FS_VERSION)
 		return FS_ENOMOUNT;
@@ -226,7 +227,7 @@ int fs_mount(void)
 	bitmap = kmalloc(bm_sectors * SECTOR_SIZE);
 	if (!bitmap)
 		return FS_ENOSPC;
-	if (ata_read(bm_lba, bm_sectors, bitmap) || ata_read(dir_lba, DIR_SECTORS, dir))
+	if (bc_read(bm_lba, bm_sectors, bitmap) || bc_read(dir_lba, DIR_SECTORS, dir))
 		return FS_EIO;
 	mounted = 1;
 	return FS_OK;
@@ -260,7 +261,7 @@ int fs_format(void)
 	sb[5] = dir_lba;
 	sb[6] = data_start;
 	memset(dir, 0, sizeof dir);
-	if (ata_write(0, 1, sb) || flush_bitmap() || flush_dir())
+	if (bc_write(0, 1, sb) || flush_bitmap() || flush_dir())
 		return FS_EIO;
 	mounted = 1;
 	klog(LOG_INFO, "fs: formatted %u sectors (bitmap %u, data from %u)", total_sectors, bm_sectors,
@@ -320,12 +321,12 @@ int fs_write(const char *path, const void *data, uint32_t size)
 		uint32_t left = size - i * SECTOR_SIZE;
 
 		if (left >= SECTOR_SIZE) {
-			if (ata_write(start + i, 1, src + i * SECTOR_SIZE))
+			if (bc_write(start + i, 1, src + i * SECTOR_SIZE))
 				goto io_error;
 		} else {
 			memset(bounce, 0, sizeof bounce);
 			memcpy(bounce, src + i * SECTOR_SIZE, left);
-			if (ata_write(start + i, 1, bounce))
+			if (bc_write(start + i, 1, bounce))
 				goto io_error;
 		}
 	}
@@ -407,10 +408,10 @@ int fs_read(const char *path, void *buf, uint32_t cap)
 		uint32_t left = size - i * SECTOR_SIZE;
 
 		if (left >= SECTOR_SIZE) {
-			if (ata_read(dir[idx].start + i, 1, dst + i * SECTOR_SIZE))
+			if (bc_read(dir[idx].start + i, 1, dst + i * SECTOR_SIZE))
 				return FS_EIO;
 		} else {
-			if (ata_read(dir[idx].start + i, 1, bounce))
+			if (bc_read(dir[idx].start + i, 1, bounce))
 				return FS_EIO;
 			memcpy(dst + i * SECTOR_SIZE, bounce, left);
 		}

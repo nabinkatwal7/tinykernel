@@ -1,4 +1,3 @@
-Add block cache for disk reads,
 Add write-back flush on shutdown,
 Add filesystem consistency checker,
 Learn FAT12 layout,

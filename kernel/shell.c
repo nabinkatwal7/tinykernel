@@ -1,6 +1,7 @@
 #include "shell.h"
 
 #include "ata.h"
+#include "bcache.h"
 #include "console.h"
 #include "debug.h"
 #include "editor.h"
@@ -1292,6 +1293,22 @@ static int cmd_edit(int argc, char **argv)
 	return editor_run(argv[1]);
 }
 
+static int cmd_cachestat(int argc, char **argv)
+{
+	struct bc_stats s;
+
+	(void)argc;
+	if (argc > 1 && !kstrcmp(argv[1], "drop")) {
+		bc_invalidate();
+		console_write("block cache emptied\n");
+	}
+	bc_stats_get(&s);
+	console_printf("block cache: %u/%u sectors cached, %u hits, %u misses (%u%% hit rate), %u writes\n",
+		       s.entries, s.capacity, s.hits, s.misses,
+		       s.hits + s.misses ? s.hits * 100 / (s.hits + s.misses) : 0, s.writes);
+	return 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -1794,6 +1811,7 @@ static const struct command commands[] = {
 	{ "stat",    "stat <path>",           "show file information", cmd_stat },
 	{ "df",      "df",                    "disk space usage", cmd_df },
 	{ "edit",    "edit <file>",           "full-screen text editor", cmd_edit },
+	{ "cachestat", "cachestat [drop]",    "block cache statistics", cmd_cachestat },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },
