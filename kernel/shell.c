@@ -415,6 +415,80 @@ static const char *apply_alias(const char *line, char *buf, int size)
 	return line;
 }
 
+/* ---------------- command search path ---------------- */
+
+static int is_file(const char *path)
+{
+	struct vfs_stat st;
+
+	return vfs_stat(path, &st) == FS_OK && !st.is_dir;
+}
+
+static int ends_with(const char *s, const char *suffix)
+{
+	size_t n = kstrlen(s), m = kstrlen(suffix);
+
+	return n >= m && !kstrcmp(s + n - m, suffix);
+}
+
+/*
+ * A command that is not built into the shell: a path (contains '/'), a file called name or name.sh in a
+ * directory of $PATH (default "/bin:/fat"), or a program embedded in the kernel image. Fills 'out' with
+ * what to run.
+ */
+static int find_external(const char *name, char *out, int size)
+{
+	const char *path = env_get("PATH");
+	size_t nlen = kstrlen(name);
+	unsigned i;
+
+	if (!path)
+		path = "/bin:/fat";
+	if (nlen + 4 >= (size_t)size)
+		return 0;
+	for (i = 0; name[i]; i++) {
+		if (name[i] == '/') {
+			if (is_file(name)) {
+				kstrlcpy(out, name, (size_t)size);
+				return 1;
+			}
+			ksnprintf(out, (size_t)size, "%s.sh", name);
+			return is_file(out);
+		}
+	}
+	while (*path) {
+		size_t n = 0;
+
+		while (path[n] && path[n] != ':')
+			n++;
+		if (n && n + nlen + 5 < (size_t)size) {
+			memcpy(out, path, n);
+			out[n] = '/';
+			kstrlcpy(out + n + 1, name, size - (int)n - 1);
+			if (is_file(out))
+				return 1;
+			kstrlcpy(out + n + 1 + nlen, ".sh", size - (int)(n + 1 + nlen));
+			if (is_file(out))
+				return 1;
+		}
+		path += n + (path[n] == ':');
+	}
+	for (i = 0; i < builtin_nprogs; i++) {
+		if (!kstrcmp(builtin_progs[i].name, name)) {
+			kstrlcpy(out, name, (size_t)size);
+			return 1;
+		}
+	}
+	return 0;
+}
+
+static int run_external(const char *path, int argc, char **argv)
+{
+	if (ends_with(path, ".sh"))
+		return script_run(path, argc, argv);
+	return user_run_args(path, argc, argv);
+}
+
 /* ---------------- parser ---------------- */
 
 /* Splits in place on whitespace. Supports 'single', "double" quotes and backslash escapes. */
@@ -4304,6 +4378,15 @@ static int exec_plain(const char *line)
 	for (c = commands; c->name; c++) {
 		if (!kstrcmp(c->name, argv[0])) {
 			last_status = c->fn(argc, argv);
+			return last_status;
+		}
+	}
+
+	{
+		char path[VFS_PATH_MAX];
+
+		if (find_external(argv[0], path, sizeof path)) {
+			last_status = run_external(path, argc, argv);
 			return last_status;
 		}
 	}
