@@ -12,7 +12,9 @@
 #include "cpustat.h"
 #include "cpu.h"
 #include "crashdump.h"
+#include "cred.h"
 #include "debug.h"
+#include "users.h"
 #include "gdbstub.h"
 #include "dhcp.h"
 #include "editor.h"
@@ -146,7 +148,7 @@ static void set_line(char *buf, int *len, const char *text)
 static void prompt(void)
 {
 	console_set_color(COLOR_LIGHT_GREEN, COLOR_BLACK);
-	console_printf("tiny:%s> ", vfs_getcwd());
+	console_printf("tiny:%s%c ", vfs_getcwd(), cred_uid() ? '$' : '>');
 	console_set_color(COLOR_WHITE, COLOR_BLACK);
 }
 
@@ -1412,6 +1414,8 @@ static int cmd_smpaffinity(int argc, char **argv)
 	return where_ran[0] != cpu;
 }
 
+static int cmd_useradd(int argc, char **argv);
+static int cmd_logout(int argc, char **argv);
 static int job_kill(const char *spec); /* "%n": the job table is near the end of the file */
 static int cmd_jobs(int argc, char **argv);
 static int cmd_fg(int argc, char **argv);
@@ -4018,6 +4022,8 @@ static const struct command commands[] = {
 	{ "find",    "find [dir] [-name pat]", "search a directory tree", tu_find },
 	{ "diff",    "diff file1 file2",      "compare two files line by line", tu_diff },
 	{ "calc",    "calc EXPRESSION",       "evaluate an integer expression", cmd_calc },
+	{ "useradd", "useradd NAME PASSWORD",  "add a user (root only)", cmd_useradd },
+	{ "logout",  "logout",                "end the session and show the login prompt", cmd_logout },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
@@ -4627,6 +4633,123 @@ static int complete(char *buf, int *len, int max, int *cur)
 	return 1;
 }
 
+/* ---------------- login ---------------- */
+
+static int login_wanted = 1; /* ask who is there before the next prompt */
+
+/* Reads a line without echoing it. */
+static void read_secret(char *buf, int max)
+{
+	int len = 0;
+
+	for (;;) {
+		int k = keyboard_getkey();
+
+		if (k == '\n') {
+			console_putchar('\n');
+			buf[len] = '\0';
+			return;
+		}
+		if (k == '\b') {
+			if (len)
+				len--;
+		} else if (k >= 32 && k < 127 && len < max - 1) {
+			buf[len++] = (char)k;
+		}
+	}
+}
+
+static void start_session(const struct user *u)
+{
+	cred_set(u->uid, u->gid);
+	env_set("USER", u->name);
+	env_set("HOME", u->home);
+	if (vfs_chdir(u->home))
+		vfs_chdir("/");
+	console_printf("Welcome, %s.\n", u->name);
+}
+
+/* With a user database: ask for a name and password until they match. Without one the system is single-user root. */
+static void do_login(void)
+{
+	struct user u;
+	char name[USER_NAME_MAX + 8], pw[64];
+
+	if (!users_exist()) {
+		cred_set(0, 0);
+		return;
+	}
+	for (;;) {
+		console_write("login: ");
+		readline(name, sizeof name);
+		if (!name[0])
+			continue;
+		console_write("password: ");
+		read_secret(pw, sizeof pw);
+		if (!user_find_name(name, &u) && user_verify(&u, pw)) {
+			start_session(&u);
+			return;
+		}
+		console_write("Login incorrect\n");
+		task_sleep(1000);
+	}
+}
+
+/* logout : end the session; the login prompt returns (does nothing without a user database) */
+static int cmd_logout(int argc, char **argv)
+{
+	(void)argc;
+	(void)argv;
+	if (!users_exist()) {
+		console_write("no user database: nobody to log out (see useradd)\n");
+		return 1;
+	}
+	cred_set(0, 0);
+	login_wanted = 1;
+	return 0;
+}
+
+/* useradd NAME PASSWORD : add a user (root only). The first user must be "root". */
+static int cmd_useradd(int argc, char **argv)
+{
+	struct user u;
+	char home[USER_HOME_MAX];
+	uint16_t uid = 0;
+	int rc;
+
+	if (argc != 3) {
+		console_write("usage: useradd NAME PASSWORD   (the first user must be root)\n");
+		return 1;
+	}
+	if (cred_uid()) {
+		console_write("useradd: permission denied\n");
+		return 1;
+	}
+	if (!users_exist() && kstrcmp(argv[1], "root")) {
+		console_write("useradd: create root first: useradd root PASSWORD\n");
+		return 1;
+	}
+	if (kstrcmp(argv[1], "root")) {
+		for (uid = 1000; !user_find_uid(uid, &u); uid++)
+			;
+		ksnprintf(home, sizeof home, "/home/%s", argv[1]);
+	} else {
+		kstrlcpy(home, "/", sizeof home);
+	}
+	rc = user_add(argv[1], argv[2], uid, uid, home);
+	if (rc) {
+		console_printf("useradd: %s\n", fs_strerror(rc));
+		return 1;
+	}
+	if (uid) { /* a home directory owned by the new user */
+		vfs_mkdir("/home");
+		if (!vfs_mkdir(home))
+			vfs_chown(home, uid, uid);
+	}
+	console_printf("added %s (uid %u)\n", argv[1], uid);
+	return 0;
+}
+
 void shell_run(void)
 {
 	char line[LINE_MAX];
@@ -4644,6 +4767,10 @@ void shell_run(void)
 	}
 	for (;;) {
 		interrupted = 0;
+		if (login_wanted) {
+			login_wanted = 0;
+			do_login();
+		}
 		report_jobs();
 		prompt();
 		readline(line, sizeof line);
