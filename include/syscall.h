@@ -25,6 +25,7 @@
 #define SYS_RMDIR   20 /* ebx = path */
 #define SYS_GETCWD  21 /* ebx = buffer, ecx = size; returns length or -1 */
 #define SYS_CHDIR   22 /* ebx = path */
+#define SYS_LSEEK   23 /* ebx = fd, ecx = offset, edx = whence (0 set, 1 cur, 2 end); returns the new position */
 #define SYS_FWRITE  10 /* ebx = fd, ecx = buffer, edx = count; fd 1 and 2 are the console */
 
 void syscall_dispatch(struct regs *r);

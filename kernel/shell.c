@@ -1111,6 +1111,48 @@ static int cmd_write(int argc, char **argv)
 	return rc ? fs_fail(argv[1], rc) : 0;
 }
 
+/* append <file> <text...>: add a line to the end of a file (creating it if needed). */
+static int cmd_append(int argc, char **argv)
+{
+	char text[LINE_MAX];
+	uint32_t old;
+	char *buf;
+	int i, rc, size;
+	size_t len = 0;
+
+	if (argc < 3) {
+		console_write("usage: append <file> <text...>\n");
+		return 1;
+	}
+	if (need_fs())
+		return 1;
+	for (i = 2; i < argc; i++) {
+		len += (size_t)ksnprintf(text + len, sizeof text - len, i > 2 ? " %s" : "%s", argv[i]);
+		if (len >= sizeof text - 2)
+			break;
+	}
+	text[len++] = '\n';
+	size = vfs_size(argv[1]);
+	if (size == FS_ENOENT)
+		size = 0;
+	else if (size < 0)
+		return fs_fail(argv[1], size);
+	old = (uint32_t)size;
+	buf = kmalloc(old + len);
+	if (!buf) {
+		console_write("out of memory\n");
+		return 1;
+	}
+	if (old && (rc = vfs_read(argv[1], buf, old)) < 0) {
+		kfree(buf);
+		return fs_fail(argv[1], rc);
+	}
+	memcpy(buf + old, text, len);
+	rc = vfs_write(argv[1], buf, old + (uint32_t)len);
+	kfree(buf);
+	return rc ? fs_fail(argv[1], rc) : 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -1607,6 +1649,7 @@ static const struct command commands[] = {
 	{ "mount",   "mount",                 "list mounted filesystems", cmd_mount },
 	{ "cat",     "cat <file>",            "print a file", cmd_cat },
 	{ "write",   "write <file> <text>",   "create/replace a file", cmd_write },
+	{ "append",  "append <file> <text>",  "append a line to a file", cmd_append },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },

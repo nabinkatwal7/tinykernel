@@ -116,6 +116,9 @@ void syscall_dispatch(struct regs *r)
 	case SYS_CHDIR:
 		r->eax = user_str_ok(r->ebx) ? (uint32_t)vfs_chdir((const char *)r->ebx) : (uint32_t)-1;
 		break;
+	case SYS_LSEEK:
+		r->eax = (uint32_t)file_seek((int)r->ebx, (int32_t)r->ecx, (int)r->edx);
+		break;
 	case SYS_DUP:
 		r->eax = (uint32_t)file_dup((int)r->ebx);
 		break;

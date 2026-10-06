@@ -194,6 +194,26 @@ int file_close(int fd)
 	return release(o);
 }
 
+int file_seek(int fd, int32_t off, int whence)
+{
+	struct ofile *o = get(fd);
+	int64_t base, target;
+
+	if (!o || o->kind != OBJ_FILE)
+		return FS_EINVAL;
+	switch (whence) {
+	case SEEK_SET: base = 0; break;
+	case SEEK_CUR: base = o->pos; break;
+	case SEEK_END: base = o->size; break;
+	default: return FS_EINVAL;
+	}
+	target = base + off;
+	if (target < 0 || target > FILE_MAX_SIZE)
+		return FS_EINVAL;
+	o->pos = (uint32_t)target; /* may lie past the end: the gap is zero-filled on the next write */
+	return (int)o->pos;
+}
+
 int file_dup(int fd)
 {
 	struct ofile *o = get(fd);
@@ -316,6 +336,8 @@ int file_write(int fd, const void *buf, uint32_t n)
 		o->buf = nb;
 		o->cap = cap;
 	}
+	if (o->pos > o->size) /* seeked past the end: the hole reads as zeros */
+		memset(o->buf + o->size, 0, o->pos - o->size);
 	memcpy(o->buf + o->pos, buf, n);
 	o->pos += n;
 	if (o->pos > o->size)

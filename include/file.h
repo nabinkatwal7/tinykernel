@@ -23,6 +23,10 @@
  * writing, stored back with fs_write() at close(). All results are >= 0 or a negative FS_E* code.
  */
 int file_open(const char *path, int flags);   /* lowest free descriptor */
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
+int file_seek(int fd, int32_t off, int whence); /* new position or a negative error; regular files only */
 int file_dup(int fd);                          /* new descriptor sharing the same open file */
 int file_dup2(int fd, int target);             /* make target refer to fd's open file (closing target) */
 int  console_stdin_read(void *buf, uint32_t n); /* cooked, line-buffered keyboard input with echo */
