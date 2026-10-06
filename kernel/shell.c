@@ -2835,6 +2835,15 @@ static int cmd_shm(int argc, char **argv)
 	return 0;
 }
 
+/* backtrace : show the shell's own call chain */
+static int cmd_backtrace(int argc, char **argv)
+{
+	(void)argc;
+	(void)argv;
+	debug_here();
+	return 0;
+}
+
 /* panic [message] : test the panic path and its stack trace */
 static int cmd_panic(int argc, char **argv)
 {
@@ -3331,6 +3340,7 @@ static const struct command commands[] = {
 	{ "fstest",  "fstest",                "self-test the filesystem", cmd_fstest },
 	{ "pgtest",  "pgtest",                "self-test address spaces", cmd_pgtest },
 	{ "shm",     "shm [rm <key>]",        "shared memory segments", cmd_shm },
+	{ "backtrace", "backtrace",          "print the current kernel call chain", cmd_backtrace },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
