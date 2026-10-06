@@ -40,6 +40,11 @@ _builtin_crtdemo_start:
 	.incbin "build/c_crtdemo.elf"
 _builtin_crtdemo_end:
 
+.globl _builtin_strtest_start, _builtin_strtest_end
+_builtin_strtest_start:
+	.incbin "build/c_strtest.elf"
+_builtin_strtest_end:
+
 .globl _builtin_helloelf_start, _builtin_helloelf_end
 _builtin_helloelf_start:
 	.incbin "build/helloelf.elf"

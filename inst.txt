@@ -1,4 +1,3 @@
-Write tiny libc string functions,
 Write tiny libc printf for user mode,
 Compile C programs for user mode,
 Add more syscalls: open and close,

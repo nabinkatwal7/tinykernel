@@ -25,7 +25,7 @@ OBJS    := $(patsubst kernel/%.c,$(BUILD)/%.o,$(C_SRCS)) \
            $(patsubst kernel/%.S,$(BUILD)/%.o,$(S_SRCS))
 HEADERS := $(wildcard include/*.h)
 USER_BINS := $(BUILD)/hello.bin $(BUILD)/counter.bin $(BUILD)/fault.bin $(BUILD)/evil.bin $(BUILD)/spin.bin $(BUILD)/args.bin $(BUILD)/envdump.bin $(BUILD)/helloelf.elf \
-		$(BUILD)/c_crtdemo.elf
+		$(BUILD)/c_crtdemo.elf $(BUILD)/c_strtest.elf
 
 # Headless run: serial log to build/serial.log, no window.
 QEMU_DISKS := -drive format=raw,file=$(IMAGE),if=floppy \
@@ -54,12 +54,15 @@ $(BUILD)/%.elf: user/%.asm user/user.ld | $(BUILD)
 
 # C user programs: user/c/NAME.c -> build/c_NAME.elf, linked with the C runtime in user/lib.
 UCFLAGS  := -m32 -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie             -fno-asynchronous-unwind-tables -mgeneral-regs-only -Wall -Wextra -Iuser/lib
-ULIB_OBJS := $(BUILD)/ucrt0.o $(BUILD)/ulib.o
+ULIB_OBJS := $(BUILD)/ucrt0.o $(BUILD)/ulib.o $(BUILD)/ustring.o
 
 $(BUILD)/ucrt0.o: user/lib/crt0.S | $(BUILD)
 	$(CC) $(UCFLAGS) -c $< -o $@
 
 $(BUILD)/ulib.o: user/lib/ulib.c $(wildcard user/lib/*.h) | $(BUILD)
+	$(CC) $(UCFLAGS) -c $< -o $@
+
+$(BUILD)/ustring.o: user/lib/ustring.c $(wildcard user/lib/*.h) | $(BUILD)
 	$(CC) $(UCFLAGS) -c $< -o $@
 
 $(BUILD)/uc_%.o: user/c/%.c $(wildcard user/lib/*.h) | $(BUILD)

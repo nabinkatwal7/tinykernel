@@ -23,6 +23,7 @@ extern const uint8_t builtin_spin_start[], builtin_spin_end[];
 extern const uint8_t builtin_args_start[], builtin_args_end[];
 extern const uint8_t builtin_envdump_start[], builtin_envdump_end[];
 extern const uint8_t builtin_crtdemo_start[], builtin_crtdemo_end[];
+extern const uint8_t builtin_strtest_start[], builtin_strtest_end[];
 extern const uint8_t builtin_helloelf_start[], builtin_helloelf_end[];
 
 struct builtin {
@@ -39,6 +40,7 @@ static const struct builtin builtins[] = {
 	{ "args",    builtin_args_start,    builtin_args_end },
 	{ "envdump", builtin_envdump_start, builtin_envdump_end },
 	{ "crtdemo", builtin_crtdemo_start, builtin_crtdemo_end },
+	{ "strtest", builtin_strtest_start, builtin_strtest_end },
 	{ "helloelf", builtin_helloelf_start, builtin_helloelf_end },
 };
 #define NBUILTIN (sizeof builtins / sizeof builtins[0])
