@@ -1587,6 +1587,36 @@ static int cmd_gfxshapes(int argc, char **argv)
 	return 0;
 }
 
+static int cmd_gfxtext(int argc, char **argv)
+{
+	char line[41];
+	int i, c;
+
+	(void)argc;
+	(void)argv;
+	if (vga_set_graphics())
+		return 1;
+	vga_fill(0);
+	gfx_text(8, 4, "Bitmap font rendering", 15, -1);
+	gfx_text(8, 24, "white on blue", 15, 1);
+	gfx_text(8, 42, "yellow on transparent", 14, -1);
+	gfx_text(8, 60, "black on light grey", 0, 7);
+	for (c = 32, i = 0; c < 128; c += 32, i++) { /* the printable ASCII range, 32 per row */
+		int j;
+
+		for (j = 0; j < 32; j++)
+			line[j] = (char)(c + j);
+		line[32] = '\0';
+		gfx_text(8, 84 + i * 20, line, (uint8_t)(10 + i), -1);
+	}
+	gfx_rect(4, 84 + 3 * 20, gfx_text_width("centred in a box") + 8, 22, 12);
+	gfx_text(8, 84 + 3 * 20 + 3, "centred in a box", 13, -1);
+	keyboard_getkey();
+	vga_set_text();
+	console_clear();
+	return 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -2100,6 +2130,7 @@ static const struct command commands[] = {
 	{ "gfx",     "gfx",                   "graphics mode test card", cmd_gfx },
 	{ "gfxlines", "gfxlines",            "pixel and line drawing demo", cmd_gfxlines },
 	{ "gfxshapes", "gfxshapes",          "rectangles, circles and triangles demo", cmd_gfxshapes },
+	{ "gfxtext", "gfxtext",              "bitmap font demo", cmd_gfxtext },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },

@@ -187,3 +187,40 @@ void gfx_fill_triangle(int x0, int y0, int x1, int y1, int x2, int y2, uint8_t c
 			gfx_hline(lo, hi, y, color);
 	}
 }
+
+/*
+ * Text uses the BIOS 8x16 font that vga.c rescued from video memory before leaving text mode:
+ * glyph c is 16 bytes at font[c * 32], one byte per row, most significant bit = leftmost pixel.
+ */
+void gfx_char(int x, int y, char c, int fg, int bg)
+{
+	const uint8_t *g = vga_font();
+	int row, col;
+
+	if (!g)
+		return;
+	g += (uint8_t)c * 32;
+	for (row = 0; row < GFX_FONT_H; row++) {
+		for (col = 0; col < GFX_FONT_W; col++) {
+			if (g[row] & (0x80 >> col))
+				gfx_putpixel(x + col, y + row, (uint8_t)fg);
+			else if (bg >= 0)
+				gfx_putpixel(x + col, y + row, (uint8_t)bg);
+		}
+	}
+}
+
+void gfx_text(int x, int y, const char *s, int fg, int bg)
+{
+	for (; *s; s++, x += GFX_FONT_W)
+		gfx_char(x, y, *s, fg, bg);
+}
+
+int gfx_text_width(const char *s)
+{
+	int n = 0;
+
+	while (s[n])
+		n++;
+	return n * GFX_FONT_W;
+}

@@ -12,6 +12,7 @@ void     vga_set_text(void);            /* back to 80x25 text (font and palette 
 int      vga_in_graphics(void);
 uint8_t *vga_framebuffer(void);         /* VGA_GFX_W * VGA_GFX_H bytes, one palette index per pixel */
 void     vga_fill(uint8_t color);
+const uint8_t *vga_font(void);          /* the BIOS 8x16 font saved at the last mode switch (256 x 32 bytes), or NULL */
 void     vga_set_palette(uint8_t index, uint8_t r, uint8_t g, uint8_t b); /* 8-bit components */
 
 #endif

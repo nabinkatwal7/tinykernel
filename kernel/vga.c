@@ -204,6 +204,11 @@ void vga_set_text(void)
 	graphics = 0;
 }
 
+const uint8_t *vga_font(void)
+{
+	return saved_font;
+}
+
 int vga_in_graphics(void)
 {
 	return graphics;

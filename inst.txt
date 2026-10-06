@@ -1,4 +1,3 @@
-Add bitmap font rendering,
 Add graphical console,
 Build simple window manager concept,
 Add simple GUI button demo,
