@@ -11,28 +11,39 @@ CFLAGS  := -m32 -ffreestanding -fno-builtin -fno-stack-protector \
 LDFLAGS := -m i386pe -T kernel/linker.ld -nostdlib
 
 BUILD          := build
-KERNEL_SECTORS := 16
+KERNEL_SECTORS := 256
 KERNEL_ELF     := $(BUILD)/kernel.elf
 KERNEL_BIN     := $(BUILD)/kernel.bin
 BOOT_BIN       := $(BUILD)/boot.bin
 IMAGE          := $(BUILD)/os-image.bin
-OBJS           := $(BUILD)/multiboot.o $(BUILD)/console.o $(BUILD)/keyboard.o $(BUILD)/kernel_main.o
+DISK           := $(BUILD)/disk.img
+DISK_SECTORS   := 2048
 
-.PHONY: all clean run run-multiboot
+C_SRCS  := $(wildcard kernel/*.c)
+S_SRCS  := $(wildcard kernel/*.S)
+OBJS    := $(patsubst kernel/%.c,$(BUILD)/%.o,$(C_SRCS)) \
+           $(patsubst kernel/%.S,$(BUILD)/%.o,$(S_SRCS))
+HEADERS := $(wildcard include/*.h)
+USER_BINS := $(BUILD)/hello.bin $(BUILD)/counter.bin $(BUILD)/fault.bin
+
+# Headless run: serial log to build/serial.log, no window.
+QEMU_DISKS := -drive format=raw,file=$(IMAGE),if=floppy \
+              -drive format=raw,file=$(DISK),if=ide,index=0 -boot a
+
+.PHONY: all clean clean-disk run run-multiboot run-headless
 
 all: $(IMAGE)
 
-$(BUILD)/multiboot.o: kernel/multiboot.c | $(BUILD)
+$(BUILD)/%.o: kernel/%.c $(HEADERS) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/console.o: kernel/console.c include/console.h | $(BUILD)
+$(BUILD)/%.o: kernel/%.S | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/keyboard.o: kernel/keyboard.c include/keyboard.h | $(BUILD)
-	$(CC) $(CFLAGS) -c $< -o $@
+$(BUILD)/builtin.o: $(USER_BINS)
 
-$(BUILD)/kernel_main.o: kernel/kernel_main.c include/console.h include/keyboard.h | $(BUILD)
-	$(CC) $(CFLAGS) -c $< -o $@
+$(BUILD)/%.bin: user/%.asm | $(BUILD)
+	$(NASM) -f bin $< -o $@
 
 $(BUILD)/kernel.pe: $(OBJS) kernel/linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)
@@ -40,28 +51,40 @@ $(BUILD)/kernel.pe: $(OBJS) kernel/linker.ld
 $(KERNEL_ELF): $(BUILD)/kernel.pe
 	$(OBJCOPY) -O elf32-i386 $< $@
 
-# Include .bss so cursor state lands in the image (zeros).
+# Include .bss so zero-initialised state lands in the image.
 $(KERNEL_BIN): $(BUILD)/kernel.pe
 	$(OBJCOPY) -O binary -j .mbhdr -j .text -j .rodata -j .data \
 		--set-section-flags .bss=alloc,load,contents -j .bss $< $@
+	@test $$(stat -c%s $@) -le $$(($(KERNEL_SECTORS) * 512)) || \
+		{ echo "kernel.bin exceeds $(KERNEL_SECTORS) sectors: raise KERNEL_SECTORS"; rm -f $@; exit 1; }
 
-$(BOOT_BIN): boot/boot.asm | $(BUILD)
-	$(NASM) -f bin $< -o $@
+$(BOOT_BIN): boot/boot.asm Makefile | $(BUILD)
+	$(NASM) -f bin -DKERNEL_SECTORS=$(KERNEL_SECTORS) $< -o $@
 
+# Pad to a full 1.44 MB floppy so the BIOS geometry always matches the loader.
 $(IMAGE): $(BOOT_BIN) $(KERNEL_BIN)
-	dd if=/dev/zero of=$@ bs=512 count=$$((1 + $(KERNEL_SECTORS))) status=none
+	dd if=/dev/zero of=$@ bs=512 count=2880 status=none
 	dd if=$(BOOT_BIN) of=$@ bs=512 conv=notrunc status=none
 	dd if=$(KERNEL_BIN) of=$@ bs=512 seek=1 conv=notrunc status=none
+
+# Data disk for the filesystem. Not rebuilt automatically so your files survive; use 'make clean-disk'.
+$(DISK): | $(BUILD)
+	dd if=/dev/zero of=$@ bs=512 count=$(DISK_SECTORS) status=none
 
 $(BUILD):
 	mkdir -p $(BUILD)
 
-run: $(IMAGE)
-	$(QEMU) -drive format=raw,file=$(IMAGE),if=floppy -boot a
+run: $(IMAGE) $(DISK)
+	$(QEMU) $(QEMU_DISKS) -serial file:$(BUILD)/serial.log
+
+run-headless: $(IMAGE) $(DISK)
+	$(QEMU) $(QEMU_DISKS) -display none -serial file:$(BUILD)/serial.log
 
 run-multiboot: $(KERNEL_ELF)
 	$(QEMU) -kernel $(KERNEL_ELF)
 
+clean-disk:
+	rm -f $(DISK)
+
 clean:
-	rm -f $(BUILD)/*.o $(BUILD)/*.pe $(BUILD)/kernel.bin \
-	      $(BUILD)/kernel.elf $(BUILD)/boot.bin $(BUILD)/os-image.bin
+	rm -f $(BUILD)/*.o $(BUILD)/*.pe $(BUILD)/*.bin $(BUILD)/kernel.elf

@@ -17,17 +17,25 @@ static void sn_put(char c, void *p)
 	s->len++;
 }
 
-int ksnprintf(char *buf, size_t cap, const char *fmt, ...)
+int kvsnprintf(char *buf, size_t cap, const char *fmt, va_list ap)
 {
 	struct snctx s = { buf, cap, 0 };
-	va_list ap;
 
-	va_start(ap, fmt);
 	kvformat(sn_put, &s, fmt, ap);
-	va_end(ap);
 	if (cap)
 		buf[s.len < cap ? s.len : cap - 1] = '\0';
 	return (int)s.len;
+}
+
+int ksnprintf(char *buf, size_t cap, const char *fmt, ...)
+{
+	va_list ap;
+	int n;
+
+	va_start(ap, fmt);
+	n = kvsnprintf(buf, cap, fmt, ap);
+	va_end(ap);
+	return n;
 }
 
 struct out {
