@@ -23,6 +23,7 @@ int  users_exist(void);                                   /* is there a user dat
 int  user_find_name(const char *name, struct user *u);    /* 0, or FS_ENOENT */
 int  user_find_uid(uint16_t uid, struct user *u);
 int  user_add(const char *name, const char *password, uint16_t uid, uint16_t gid, const char *home); /* 0 or FS_E* */
+int  user_set_password(const char *name, const char *password); /* 0 or FS_E*; stores a salted hash */
 int  user_verify(const struct user *u, const char *password);   /* 1 if the password is right */
 const char *user_name_of(uint16_t uid);                   /* "name", or "1000"-style number when unknown (static buffer) */
 

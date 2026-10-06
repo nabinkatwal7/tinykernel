@@ -14,6 +14,7 @@
 #include "crashdump.h"
 #include "cred.h"
 #include "debug.h"
+#include "sha256.h"
 #include "users.h"
 #include "gdbstub.h"
 #include "dhcp.h"
@@ -1416,6 +1417,8 @@ static int cmd_smpaffinity(int argc, char **argv)
 
 static int cmd_useradd(int argc, char **argv);
 static int cmd_logout(int argc, char **argv);
+static int cmd_passwd(int argc, char **argv);
+static int cmd_sha256(int argc, char **argv);
 static int job_kill(const char *spec); /* "%n": the job table is near the end of the file */
 static int cmd_jobs(int argc, char **argv);
 static int cmd_fg(int argc, char **argv);
@@ -4023,6 +4026,8 @@ static const struct command commands[] = {
 	{ "diff",    "diff file1 file2",      "compare two files line by line", tu_diff },
 	{ "calc",    "calc EXPRESSION",       "evaluate an integer expression", cmd_calc },
 	{ "useradd", "useradd NAME PASSWORD",  "add a user (root only)", cmd_useradd },
+	{ "passwd",  "passwd [user]",         "change a password", cmd_passwd },
+	{ "sha256",  "sha256 text",           "SHA-256 digest of some text", cmd_sha256 },
 	{ "logout",  "logout",                "end the session and show the login prompt", cmd_logout },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
@@ -4706,6 +4711,76 @@ static int cmd_logout(int argc, char **argv)
 	}
 	cred_set(0, 0);
 	login_wanted = 1;
+	return 0;
+}
+
+/* passwd [USER] : change a password (you must know the old one unless you are root) */
+static int cmd_passwd(int argc, char **argv)
+{
+	struct user u;
+	char old[64], one[64], two[64];
+	int rc;
+
+	if (!users_exist()) {
+		console_write("passwd: no user database (see useradd)\n");
+		return 1;
+	}
+	if (argc > 1) {
+		rc = user_find_name(argv[1], &u);
+	} else {
+		rc = user_find_uid(cred_uid(), &u);
+	}
+	if (rc) {
+		console_write("passwd: no such user\n");
+		return 1;
+	}
+	if (cred_uid() && cred_uid() != u.uid) {
+		console_write("passwd: you may only change your own password\n");
+		return 1;
+	}
+	if (cred_uid()) {
+		console_write("old password: ");
+		read_secret(old, sizeof old);
+		if (!user_verify(&u, old)) {
+			console_write("passwd: wrong password\n");
+			return 1;
+		}
+	}
+	console_write("new password: ");
+	read_secret(one, sizeof one);
+	console_write("again: ");
+	read_secret(two, sizeof two);
+	if (kstrcmp(one, two) || !one[0]) {
+		console_write("passwd: the passwords differ (or are empty); nothing changed\n");
+		return 1;
+	}
+	rc = user_set_password(u.name, one);
+	if (rc) {
+		console_printf("passwd: %s\n", fs_strerror(rc));
+		return 1;
+	}
+	console_printf("password for %s changed\n", u.name);
+	return 0;
+}
+
+/* sha256 TEXT... : the SHA-256 digest of the arguments joined with spaces */
+static int cmd_sha256(int argc, char **argv)
+{
+	static const char hex[] = "0123456789abcdef";
+	char text[LINE_MAX], out[65];
+	uint8_t digest[32];
+	int i, n = 0;
+
+	for (i = 1; i < argc; i++)
+		n += ksnprintf(text + n, sizeof text - (size_t)n, "%s%s", i > 1 ? " " : "", argv[i]);
+	text[n] = '\0';
+	sha256(text, (size_t)n, digest);
+	for (i = 0; i < 32; i++) {
+		out[i * 2] = hex[digest[i] >> 4];
+		out[i * 2 + 1] = hex[digest[i] & 15];
+	}
+	out[64] = '\0';
+	console_printf("%s\n", out);
 	return 0;
 }
 
