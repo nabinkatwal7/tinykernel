@@ -10,6 +10,8 @@
 #define SYS_TICKS    4 /* returns timer ticks */
 #define SYS_GETKEY   5 /* blocks, returns a key code */
 #define SYS_SLEEP    6 /* ebx = milliseconds */
+#define SYS_OPEN     7 /* ebx = path, ecx = flags; returns fd or a negative error */
+#define SYS_CLOSE    8 /* ebx = fd */
 
 void syscall_dispatch(struct regs *r);
 

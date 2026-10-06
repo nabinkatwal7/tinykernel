@@ -1,6 +1,7 @@
 #include "syscall.h"
 
 #include "console.h"
+#include "file.h"
 #include "keyboard.h"
 #include "klog.h"
 #include "sched.h"
@@ -10,6 +11,17 @@
 static int user_ptr_ok(uint32_t p, uint32_t len)
 {
 	return p >= USER_BASE && len <= USER_END - USER_BASE && p + len <= USER_END;
+}
+
+/* A NUL-terminated string that lies entirely inside the program window. */
+static int user_str_ok(uint32_t p)
+{
+	if (p < USER_BASE || p >= USER_END)
+		return 0;
+	for (; p < USER_END; p++)
+		if (!*(const char *)p)
+			return 1;
+	return 0;
 }
 
 void syscall_dispatch(struct regs *r)
@@ -59,6 +71,13 @@ void syscall_dispatch(struct regs *r)
 		r->eax = 0;
 		break;
 	}
+	case SYS_OPEN:
+		r->eax = user_str_ok(r->ebx) ? (uint32_t)file_open((const char *)r->ebx, (int)r->ecx)
+					     : (uint32_t)-1;
+		break;
+	case SYS_CLOSE:
+		r->eax = (uint32_t)file_close((int)r->ebx);
+		break;
 	default:
 		klog(LOG_WARN, "unknown syscall %u", r->eax);
 		r->eax = (uint32_t)-1;

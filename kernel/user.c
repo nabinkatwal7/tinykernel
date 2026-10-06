@@ -2,6 +2,7 @@
 
 #include "console.h"
 #include "elf.h"
+#include "file.h"
 #include "env.h"
 #include "fs.h"
 #include "gdt.h"
@@ -215,6 +216,7 @@ int user_run_args(const char *name, int argc, char **argv)
 	active = 1;
 	rc = enter_user(entry, push_args(frames, argc > ARGS_MAX ? ARGS_MAX : argc, argv));
 	active = 0;
+	file_close_all(); /* flush anything the program forgot to close */
 	t->pgdir = saved_dir;
 	paging_switch(saved_dir);
 
