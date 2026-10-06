@@ -4123,6 +4123,7 @@ static const struct command commands[] = {
 	{ "usb", "usb", "list USB host controllers", cmd_usb },
 	{ "usbkbd", "usbkbd test", "USB keyboard report decoder test", cmd_usbkbd },
 	{ "txtest", "txtest", "transmit queue test", cmd_txtest },
+	{ "nslookup", "nslookup NAME [SERVER]", "look up a host name", cmd_nslookup },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },

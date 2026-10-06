@@ -230,3 +230,48 @@ int dns_resolve(const char *name, uint32_t *ip)
 	}
 	return dns_query(name, netif.dns, ip, 3000);
 }
+
+/* nslookup NAME [SERVER] : resolve a name (always asking the network); nslookup -c : show the cache; nslookup -s : statistics */
+int cmd_nslookup(int argc, char **argv)
+{
+	uint32_t ip, server = netif.dns, ttl;
+	char s[16], name[64];
+	int rc, i;
+
+	if (argc == 2 && !kstrcmp(argv[1], "-c")) {
+		int n = 0;
+
+		for (i = 0; i < CACHE_SIZE; i++) {
+			if (!dns_cache_get(i, name, &ip, &ttl)) {
+				console_printf("  %-30s %-15s ttl %us\n", name, ip_str(ip, s), ttl);
+				n++;
+			}
+		}
+		if (!n)
+			console_write("  (cache empty)\n");
+		return 0;
+	}
+	if (argc == 2 && !kstrcmp(argv[1], "-s")) {
+		struct dns_stats st;
+
+		dns_get_stats(&st);
+		console_printf("dns: %u queries, %u answers, %u failures, %u cache hits\n", st.queries, st.answers, st.failures, st.cache_hits);
+		return 0;
+	}
+	if (argc < 2 || argc > 3 || (argc == 3 && ip_parse(argv[2], &server))) {
+		console_write("usage: nslookup NAME [SERVER] | nslookup -c | nslookup -s\n");
+		return 1;
+	}
+	if (!ip_parse(argv[1], &ip)) { /* a number: nothing to ask */
+		console_printf("%s is already an address\n", argv[1]);
+		return 0;
+	}
+	console_printf("Server:  %s\n", server ? ip_str(server, s) : "(none)");
+	rc = dns_query(argv[1], server, &ip, 4000);
+	if (rc) {
+		console_printf("** can't find %s: %s\n", argv[1], dns_strerror(rc));
+		return 1;
+	}
+	console_printf("Name:    %s\nAddress: %s\n", argv[1], ip_str(ip, s));
+	return 0;
+}
