@@ -20,15 +20,40 @@ start:
 	mov sp, 0x7C00
 	mov [boot_drive], dl
 
-	; --- print "Tiny OS" ---
+	; --- boot menu: show it, wait ~3 s for a key 1-4, copy that option's kernel parameters to 0x900 ---
 	mov si, msg
-	mov ah, 0x0E
-.print:
-	lodsb
-	test al, al
-	jz .load
-	int 0x10
-	jmp .print
+	call puts
+	xor ax, ax			; ah = 0: read the BIOS tick counter
+	int 0x1A
+	mov bx, dx			; remember the starting tick (low word)
+.wait:
+	mov ah, 1			; a key waiting?
+	int 0x16
+	jnz .key
+	xor ax, ax
+	int 0x1A
+	sub dx, bx
+	cmp dx, 36			; 36 ticks of 18.2 Hz = 2 seconds
+	jb .wait
+	xor ax, ax			; timeout: option 1
+	jmp .pick
+.key:
+	xor ax, ax
+	int 0x16			; al = ascii
+	sub al, '1'
+	cmp al, 3
+	ja .key_none
+	xor ah, ah
+	jmp .pick
+.key_none:
+	xor ax, ax
+.pick:
+	shl ax, 3			; options are 8 bytes each
+	add ax, params
+	mov si, ax
+	mov di, 0x900
+	mov cx, 8
+	rep movsb
 
 .load:
 	; --- physical memory map via BIOS int 15h/E820 -> 0x500 (magic, count, 24-byte entries) ---
@@ -146,11 +171,28 @@ gdt_desc:
 CODE_SEL equ gdt_code - gdt
 DATA_SEL equ gdt_data - gdt
 
+puts:
+	mov ah, 0x0E
+.next:
+	lodsb
+	test al, al
+	jz .done
+	int 0x10
+	jmp .next
+.done:
+	ret
+
 boot_drive: db 0
 cyl: db 0
 head: db 0
 sec: db 0
-msg: db "Tiny OS", 0
+msg: db "Tiny OS", 13, 10, "1 Normal 2 Safe 3 Debug 4 Gfx", 13, 10, 0
+
+params:
+	db 0, 0, 0, 0, 0, 0, 0, 0
+	db "safe", 0, 0, 0, 0
+	db "debug", 0, 0, 0
+	db "gfx", 0, 0, 0, 0, 0
 
 	times 510 - ($ - $$) db 0
 	dw 0xAA55			; boot signature

@@ -24,10 +24,13 @@ def key(c):
 def main():
     args = sys.argv[1:]
     shot = None
+    menu = None
     fresh = False
     while args and args[0].startswith("--"):
         if args[0] == "--screenshot":
             shot = args[1]; args = args[2:]
+        elif args[0] == "--menu":          # choose a boot menu entry (1-4) instead of waiting it out
+            menu = args[1]; args = args[2:]
         elif args[0] == "--fresh-disk":
             fresh = True; args = args[1:]
     disk = os.path.join(BUILD, "test-disk.img")
@@ -50,7 +53,12 @@ def main():
     ser = socket.create_connection(("127.0.0.1", port + 1))
     def mon(cmd):
         s.sendall((cmd + "\n").encode()); time.sleep(0.05)
-    time.sleep(1.0)
+    if menu:
+        mon("sendkey " + menu)       # the boot menu is waiting for a key
+        time.sleep(1.5)
+    else:
+        time.sleep(3.0)              # let the 2-second boot menu time out
+    time.sleep(0.5)
     host_udp = None
     host_log = []
     for line in args:

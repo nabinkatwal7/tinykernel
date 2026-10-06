@@ -1,3 +1,2 @@
-Add boot menu and kernel parameters,
 Add automated test runner command,
 Add continuous build and test script,

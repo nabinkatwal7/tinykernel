@@ -1,6 +1,7 @@
 #include "acpi.h"
 #include "ata.h"
 #include "bcache.h"
+#include "cmdline.h"
 #include "console.h"
 #include "cpu.h"
 #include "fat12.h"
@@ -47,6 +48,9 @@ void kernel_main(void)
 {
 	serial_init();
 	console_clear();
+	cmdline_init();
+	if (cmdline_has("debug"))
+		klog_set_console_level(LOG_INFO); /* boot messages on the screen */
 	klog(LOG_INFO, "%s %s booting", KERNEL_NAME, KERNEL_VERSION);
 
 	gdt_init();
@@ -62,8 +66,10 @@ void kernel_main(void)
 	sched_init();
 	keyboard_use_irq();
 	serial_rx_init();
-	if (mouse_init() == 0)
-		mousecursor_init();
+	if (!cmdline_has("safe") && !cmdline_has("nomouse")) {
+		if (mouse_init() == 0)
+			mousecursor_init();
+	}
 	sti();
 	klog(LOG_INFO, "interrupts enabled");
 
@@ -79,11 +85,18 @@ void kernel_main(void)
 		klog(LOG_INFO, "fs: %s", rc == FS_OK ? "mounted" : fs_strerror(rc));
 	}
 
+	cmdline_load_config(); /* /boot.cfg may add more words (e.g. gfx) */
+	if (cmdline_has("gfx"))
+		gfxcon_enable(1);
 	task_create("status", status_task, 0, 7);
-	rtl8139_init(); /* needs the scheduler (rx task) and IRQs */
+	if (!cmdline_has("safe") && !cmdline_has("nonet"))
+		rtl8139_init(); /* needs the scheduler (rx task) and IRQs */
+	else
+		klog(LOG_INFO, "net: disabled by the kernel command line");
 	bc_start_flusher();
 	console_status(" " KERNEL_NAME " " KERNEL_VERSION);
-	speaker_beep(880, 70); /* power-on chirp */
+	if (!cmdline_has("safe") && !cmdline_has("nobeep"))
+		speaker_beep(880, 70); /* power-on chirp */
 	kinfo("speaker: boot beep done");
 	shell_run();
 }

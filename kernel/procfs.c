@@ -1,5 +1,6 @@
 #include "kmalloc.h"
 #include "kprintf.h"
+#include "cmdline.h"
 #include "klog.h"
 #include "kstring.h"
 #include "pmm.h"
@@ -51,6 +52,11 @@ static int gen_mounts(char *buf, uint32_t cap)
 	return vfs_format_mounts(buf, cap);
 }
 
+static int gen_cmdline(char *buf, uint32_t cap)
+{
+	return ksnprintf(buf, cap, "%s\n", cmdline_all());
+}
+
 static int gen_dmesg(char *buf, uint32_t cap)
 {
 	return klog_copy(buf, cap);
@@ -77,6 +83,7 @@ static const struct proc_file files[] = {
 	{ "tasks", gen_tasks },
 	{ "mounts", gen_mounts },
 	{ "dmesg", gen_dmesg },
+	{ "cmdline", gen_cmdline },
 	{ "time", gen_time },
 };
 #define NFILES (sizeof files / sizeof files[0])
