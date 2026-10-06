@@ -33,7 +33,7 @@ FLAT_PROGS := $(patsubst user/%.asm,%,$(filter-out %.elf.asm,$(wildcard user/*.a
 ELF_PROGS  := $(patsubst user/%.elf.asm,%,$(wildcard user/*.elf.asm))
 # Programs that live on the FAT12 data disk (/fat/bin) instead of in the kernel image: the image has to fit the
 # bootloader's load area, and these do not need to exist before the disk is mounted. Names are 8.3 file names.
-FAT_PROGS  := nc advent snake tetris cal xxd sleep yes true false tee uniq rev nl basename dirname
+FAT_PROGS  := nc httpget advent snake tetris cal xxd sleep yes true false tee uniq rev nl basename dirname
 C_PROGS    := $(filter-out $(FAT_PROGS),$(patsubst user/c/%.c,%,$(wildcard user/c/*.c)))
 FAT_BINS   := $(FAT_PROGS:%=$(BUILD)/c_%.elf)
 PROG_IMAGES := $(foreach p,$(FLAT_PROGS),$(p):$(BUILD)/$(p).bin) \
