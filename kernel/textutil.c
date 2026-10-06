@@ -333,3 +333,116 @@ int tu_tail(int argc, char **argv)
 {
 	return head_or_tail(argc, argv, 1);
 }
+
+#define SORT_MAX_LINES 2048
+#define SORT_MAX_INPUTS 8
+
+static int sort_numeric, sort_reverse;
+
+static int32_t leading_number(const char *s)
+{
+	int32_t v = 0;
+	int neg = 0;
+
+	while (*s == ' ' || *s == '\t')
+		s++;
+	if (*s == '-') {
+		neg = 1;
+		s++;
+	}
+	while (*s >= '0' && *s <= '9')
+		v = v * 10 + (*s++ - '0');
+	return neg ? -v : v;
+}
+
+static int line_compare(const char *a, const char *b)
+{
+	int c;
+
+	if (sort_numeric) {
+		int32_t x = leading_number(a), y = leading_number(b);
+
+		c = x < y ? -1 : x > y;
+		if (!c)
+			c = kstrcmp(a, b);
+	} else {
+		c = kstrcmp(a, b);
+	}
+	return sort_reverse ? -c : c;
+}
+
+/* Stable merge sort of the pointer array. */
+static void sort_lines(char **v, char **tmp, int n)
+{
+	int mid, i, j, k;
+
+	if (n < 2)
+		return;
+	mid = n / 2;
+	sort_lines(v, tmp, mid);
+	sort_lines(v + mid, tmp, n - mid);
+	for (i = 0, j = mid, k = 0; i < mid || j < n;)
+		tmp[k++] = (j >= n || (i < mid && line_compare(v[i], v[j]) <= 0)) ? v[i++] : v[j++];
+	for (i = 0; i < n; i++)
+		v[i] = tmp[i];
+}
+
+int tu_sort(int argc, char **argv)
+{
+	static char *lines[SORT_MAX_LINES], *tmp[SORT_MAX_LINES];
+	struct text texts[SORT_MAX_INPUTS];
+	int a = 1, unique = 0, nfiles, f, n = 0, ntexts = 0, i, rc = 0;
+
+	sort_numeric = sort_reverse = 0;
+	while (a < argc && argv[a][0] == '-' && argv[a][1]) {
+		const char *o;
+
+		for (o = argv[a] + 1; *o; o++) {
+			switch (*o) {
+			case 'n': sort_numeric = 1; break;
+			case 'r': sort_reverse = 1; break;
+			case 'u': unique = 1; break;
+			default:
+				console_printf("sort: unknown option -%c\n", *o);
+				return 2;
+			}
+		}
+		a++;
+	}
+	nfiles = argc - a;
+	if (nfiles > SORT_MAX_INPUTS) {
+		console_write("sort: too many files\n");
+		return 2;
+	}
+	for (f = 0; f < (nfiles ? nfiles : 1); f++) {
+		struct text *t = &texts[ntexts];
+		char *p, *eol;
+
+		if (load_text(nfiles ? argv[a + f] : 0, t)) {
+			rc = 2;
+			continue;
+		}
+		ntexts++;
+		for (p = t->data; p < t->data + t->len; p = eol + 1) {
+			eol = p;
+			while (eol < t->data + t->len && *eol != '\n')
+				eol++;
+			*eol = '\0';
+			if (n < SORT_MAX_LINES) {
+				lines[n++] = p;
+			} else {
+				console_write("sort: too many lines, the rest is ignored\n");
+				break;
+			}
+		}
+	}
+	sort_lines(lines, tmp, n);
+	for (i = 0; i < n; i++) {
+		if (unique && i && !kstrcmp(lines[i], lines[i - 1]))
+			continue;
+		console_printf("%s\n", lines[i]);
+	}
+	for (i = 0; i < ntexts; i++)
+		kfree(texts[i].data);
+	return rc;
+}

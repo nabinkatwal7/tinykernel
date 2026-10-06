@@ -12,4 +12,6 @@ int tu_wc(int argc, char **argv);     /* wc [-lwc] [file...]: lines, words and b
 int tu_head(int argc, char **argv);   /* head [-n N] [file...]: the first N lines (10) */
 int tu_tail(int argc, char **argv);   /* tail [-n N] [file...]: the last N lines (10) */
 
+int tu_sort(int argc, char **argv);   /* sort [-nru] [file...]: sorted lines (numeric, reversed, duplicates removed) */
+
 #endif
