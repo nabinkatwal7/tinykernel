@@ -25,6 +25,7 @@
 #define FS_EISDIR   -8 /* is a directory (file operation on a directory) */
 #define FS_ENOTDIR  -9 /* a path component is not a directory */
 #define FS_ENOTEMPTY -10 /* rmdir on a directory that still has entries */
+#define FS_EROFS    -11 /* read-only filesystem */
 
 struct fs_stat {
 	char name[FS_NAME_MAX];

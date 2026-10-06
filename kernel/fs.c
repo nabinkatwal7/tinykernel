@@ -43,6 +43,7 @@ const char *fs_strerror(int err)
 	case FS_EISDIR:    return "is a directory";
 	case FS_ENOTDIR:   return "not a directory";
 	case FS_ENOTEMPTY: return "directory not empty";
+	case FS_EROFS:     return "read-only filesystem";
 	}
 	return "unknown error";
 }

@@ -142,6 +142,8 @@ int file_open(const char *path, int flags)
 	}
 	if (rc == FS_OK && st.is_dir)
 		return FS_EINVAL;
+	if (writable(flags) && !vfs_can_write(path))
+		return FS_EROFS; /* read-only mount (FAT12, /proc) */
 	size = rc == FS_OK ? (int)st.size : rc;
 	if (size == FS_ENOENT) {
 		if (!(flags & O_CREAT))

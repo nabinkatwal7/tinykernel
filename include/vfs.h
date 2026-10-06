@@ -62,6 +62,7 @@ int  vfs_read(const char *path, void *buf, uint32_t cap);
 int  vfs_write(const char *path, const void *data, uint32_t size);
 int  vfs_create(const char *path);
 int  vfs_unlink(const char *path);
+int  vfs_can_write(const char *path);  /* 0 on a read-only mount */
 int  vfs_mkdir(const char *path);
 int  vfs_rmdir(const char *path);
 int  vfs_rename(const char *from, const char *to); /* both paths must be on the same mount */

@@ -2,6 +2,7 @@
 
 #include "console.h"
 #include "kprintf.h"
+#include "fat12.h"
 #include "kmalloc.h"
 #include "kstring.h"
 
@@ -38,6 +39,11 @@ static int tfs_stat(void *ctx, const char *path, struct vfs_stat *st)
 	(void)ctx;
 	ensure_mounted();
 	st->dev = 0;
+	if (!*tfs_name(path)) { /* the root always exists, even on an unformatted disk */
+		st->size = 0;
+		st->is_dir = 1;
+		return FS_OK;
+	}
 	rc = fs_stat(tfs_name(path), &fst);
 	if (rc < 0)
 		return rc;
@@ -110,6 +116,61 @@ static int tfs_rename(void *ctx, const char *from, const char *to)
 	return fs_rename(tfs_name(from), tfs_name(to));
 }
 
+/* ---- FAT12 (read-only), mounted on /fat; the IDE slave is attached on first use ---- */
+
+static int fat_ready(void)
+{
+	return fat12_mounted() || fat12_mount(1) == FS_OK ? FS_OK : FS_ENOMOUNT;
+}
+
+static int fatv_stat(void *ctx, const char *path, struct vfs_stat *st)
+{
+	struct fat12_entry e;
+	int rc = fat_ready();
+
+	(void)ctx;
+	if (rc)
+		return rc;
+	rc = fat12_stat(path, &e);
+	if (rc < 0)
+		return rc;
+	st->size = e.size;
+	st->is_dir = e.is_dir;
+	st->dev = 0;
+	return FS_OK;
+}
+
+static int fatv_read(void *ctx, const char *path, void *buf, uint32_t cap)
+{
+	(void)ctx;
+	return fat_ready() ? FS_ENOMOUNT : fat12_read(path, buf, cap);
+}
+
+static int fatv_list(void *ctx, const char *path, struct vfs_dirent *out, int max)
+{
+	struct fat12_entry *ents;
+	int n, i;
+
+	(void)ctx;
+	if (fat_ready())
+		return FS_ENOMOUNT;
+	ents = kmalloc(64 * sizeof *ents);
+	if (!ents)
+		return FS_ENOSPC;
+	n = fat12_list(path, ents, 64);
+	for (i = 0; i < n && i < max; i++) {
+		kstrlcpy(out[i].name, ents[i].name, sizeof out[i].name);
+		out[i].size = ents[i].size;
+		out[i].is_dir = ents[i].is_dir;
+	}
+	kfree(ents);
+	return n < 0 ? n : i;
+}
+
+static const struct vfs_ops fat_ops = {
+	"fat12", fatv_stat, fatv_read, 0, 0, 0, fatv_list, 0, 0, 0,
+};
+
 static const struct vfs_ops tinyfs_ops = {
 	"tinyfs", tfs_stat, tfs_read, tfs_write, tfs_create, tfs_unlink, tfs_list, tfs_mkdir, tfs_rmdir, tfs_rename,
 };
@@ -120,6 +181,7 @@ void vfs_init(void)
 {
 	memset(mounts, 0, sizeof mounts);
 	vfs_mount("/", &tinyfs_ops, 0);
+	vfs_mount("/fat", &fat_ops, 0);
 	devfs_init();
 	procfs_init();
 }
@@ -310,7 +372,9 @@ int vfs_write(const char *path, const void *data, uint32_t size)
 	const char *rest;
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 
-	return m && m->ops->write ? m->ops->write(m->ctx, rest, data, size) : FS_ENOENT;
+	if (!m)
+		return FS_ENOENT;
+	return m->ops->write ? m->ops->write(m->ctx, rest, data, size) : FS_EROFS;
 }
 
 int vfs_create(const char *path)
@@ -319,7 +383,9 @@ int vfs_create(const char *path)
 	const char *rest;
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 
-	return m && m->ops->create ? m->ops->create(m->ctx, rest) : FS_ENOENT;
+	if (!m)
+		return FS_ENOENT;
+	return m->ops->create ? m->ops->create(m->ctx, rest) : FS_EROFS;
 }
 
 int vfs_unlink(const char *path)
@@ -328,7 +394,9 @@ int vfs_unlink(const char *path)
 	const char *rest;
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 
-	return m && m->ops->unlink ? m->ops->unlink(m->ctx, rest) : FS_ENOENT;
+	if (!m)
+		return FS_ENOENT;
+	return m->ops->unlink ? m->ops->unlink(m->ctx, rest) : FS_EROFS;
 }
 
 int vfs_rename(const char *from, const char *to)
@@ -338,9 +406,21 @@ int vfs_rename(const char *from, const char *to)
 	struct mount *m1 = lookup(from, f1, sizeof f1, &r1);
 	struct mount *m2 = lookup(to, f2, sizeof f2, &r2);
 
-	if (!m1 || m1 != m2 || !m1->ops->rename)
-		return FS_EINVAL;
+	if (!m1 || m1 != m2)
+		return FS_EINVAL; /* across mounts: not supported */
+	if (!m1->ops->rename)
+		return FS_EROFS;
 	return m1->ops->rename(m1->ctx, r1, r2);
+}
+
+/* Can files under this path be created or changed at all? (False on read-only mounts.) */
+int vfs_can_write(const char *path)
+{
+	char full[VFS_PATH_MAX];
+	const char *rest;
+	struct mount *m = lookup(path, full, sizeof full, &rest);
+
+	return m && m->ops->write != 0;
 }
 
 int vfs_mkdir(const char *path)
@@ -349,7 +429,9 @@ int vfs_mkdir(const char *path)
 	const char *rest;
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 
-	return m && m->ops->mkdir ? m->ops->mkdir(m->ctx, rest) : FS_EINVAL;
+	if (!m)
+		return FS_ENOENT;
+	return m->ops->mkdir ? m->ops->mkdir(m->ctx, rest) : FS_EROFS;
 }
 
 int vfs_rmdir(const char *path)
@@ -358,7 +440,9 @@ int vfs_rmdir(const char *path)
 	const char *rest;
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 
-	return m && m->ops->rmdir ? m->ops->rmdir(m->ctx, rest) : FS_EINVAL;
+	if (!m)
+		return FS_ENOENT;
+	return m->ops->rmdir ? m->ops->rmdir(m->ctx, rest) : FS_EROFS;
 }
 
 int vfs_list(const char *path, struct vfs_dirent *out, int max)

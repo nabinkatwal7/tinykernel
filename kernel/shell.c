@@ -1068,8 +1068,6 @@ static int cmd_cat(int argc, char **argv)
 		console_write("usage: cat <file>\n");
 		return 1;
 	}
-	if (need_fs())
-		return 1;
 	n = vfs_size(argv[1]);
 	if (n < 0)
 		return fs_fail(argv[1], n);
@@ -1101,8 +1099,6 @@ static int cmd_write(int argc, char **argv)
 		console_write("usage: write <file> <text...>\n");
 		return 1;
 	}
-	if (need_fs())
-		return 1;
 	for (i = 2; i < argc; i++) {
 		len += (size_t)ksnprintf(text + len, sizeof text - len, i > 2 ? " %s" : "%s",
 					 argv[i]);
@@ -1127,8 +1123,6 @@ static int cmd_append(int argc, char **argv)
 		console_write("usage: append <file> <text...>\n");
 		return 1;
 	}
-	if (need_fs())
-		return 1;
 	for (i = 2; i < argc; i++) {
 		len += (size_t)ksnprintf(text + len, sizeof text - len, i > 2 ? " %s" : "%s", argv[i]);
 		if (len >= sizeof text - 2)
@@ -1190,8 +1184,6 @@ static int cmd_cp(int argc, char **argv)
 		console_write("usage: cp <source> <destination>\n");
 		return 1;
 	}
-	if (need_fs())
-		return 1;
 	rc = vfs_stat(argv[1], &st);
 	if (rc < 0)
 		return fs_fail(argv[1], rc);
@@ -1226,8 +1218,6 @@ static int cmd_mv(int argc, char **argv)
 		console_write("usage: mv <source> <destination>\n");
 		return 1;
 	}
-	if (need_fs())
-		return 1;
 	dest_path(argv[1], argv[2], dst, sizeof dst);
 	rc = vfs_rename(argv[1], dst);
 	return rc ? fs_fail(argv[1], rc) : 0;
@@ -1289,8 +1279,6 @@ static int cmd_edit(int argc, char **argv)
 		console_write("usage: edit <file>   (^S save, ^Q quit)\n");
 		return 1;
 	}
-	if (need_fs())
-		return 1;
 	return editor_run(argv[1]);
 }
 
@@ -1428,8 +1416,6 @@ static int cmd_touch(int argc, char **argv)
 		console_write("usage: touch <file>\n");
 		return 1;
 	}
-	if (need_fs())
-		return 1;
 	rc = vfs_create(argv[1]);
 	return rc ? fs_fail(argv[1], rc) : 0;
 }
@@ -1539,8 +1525,6 @@ static int cmd_rm(int argc, char **argv)
 		console_write("usage: rm <file>\n");
 		return 1;
 	}
-	if (need_fs())
-		return 1;
 	rc = vfs_unlink(argv[1]);
 	return rc ? fs_fail(argv[1], rc) : 0;
 }
