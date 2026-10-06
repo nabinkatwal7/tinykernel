@@ -172,7 +172,7 @@ static int proc_list(void *ctx, const char *path, struct vfs_dirent *out, int ma
 }
 
 static const struct vfs_ops procfs_ops = {
-	"procfs", proc_stat, proc_read, 0, 0, 0, proc_list, 0, 0, 0, 0, 0, 0,
+	"procfs", proc_stat, proc_read, 0, 0, 0, proc_list, 0, 0, 0, 0, 0, 0, 0, 0,
 };
 
 void procfs_init(void)

@@ -15,6 +15,7 @@
 #define META_SECTORS 4     /* 4 * 512 / 16 = one fs_meta per entry */
 #define FLAG_USED    1u
 #define FLAG_DIR     2u
+#define FLAG_LINK    4u     /* a symbolic link: the file contents are the target path */
 #define ROOT         0xFFu /* parent value meaning "the root directory" */
 
 /* Disk layout, fixed at format time and stored in the superblock:
@@ -60,6 +61,7 @@ static uint32_t sectors_for(uint32_t size)
 
 static int used(int i)      { return dir[i].flags & FLAG_USED; }
 static int is_dir(int i)    { return dir[i].flags & FLAG_DIR; }
+static int is_link(int i)   { return dir[i].flags & FLAG_LINK; }
 static uint32_t parent(int i) { return (dir[i].flags >> 8) & 0xFF; }
 
 static int flush_dir(void)
@@ -426,7 +428,42 @@ int fs_stat(const char *path, struct fs_stat *st)
 	st->start_lba = dir[idx].start;
 	st->sectors = sectors_for(dir[idx].size);
 	st->is_dir = is_dir(idx) ? 1 : 0;
+	st->is_link = is_link(idx) ? 1 : 0;
 	return FS_OK;
+}
+
+int fs_symlink(const char *target, const char *path)
+{
+	int rc, idx;
+
+	if (!target[0] || kstrlen(target) >= FS_NAME_MAX * 4)
+		return FS_EINVAL;
+	if (fs_entry(path) >= 0)
+		return FS_EEXIST;
+	rc = fs_write(path, target, (uint32_t)kstrlen(target));
+	if (rc)
+		return rc;
+	idx = fs_entry(path);
+	if (idx < 0)
+		return idx;
+	dir[idx].flags |= FLAG_LINK;
+	meta[idx].mode = 0777;
+	return flush_dir();
+}
+
+int fs_readlink(const char *path, char *buf, uint32_t cap)
+{
+	int idx = fs_entry(path), n;
+
+	if (idx < 0)
+		return idx;
+	if (idx == (int)ROOT || !is_link(idx))
+		return FS_EINVAL;
+	n = fs_read(path, buf, cap - 1);
+	if (n < 0)
+		return n;
+	buf[n] = '\0';
+	return n;
 }
 
 int fs_chmod(const char *path, uint16_t mode)
@@ -606,6 +643,7 @@ int fs_list(const char *path, struct fs_stat *out, int max)
 		out[n].start_lba = dir[i].start;
 		out[n].sectors = sectors_for(dir[i].size);
 		out[n].is_dir = is_dir(i) ? 1 : 0;
+		out[n].is_link = is_link(i) ? 1 : 0;
 		out[n].meta = meta[i];
 		n++;
 	}

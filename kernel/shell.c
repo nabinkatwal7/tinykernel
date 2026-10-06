@@ -1418,6 +1418,8 @@ static int cmd_smpaffinity(int argc, char **argv)
 static int cmd_useradd(int argc, char **argv);
 static int cmd_logout(int argc, char **argv);
 static int cmd_passwd(int argc, char **argv);
+static int cmd_ln(int argc, char **argv);
+static int cmd_readlink(int argc, char **argv);
 static int cmd_whoami(int argc, char **argv);
 static int cmd_id(int argc, char **argv);
 static int cmd_su(int argc, char **argv);
@@ -1462,12 +1464,12 @@ static int fs_fail(const char *what, int rc)
 }
 
 /* "drwxr-xr-x" */
-static void mode_string(int is_dir, unsigned mode, char out[11])
+static void mode_string(int kind, unsigned mode, char out[11]) /* kind: 'd', 'l' or '-' */
 {
 	static const char rwx[] = "rwxrwxrwx";
 	int i;
 
-	out[0] = is_dir ? 'd' : '-';
+	out[0] = (char)kind;
 	for (i = 0; i < 9; i++)
 		out[1 + i] = mode & (0400u >> i) ? rwx[i] : '-';
 	out[10] = '\0';
@@ -1509,9 +1511,17 @@ static int cmd_ls(int argc, char **argv)
 				       ent[i].is_dir ? "  <dir>" : "");
 			continue;
 		}
-		mode_string(ent[i].is_dir, ent[i].mode, ms);
+		mode_string(ent[i].is_link ? 'l' : ent[i].is_dir ? 'd' : '-', ent[i].mode, ms);
 		time_string(ent[i].mtime, ts);
-		console_printf("%s %3u %3u %7u %s %s\n", ms, ent[i].uid, ent[i].gid, ent[i].size, ts, ent[i].name);
+		console_printf("%s %3u %3u %7u %s %s", ms, ent[i].uid, ent[i].gid, ent[i].size, ts, ent[i].name);
+		if (ent[i].is_link) {
+			char full[VFS_PATH_MAX], target[VFS_PATH_MAX];
+
+			ksnprintf(full, sizeof full, "%s/%s", path, ent[i].name);
+			if (vfs_readlink(full, target, sizeof target) >= 0)
+				console_printf(" -> %s", target);
+		}
+		console_putchar('\n');
 	}
 	console_printf("%d entr%s", n, n == 1 ? "y" : "ies");
 	if (fs_mounted() && !kstrcmp(path, "/"))
@@ -1713,7 +1723,7 @@ static int cmd_stat(int argc, char **argv)
 		return 1;
 	}
 	for (i = 1; i < argc; i++) {
-		int r = vfs_stat(argv[i], &st);
+		int r = vfs_lstat(argv[i], &st); /* a link is described, not followed */
 
 		if (r) {
 			rc = fs_fail(argv[i], r);
@@ -1721,12 +1731,12 @@ static int cmd_stat(int argc, char **argv)
 		}
 		vfs_normalize(vfs_getcwd(), argv[i], abs, sizeof abs);
 		console_printf("  File: %s\n  Type: %s\n  Size: %u bytes\n", abs,
-			       st.dev ? "character device" : st.is_dir ? "directory" : "regular file",
+			       st.dev ? "character device" : st.is_link ? "symbolic link" : st.is_dir ? "directory" : "regular file",
 			       st.size);
 		{
 			char ms[11], mt[17], ct[17];
 
-			mode_string(st.is_dir, st.mode, ms);
+			mode_string(st.is_link ? 'l' : st.is_dir ? 'd' : '-', st.mode, ms);
 			time_string(st.mtime, mt);
 			time_string(st.ctime, ct);
 			console_printf("  Mode: %s (0%u%u%u)  Owner: %s  Group: %u\n", ms, (st.mode >> 6) & 7u,
@@ -4055,6 +4065,8 @@ static const struct command commands[] = {
 	{ "id",      "id",                    "numeric user and group ids", cmd_id },
 	{ "su",      "su [user]",             "switch user (exit returns)", cmd_su },
 	{ "exit",    "exit",                  "leave an su session, or log out", cmd_exit },
+	{ "ln",      "ln -s TARGET LINK",     "make a symbolic link", cmd_ln },
+	{ "readlink", "readlink LINK",        "print the target of a symbolic link", cmd_readlink },
 	{ "logout",  "logout",                "end the session and show the login prompt", cmd_logout },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
@@ -5037,6 +5049,36 @@ static int cmd_exit(int argc, char **argv)
 		return 0;
 	}
 	return cmd_logout(0, 0);
+}
+
+/* ln -s TARGET LINK : make a symbolic link (hard links: see ln without -s) */
+static int cmd_ln(int argc, char **argv)
+{
+	int rc;
+
+	if (argc != 4 || kstrcmp(argv[1], "-s")) {
+		console_write("usage: ln -s TARGET LINKNAME\n");
+		return 1;
+	}
+	rc = vfs_symlink(argv[2], argv[3]);
+	return rc ? fs_fail(argv[3], rc) : 0;
+}
+
+/* readlink LINK : print where a symbolic link points */
+static int cmd_readlink(int argc, char **argv)
+{
+	char target[VFS_PATH_MAX];
+	int n;
+
+	if (argc != 2) {
+		console_write("usage: readlink LINK\n");
+		return 1;
+	}
+	n = vfs_readlink(argv[1], target, sizeof target);
+	if (n < 0)
+		return fs_fail(argv[1], n);
+	console_printf("%s\n", target);
+	return 0;
 }
 
 /* useradd NAME PASSWORD : add a user (root only). The first user must be "root". */
