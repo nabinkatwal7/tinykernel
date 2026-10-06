@@ -1,4 +1,3 @@
-Implement semaphore primitive,
 Add spinlock with interrupt safety,
 Add blocking keyboard wait queue,
 Implement producer-consumer demo,

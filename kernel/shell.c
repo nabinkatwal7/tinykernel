@@ -564,6 +564,46 @@ static int cmd_mutextest(int argc, char **argv)
 	return locked != 600;
 }
 
+static sem_t test_sem;
+static volatile int sem_inside, sem_max;
+
+static void sem_worker(void *arg)
+{
+	int i;
+
+	(void)arg;
+	for (i = 0; i < 4; i++) {
+		sem_wait(&test_sem);
+		sem_inside++;
+		if (sem_inside > sem_max)
+			sem_max = sem_inside;
+		task_sleep(30); /* hold the permit while others pile up */
+		sem_inside--;
+		sem_post(&test_sem);
+	}
+	test_done++;
+}
+
+/* 5 tasks compete for 2 permits: never more than 2 inside at once. */
+static int cmd_semtest(int argc, char **argv)
+{
+	int i;
+
+	(void)argc;
+	(void)argv;
+	sem_init(&test_sem, 2);
+	sem_inside = sem_max = 0;
+	test_done = 0;
+	for (i = 0; i < 5; i++)
+		task_create("sem-worker", sem_worker, 0, 1);
+	while (test_done < 5)
+		task_sleep(20);
+	console_printf("max concurrent holders: %d (limit 2), final permits: %d\n", sem_max,
+		       sem_value(&test_sem));
+	console_write(sem_max == 2 && sem_value(&test_sem) == 2 ? "semtest: ok\n" : "semtest: FAILED\n");
+	return !(sem_max == 2 && sem_value(&test_sem) == 2);
+}
+
 static int cmd_kill(int argc, char **argv)
 {
 	uint32_t id;
@@ -1021,6 +1061,7 @@ static const struct command commands[] = {
 	{ "spawn",   "spawn [n]",             "start demo worker tasks", cmd_spawn },
 	{ "overflow", "overflow",             "crash test: kernel stack overflow", cmd_overflow },
 	{ "mutextest", "mutextest",           "race with/without a mutex", cmd_mutextest },
+	{ "semtest", "semtest",             "semaphore limits concurrency", cmd_semtest },
 	{ "kill",  "kill <id>",             "stop a task", cmd_kill },
 	{ "ls",      "ls",                    "list files", cmd_ls },
 	{ "cat",     "cat <file>",            "print a file", cmd_cat },

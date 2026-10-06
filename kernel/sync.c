@@ -50,3 +50,46 @@ void mutex_unlock(mutex_t *m)
 	}
 	irq_restore(f);
 }
+
+void sem_init(sem_t *s, int count)
+{
+	s->count = count;
+	s->q.head = s->q.tail = 0;
+}
+
+void sem_wait(sem_t *s)
+{
+	uint32_t f = irq_save();
+
+	while (s->count <= 0)
+		wq_wait(&s->q);
+	s->count--;
+	irq_restore(f);
+}
+
+int sem_trywait(sem_t *s)
+{
+	uint32_t f = irq_save();
+	int rc = -1;
+
+	if (s->count > 0) {
+		s->count--;
+		rc = 0;
+	}
+	irq_restore(f);
+	return rc;
+}
+
+void sem_post(sem_t *s)
+{
+	uint32_t f = irq_save();
+
+	s->count++;
+	wq_wake_one(&s->q);
+	irq_restore(f);
+}
+
+int sem_value(sem_t *s)
+{
+	return s->count;
+}
