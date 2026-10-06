@@ -126,6 +126,20 @@ void console_putat(int x, int y, char c, uint8_t a)
 	VGA_ADDR[y * VGA_WIDTH + x] = (unsigned short)((unsigned char)c | (a << 8));
 }
 
+uint8_t console_get_attr(int x, int y)
+{
+	if (x < 0 || x >= VGA_WIDTH || y < 0 || y >= VGA_HEIGHT)
+		return 0;
+	return (uint8_t)(VGA_ADDR[y * VGA_WIDTH + x] >> 8);
+}
+
+void console_set_attr(int x, int y, uint8_t a)
+{
+	if (x < 0 || x >= VGA_WIDTH || y < 0 || y >= VGA_HEIGHT)
+		return;
+	VGA_ADDR[y * VGA_WIDTH + x] = (unsigned short)((VGA_ADDR[y * VGA_WIDTH + x] & 0xFF) | (a << 8));
+}
+
 void console_set_hw_cursor(int x, int y)
 {
 	unsigned short pos = (unsigned short)(y * VGA_WIDTH + x);

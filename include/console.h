@@ -32,6 +32,8 @@ void console_status(const char *text); /* paints the reserved top row */
 #define CONSOLE_FIRST_ROW 1
 #define CONSOLE_LAST_ROW 24
 void console_putat(int x, int y, char c, uint8_t attr);
+uint8_t console_get_attr(int x, int y);               /* attribute byte of a cell */
+void console_set_attr(int x, int y, uint8_t attr);     /* recolour a cell, keeping its character */
 void console_set_hw_cursor(int x, int y);   /* move the blinking cursor without touching the text cursor */
 
 #endif

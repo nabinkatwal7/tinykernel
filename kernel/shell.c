@@ -1484,11 +1484,13 @@ static int cmd_mouse(int argc, char **argv)
 {
 	struct mouse_state m;
 
-	(void)argc;
-	(void)argv;
 	if (!mouse_present()) {
 		console_write("no PS/2 mouse\n");
 		return 1;
+	}
+	if (argc > 1 && (!kstrcmp(argv[1], "on") || !kstrcmp(argv[1], "off"))) {
+		mousecursor_enable(!kstrcmp(argv[1], "on"));
+		return 0;
 	}
 	mouse_get(&m);
 	console_printf("mouse at (%d, %d), buttons %c%c%c, %u packets, %u resyncs\n", m.x, m.y,

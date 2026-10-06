@@ -1,4 +1,3 @@
-Draw mouse cursor in text mode,
 Learn VGA graphics modes,
 Switch to graphics mode 13h,
 Draw pixels and lines,

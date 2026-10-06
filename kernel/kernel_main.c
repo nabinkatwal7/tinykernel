@@ -58,7 +58,8 @@ void kernel_main(void)
 	timer_init(100);
 	sched_init();
 	keyboard_use_irq();
-	mouse_init();
+	if (mouse_init() == 0)
+		mousecursor_init();
 	sti();
 	klog(LOG_INFO, "interrupts enabled");
 

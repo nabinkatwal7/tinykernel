@@ -21,6 +21,8 @@ int  mouse_init(void);                         /* 0 if a mouse answered */
 int  mouse_present(void);
 void mouse_get(struct mouse_state *out);
 void mouse_feed(uint8_t byte);                 /* called by the 8042 interrupt code for aux bytes */
+void mousecursor_init(void);                   /* draw a reverse-video pointer in text mode */
+void mousecursor_enable(int on);
 void mouse_set_hook(void (*hook)(void));       /* called after every decoded packet (IRQ context) */
 
 #endif
