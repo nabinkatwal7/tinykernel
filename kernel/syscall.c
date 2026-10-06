@@ -101,6 +101,12 @@ void syscall_dispatch(struct regs *r)
 		}
 		break;
 	}
+	case SYS_GETPID:
+		r->eax = task_current()->id;
+		break;
+	case SYS_GETPPID:
+		r->eax = task_current()->ppid;
+		break;
 	default:
 		klog(LOG_WARN, "unknown syscall %u", r->eax);
 		r->eax = (uint32_t)-1;

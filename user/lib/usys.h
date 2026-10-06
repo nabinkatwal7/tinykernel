@@ -13,6 +13,8 @@
 #define SYS_CLOSE    8
 #define SYS_READ     9
 #define SYS_FWRITE  10
+#define SYS_GETPID  11
+#define SYS_GETPPID 12
 
 static inline int syscall3(int num, int a, int b, int c)
 {
@@ -40,6 +42,8 @@ static inline int  getkey(void)                     { return syscall3(SYS_GETKEY
 
 static inline int  open(const char *path, int flags) { return syscall3(SYS_OPEN, (int)path, flags, 0); }
 static inline int  close(int fd)                     { return syscall3(SYS_CLOSE, fd, 0, 0); }
+static inline int  getpid(void)                    { return syscall3(SYS_GETPID, 0, 0, 0); }
+static inline int  getppid(void)                   { return syscall3(SYS_GETPPID, 0, 0, 0); }
 static inline void sleep_ms(int ms)                 { syscall3(SYS_SLEEP, ms, 0, 0); }
 
 #endif

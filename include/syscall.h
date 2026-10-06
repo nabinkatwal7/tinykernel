@@ -13,6 +13,8 @@
 #define SYS_OPEN     7 /* ebx = path, ecx = flags; returns fd or a negative error */
 #define SYS_CLOSE    8 /* ebx = fd */
 #define SYS_READ     9 /* ebx = fd, ecx = buffer, edx = count; returns bytes, 0 at EOF, or < 0 */
+#define SYS_GETPID  11 /* id of the task the program runs in */
+#define SYS_GETPPID 12
 #define SYS_FWRITE  10 /* ebx = fd, ecx = buffer, edx = count; fd 1 and 2 are the console */
 
 void syscall_dispatch(struct regs *r);
