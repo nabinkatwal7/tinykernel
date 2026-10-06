@@ -10,6 +10,9 @@
 
 typedef enum { TASK_READY, TASK_RUNNING, TASK_SLEEPING, TASK_DEAD, TASK_BLOCKED } task_state_t;
 
+/* Why a task is not runnable; shown by ps. */
+typedef enum { WAIT_NONE, WAIT_SLEEP, WAIT_MUTEX, WAIT_SEM, WAIT_KEYBOARD, WAIT_OTHER } wait_reason_t;
+
 struct task;
 /* FIFO of tasks blocked on something (mutex, semaphore, keyboard...). */
 struct waitq {
@@ -39,6 +42,7 @@ typedef struct task {
 	struct task *sleep_next; /* wake list, ordered by wake_tick */
 	struct task *wait_next;  /* next task in the wait queue we are blocked on */
 	struct waitq *wq;        /* queue we are blocked on, if BLOCKED */
+	wait_reason_t reason;    /* what we are waiting for while SLEEPING/BLOCKED */
 } task_t;
 
 void     sched_init(void);   /* adopts the running code as task 0 and creates the idle task */
@@ -53,7 +57,7 @@ void     sched_tick(void);
 
 /* Wait queues. wq_wait() must be called with interrupts disabled (irq_save): it blocks the
    current task until another task or IRQ calls wq_wake_*(), then returns still disabled. */
-void     wq_wait(struct waitq *q);
+void     wq_wait(struct waitq *q, wait_reason_t why);
 int      wq_wake_one(struct waitq *q);   /* 1 if a task was woken */
 int      wq_wake_all(struct waitq *q);   /* number woken */        /* called from the timer IRQ */
 void     sched_dump(void);        /* ps */

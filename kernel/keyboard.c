@@ -171,7 +171,7 @@ int keyboard_getkey(void)
 		int k = pop_locked();
 
 		if (k < 0 && irq_mode)
-			wq_wait(&kb_wq); /* atomic with the empty check: no lost wakeup */
+			wq_wait(&kb_wq, WAIT_KEYBOARD); /* atomic with the empty check: no lost wakeup */
 		irq_restore(f);
 		if (k >= 0)
 			return k;

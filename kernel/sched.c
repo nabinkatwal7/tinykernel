@@ -4,6 +4,7 @@
 #include "gdt.h"
 #include "io.h"
 #include "klog.h"
+#include "kprintf.h"
 #include "kmalloc.h"
 #include "kstring.h"
 #include "paging.h"
@@ -223,6 +224,7 @@ void task_sleep(uint32_t ms)
 		ticks = 1;
 	current->wake_tick = timer_ticks() + ticks;
 	current->state = TASK_SLEEPING;
+	current->reason = WAIT_SLEEP;
 	sleep_insert(current);
 	schedule_locked();
 	irq_restore(f);
@@ -317,8 +319,9 @@ void sched_account(uint32_t id, int32_t delta)
 	} while (t != task_head);
 }
 
-void wq_wait(struct waitq *q)
+void wq_wait(struct waitq *q, wait_reason_t why)
 {
+	current->reason = why;
 	current->state = TASK_BLOCKED;
 	current->wq = q;
 	current->wait_next = 0;
@@ -342,6 +345,7 @@ int wq_wake_one(struct waitq *q)
 		t->wait_next = 0;
 		t->wq = 0;
 		t->state = TASK_READY;
+		t->reason = WAIT_NONE;
 	}
 	irq_restore(f);
 	return t != 0;
@@ -407,6 +411,7 @@ void sched_tick(void)
 		sleep_head = t->sleep_next;
 		t->sleep_next = 0;
 		t->state = TASK_READY;
+		t->reason = WAIT_NONE;
 	}
 
 	{
@@ -426,15 +431,22 @@ void sched_tick(void)
 void sched_dump(void)
 {
 	static const char *const names[] = { "ready", "running", "sleeping", "dead", "blocked" };
+	static const char *const why[] = { "", "", "mutex", "sem", "kbd", "other" };
 	uint32_t f = irq_save();
 	task_t *t = task_head;
+	char state[24];
 
-	console_write("ID   NAME        STATE     PRIO  CPU-TICKS  HEAP    STACK\n");
+	console_write("ID   NAME        STATE           PRIO  CPU-TICKS  HEAP    STACK\n");
 	do {
-		if (t->state != TASK_DEAD)
-			console_printf("%-4u %-11s %-9s %-5u %-10u %-7u %u\n", t->id, t->name,
-				       names[t->state], t->priority, t->cpu_ticks, t->heap_bytes,
+		if (t->state != TASK_DEAD) {
+			if (t->state == TASK_BLOCKED)
+				ksnprintf(state, sizeof state, "blocked:%s", why[t->reason]);
+			else
+				ksnprintf(state, sizeof state, "%s", names[t->state]);
+			console_printf("%-4u %-11s %-15s %-5u %-10u %-7u %u\n", t->id, t->name,
+				       state, t->priority, t->cpu_ticks, t->heap_bytes,
 				       t->stack ? TASK_STACK_SIZE : 0u);
+		}
 		t = t->next;
 	} while (t != task_head);
 	irq_restore(f);

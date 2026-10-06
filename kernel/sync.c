@@ -17,7 +17,7 @@ void mutex_lock(mutex_t *m)
 	if (m->locked && m->owner == task_current())
 		klog(LOG_ERROR, "mutex: recursive lock by %s would deadlock", task_current()->name);
 	while (m->locked)
-		wq_wait(&m->q);
+		wq_wait(&m->q, WAIT_MUTEX);
 	m->locked = 1;
 	m->owner = task_current();
 	irq_restore(f);
@@ -62,7 +62,7 @@ void sem_wait(sem_t *s)
 	uint32_t f = irq_save();
 
 	while (s->count <= 0)
-		wq_wait(&s->q);
+		wq_wait(&s->q, WAIT_SEM);
 	s->count--;
 	irq_restore(f);
 }

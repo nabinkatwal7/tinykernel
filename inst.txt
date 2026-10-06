@@ -1,4 +1,3 @@
-Add task states and wait reasons,
 Implement process IDs and parent links,
 Add fork-style task cloning experiment,
 Implement waitpid style exit codes,
