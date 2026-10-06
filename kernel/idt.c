@@ -6,6 +6,7 @@
 #include "apic.h"
 #include "klog.h"
 #include "paging.h"
+#include "percpu.h"
 #include "sched.h"
 #include "pic.h"
 #include "syscall.h"
@@ -114,6 +115,8 @@ static void exception(struct regs *r)
 void interrupt_dispatch(struct regs *r)
 {
 	int irq;
+
+	this_cpu()->interrupts++;
 
 	if (r->int_no == 0x80) {
 		syscall_dispatch(r);

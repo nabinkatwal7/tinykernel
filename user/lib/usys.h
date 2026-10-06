@@ -13,6 +13,8 @@
 #define SYS_CLOSE    8
 #define SYS_READ     9
 #define SYS_FWRITE  10
+#define SYS_NANOSLEEP 25
+#define SYS_CLOCK   24
 #define SYS_LSEEK   23
 #define SYS_GETCWD  21
 #define SYS_CHDIR   22
@@ -71,6 +73,12 @@ static inline int  exec(const char *path, char *const argv[]) { return syscall3(
 static inline int  spawn(const char *path, char *const argv[]) { return syscall3(SYS_SPAWN, (int)path, (int)argv, 0); }
 /* Runs a kernel shell command ('ls', 'ps', ...) and returns its status. */
 static inline int  kcmd(const char *line)            { return syscall3(SYS_KCMD, (int)line, 0, 0); }
+#define CLOCK_REALTIME  0
+#define CLOCK_MONOTONIC 1
+struct timespec { unsigned tv_sec, tv_nsec; };
+static inline int  clock_gettime(int id, struct timespec *ts) { return syscall3(SYS_CLOCK, id, (int)ts, 0); }
+static inline int  nanosleep(unsigned sec, unsigned nsec) { return syscall3(SYS_NANOSLEEP, (int)sec, (int)nsec, 0); }
+static inline void usleep(unsigned us)               { nanosleep(us / 1000000, (us % 1000000) * 1000); }
 static inline int  getpid(void)                    { return syscall3(SYS_GETPID, 0, 0, 0); }
 static inline int  getppid(void)                   { return syscall3(SYS_GETPPID, 0, 0, 0); }
 static inline void sleep_ms(int ms)                 { syscall3(SYS_SLEEP, ms, 0, 0); }

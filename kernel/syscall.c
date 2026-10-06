@@ -1,6 +1,7 @@
 #include "syscall.h"
 
 #include "console.h"
+#include "clock.h"
 #include "file.h"
 #include "keyboard.h"
 #include "klog.h"
@@ -153,6 +154,25 @@ void syscall_dispatch(struct regs *r)
 	case SYS_KCMD:
 		r->eax = user_str_ok(r->ebx) ? (uint32_t)shell_exec_from_user((const char *)r->ebx)
 					     : (uint32_t)-1;
+		break;
+	case SYS_CLOCK: {
+		struct timespec ts;
+
+		if (!user_ptr_ok(r->ecx, sizeof ts) || clock_gettime((int)r->ebx, &ts)) {
+			r->eax = (uint32_t)-1;
+			break;
+		}
+		*(struct timespec *)r->ecx = ts;
+		r->eax = 0;
+		break;
+	}
+	case SYS_NANOSLEEP:
+		if (r->ecx >= 1000000000u || r->ebx > 3600) {
+			r->eax = (uint32_t)-1;
+			break;
+		}
+		task_sleep_ns((uint64_t)r->ebx * 1000000000u + r->ecx);
+		r->eax = 0;
 		break;
 	case SYS_SBRK:
 		r->eax = user_sbrk((int32_t)r->ebx);

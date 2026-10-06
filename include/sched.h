@@ -59,6 +59,7 @@ void     task_exit(void) __attribute__((noreturn));
 void     task_yield(void);
 int      task_fork(void);          /* experimental: child gets 0, parent gets the child id, -1 on error */
 void     task_sleep(uint32_t ms);
+void     task_sleep_ns(uint64_t ns);   /* sub-tick sleeps spin on the high-resolution clock; longer ones sleep, then spin the remainder */
 int      task_kill(uint32_t id);  /* 0 on success */
 int      task_set_priority(uint32_t id, uint32_t prio); /* 0 on success */
 task_t  *task_current(void);
