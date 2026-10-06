@@ -15,6 +15,7 @@
 #include "kmalloc.h"
 #include "kprintf.h"
 #include "kstring.h"
+#include "mouse.h"
 #include "paging.h"
 #include "pci.h"
 #include "pmm.h"
@@ -1479,6 +1480,23 @@ static int cmd_cpuinfo(int argc, char **argv)
 	return 0;
 }
 
+static int cmd_mouse(int argc, char **argv)
+{
+	struct mouse_state m;
+
+	(void)argc;
+	(void)argv;
+	if (!mouse_present()) {
+		console_write("no PS/2 mouse\n");
+		return 1;
+	}
+	mouse_get(&m);
+	console_printf("mouse at (%d, %d), buttons %c%c%c, %u packets, %u resyncs\n", m.x, m.y,
+		       m.buttons & MOUSE_LEFT ? 'L' : '-', m.buttons & MOUSE_MIDDLE ? 'M' : '-',
+		       m.buttons & MOUSE_RIGHT ? 'R' : '-', m.packets, m.resyncs);
+	return 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -1988,6 +2006,7 @@ static const struct command commands[] = {
 	{ "fat",     "fat info|ls|cat",       "read the FAT12 image on the IDE slave", cmd_fat },
 	{ "lspci",   "lspci [-v]",            "list PCI devices", cmd_lspci },
 	{ "cpuinfo", "cpuinfo",               "CPU identification and speed", cmd_cpuinfo },
+	{ "mouse",   "mouse",                 "PS/2 mouse position and buttons", cmd_mouse },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },

@@ -48,6 +48,8 @@ def main():
         s.sendall((cmd + "\n").encode()); time.sleep(0.05)
     time.sleep(1.0)
     for line in args:
+        if line.startswith("mon:"):
+            mon(line[4:]); time.sleep(0.4); continue
         if line.startswith("key:"):
             mon("sendkey " + line[4:]); time.sleep(0.4); continue
         if line.startswith("raw:"):

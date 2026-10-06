@@ -1,4 +1,3 @@
-Add PS/2 mouse driver,
 Draw mouse cursor in text mode,
 Learn VGA graphics modes,
 Switch to graphics mode 13h,

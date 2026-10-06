@@ -10,6 +10,7 @@
 #include "keyboard.h"
 #include "klog.h"
 #include "kmalloc.h"
+#include "mouse.h"
 #include "kprintf.h"
 #include "paging.h"
 #include "pci.h"
@@ -57,6 +58,7 @@ void kernel_main(void)
 	timer_init(100);
 	sched_init();
 	keyboard_use_irq();
+	mouse_init();
 	sti();
 	klog(LOG_INFO, "interrupts enabled");
 

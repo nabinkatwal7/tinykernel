@@ -1,6 +1,7 @@
 #include "keyboard.h"
 
 #include "io.h"
+#include "mouse.h"
 #include "pic.h"
 #include "sched.h"
 
@@ -120,16 +121,23 @@ static void poll(void)
 		handle_scancode(inb(KBD_DATA));
 }
 
+void keyboard_poll_controller(void)
+{
+	while (inb(KBD_STATUS) & KBD_OBF) {
+		uint8_t aux = inb(KBD_STATUS) & KBD_AUX;
+		uint8_t b = inb(KBD_DATA);
+
+		if (aux)
+			mouse_feed(b);
+		else
+			handle_scancode(b);
+	}
+}
+
 static void keyboard_irq(struct regs *r)
 {
 	irq_regs = r;
-	while (inb(KBD_STATUS) & KBD_OBF) {
-		uint8_t aux = inb(KBD_STATUS) & KBD_AUX;
-		uint8_t sc = inb(KBD_DATA);
-
-		if (!aux)
-			handle_scancode(sc);
-	}
+	keyboard_poll_controller();
 	irq_regs = 0;
 	wq_wake_one(&kb_wq); /* a key (or at least a scancode) arrived */
 }
