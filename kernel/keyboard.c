@@ -31,6 +31,8 @@ static volatile unsigned head, tail;
 static volatile int irq_mode;
 static struct waitq kb_wq; /* tasks blocked in keyboard_getkey() */
 static int shift, ctrl, caps, e0;
+static void (*sigint_hook)(struct regs *);
+static struct regs *irq_regs; /* registers of the interrupted code while inside the IRQ */
 
 static void push(int k)
 {
@@ -97,6 +99,10 @@ static void handle_scancode(uint8_t sc)
 		return;
 	if (is_letter(c)) {
 		if (ctrl) {
+			if (c == 'c' && sigint_hook) {
+				sigint_hook(irq_regs);
+				return;
+			}
 			push(c - 'a' + 1);
 			return;
 		}
@@ -116,7 +122,7 @@ static void poll(void)
 
 static void keyboard_irq(struct regs *r)
 {
-	(void)r;
+	irq_regs = r;
 	while (inb(KBD_STATUS) & KBD_OBF) {
 		uint8_t aux = inb(KBD_STATUS) & KBD_AUX;
 		uint8_t sc = inb(KBD_DATA);
@@ -124,7 +130,13 @@ static void keyboard_irq(struct regs *r)
 		if (!aux)
 			handle_scancode(sc);
 	}
+	irq_regs = 0;
 	wq_wake_one(&kb_wq); /* a key (or at least a scancode) arrived */
+}
+
+void keyboard_set_sigint(void (*hook)(struct regs *r))
+{
+	sigint_hook = hook;
 }
 
 void keyboard_init(void)

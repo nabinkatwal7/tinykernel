@@ -520,6 +520,19 @@ static void wq_remove(task_t *t)
 	t->wait_next = 0;
 }
 
+uint32_t sched_newest_job(void)
+{
+	task_t *t = task_head;
+	uint32_t best = 0;
+
+	do { /* tasks 0-2 are kmain, idle and the status bar; everything newer is a "job" */
+		if (t->id > 2 && t->id > best && t->state != TASK_DEAD && t->state != TASK_ZOMBIE)
+			best = t->id;
+		t = t->next;
+	} while (t != task_head);
+	return best;
+}
+
 task_t *task_current(void)
 {
 	return current;

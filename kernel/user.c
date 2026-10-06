@@ -16,6 +16,7 @@ extern const uint8_t builtin_hello_start[], builtin_hello_end[];
 extern const uint8_t builtin_counter_start[], builtin_counter_end[];
 extern const uint8_t builtin_fault_start[], builtin_fault_end[];
 extern const uint8_t builtin_evil_start[], builtin_evil_end[];
+extern const uint8_t builtin_spin_start[], builtin_spin_end[];
 
 struct builtin {
 	const char *name;
@@ -27,10 +28,22 @@ static const struct builtin builtins[] = {
 	{ "counter", builtin_counter_start, builtin_counter_end },
 	{ "fault",   builtin_fault_start,   builtin_fault_end },
 	{ "evil",    builtin_evil_start,    builtin_evil_end },
+	{ "spin",    builtin_spin_start,    builtin_spin_end },
 };
 #define NBUILTIN (sizeof builtins / sizeof builtins[0])
 
 static int active;
+static volatile int abort_requested;
+
+void user_request_abort(void)
+{
+	abort_requested = 1;
+}
+
+int user_abort_requested(void)
+{
+	return abort_requested;
+}
 
 int user_is_active(void)
 {
@@ -126,6 +139,7 @@ int user_run(const char *name)
 	saved_dir = t->pgdir;
 	t->pgdir = udir;
 	paging_switch(udir);
+	abort_requested = 0;
 	active = 1;
 	rc = enter_user(USER_BASE, USER_END - 16);
 	active = 0;

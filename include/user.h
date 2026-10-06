@@ -13,6 +13,8 @@ int  user_run(const char *name);
 void user_abort(void) __attribute__((noreturn)); /* called from the fault handler */
 void user_exit(int code) __attribute__((noreturn));
 int  user_is_active(void);
+void user_request_abort(void);     /* checked at every syscall; for Ctrl+C while the program is in the kernel */
+int  user_abort_requested(void);
 void user_list_builtin(void);
 int  user_install_builtin(const char *name); /* copy a built-in program onto the disk */
 

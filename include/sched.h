@@ -72,6 +72,7 @@ int      wq_wake_all(struct waitq *q);   /* number woken */        /* called fro
 void     sched_dump(void);
 void     sched_tree(void);        /* pstree: tasks indented under their parents */        /* ps */
 uint32_t task_count(void);
+uint32_t sched_newest_job(void); /* id of the most recently created user-visible task, 0 if none */
 uint32_t sched_current_id(void);
 void     sched_account(uint32_t id, int32_t delta); /* adjust a task's heap_bytes */
 const char *sched_guard_owner(uint32_t addr); /* task whose guard page contains addr */

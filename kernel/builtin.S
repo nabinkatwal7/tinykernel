@@ -19,3 +19,8 @@ _builtin_fault_end:
 _builtin_evil_start:
 	.incbin "build/evil.bin"
 _builtin_evil_end:
+
+.globl _builtin_spin_start, _builtin_spin_end
+_builtin_spin_start:
+	.incbin "build/spin.bin"
+_builtin_spin_end:

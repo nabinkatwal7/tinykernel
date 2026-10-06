@@ -39,6 +39,37 @@ struct command {
 
 static const struct command *cmd_table; /* set to commands[] in shell_exec() */
 
+/* ---------------- Ctrl+C ---------------- */
+
+static volatile int interrupted; /* set by Ctrl+C, polled by long-running commands */
+
+int shell_interrupted(void)
+{
+	return interrupted;
+}
+
+/* Runs in the keyboard IRQ. Stops the user program if one is running, else the newest job. */
+static void sigint(struct regs *r)
+{
+	interrupted = 1;
+	if (user_is_active()) {
+		if (r && (r->cs & 3)) { /* we interrupted ring 3 itself: abandon it right here */
+			console_write("^C\n");
+			user_abort();
+		}
+		user_request_abort(); /* it is inside a syscall: it checks the flag on its way out */
+		return;
+	}
+	{
+		uint32_t id = sched_newest_job();
+
+		if (id && !task_kill(id))
+			console_printf("^C (killed task %u)\n", id);
+		else
+			console_write("^C\n");
+	}
+}
+
 /* ---------------- line editing and history ---------------- */
 
 static char hist[HIST_MAX][LINE_MAX];
@@ -301,7 +332,12 @@ static int cmd_sleep(int argc, char **argv)
 		console_write("usage: sleep <ms>\n");
 		return 1;
 	}
-	task_sleep(ms);
+	while (ms && !interrupted) { /* Ctrl+C aware */
+		uint32_t slice = ms > 50 ? 50 : ms;
+
+		task_sleep(slice);
+		ms -= slice;
+	}
 	return 0;
 }
 
@@ -1377,7 +1413,9 @@ void shell_run(void)
 	char line[LINE_MAX];
 
 	console_printf("%s %s - type 'help' for commands\n", KERNEL_NAME, KERNEL_VERSION);
+	keyboard_set_sigint(sigint);
 	for (;;) {
+		interrupted = 0;
 		prompt();
 		readline(line, sizeof line);
 		hist_add(line);

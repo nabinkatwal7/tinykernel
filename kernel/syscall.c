@@ -14,6 +14,10 @@ static int user_ptr_ok(uint32_t p, uint32_t len)
 
 void syscall_dispatch(struct regs *r)
 {
+	if (user_abort_requested()) { /* Ctrl+C arrived while we were in the kernel */
+		console_write("^C\n");
+		user_abort();
+	}
 	switch (r->eax) {
 	case SYS_EXIT:
 		user_exit((int)r->ebx);
@@ -39,10 +43,22 @@ void syscall_dispatch(struct regs *r)
 	case SYS_GETKEY:
 		r->eax = (uint32_t)keyboard_getkey();
 		break;
-	case SYS_SLEEP:
-		task_sleep(r->ebx);
+	case SYS_SLEEP: {
+		uint32_t left = r->ebx;
+
+		while (left && !user_abort_requested()) { /* sleep in slices so Ctrl+C can interrupt */
+			uint32_t slice = left > 20 ? 20 : left;
+
+			task_sleep(slice);
+			left -= slice;
+		}
+		if (user_abort_requested()) {
+			console_write("^C\n");
+			user_abort();
+		}
 		r->eax = 0;
 		break;
+	}
 	default:
 		klog(LOG_WARN, "unknown syscall %u", r->eax);
 		r->eax = (uint32_t)-1;
