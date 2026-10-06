@@ -3,6 +3,7 @@
 #include "ata.h"
 #include "acpi.h"
 #include "apic.h"
+#include "arith.h"
 #include "arp.h"
 #include "bcache.h"
 #include "cmdline.h"
@@ -208,6 +209,37 @@ static void expand(const char *in, char *out, int size)
 				out[o++] = *in++;
 			continue;
 		}
+		if (c == '$' && !single && in[1] == '(' && in[2] == '(') { /* $((arithmetic)) */
+			char expr[96], num[16];
+			const char *p = in + 3, *q;
+			int depth = 0, n = 0, bad = 1;
+			int32_t v = 0;
+
+			for (q = p; *q; q++) {
+				if (*q == '(')
+					depth++;
+				else if (*q == ')' && depth > 0)
+					depth--;
+				else if (*q == ')' && q[1] == ')')
+					break;
+			}
+			if (*q) {
+				for (; p < q && n < (int)sizeof expr - 1; p++)
+					expr[n++] = *p;
+				expr[n] = '\0';
+				bad = arith_eval(expr, &v);
+				in = q + 2;
+			} else {
+				in += 3; /* unterminated: drop the opener */
+			}
+			if (bad)
+				kstrlcpy(num, "0", sizeof num);
+			else
+				ksnprintf(num, sizeof num, "%d", v);
+			for (p = num; *p && o < size - 1; p++)
+				out[o++] = *p;
+			continue;
+		}
 		if (c == '$' && !single && (in[1] == '?' || in[1] == '#' || in[1] == '_' || (in[1] >= '0' && in[1] <= '9')
 					    || (in[1] >= 'A' && in[1] <= 'Z') || (in[1] >= 'a' && in[1] <= 'z'))) {
 			char name[ENV_NAME_MAX];
@@ -243,6 +275,23 @@ static void expand(const char *in, char *out, int size)
 		in++;
 	}
 	out[o] = '\0';
+}
+
+/* Points at the last ')' of the "$((...))" starting at s (or at its third character when unterminated). */
+static char *arith_end(char *s)
+{
+	int depth = 0;
+	char *q;
+
+	for (q = s + 3; *q; q++) {
+		if (*q == '(')
+			depth++;
+		else if (*q == ')' && depth > 0)
+			depth--;
+		else if (*q == ')' && q[1] == ')')
+			return q + 1;
+	}
+	return s + 2;
 }
 
 /* ---------------- parser ---------------- */
@@ -2970,6 +3019,10 @@ static int cmd_shtest(int argc, char **argv)
 	ok &= sh_expect("echo one | cat", "one\n");
 	ok &= sh_expect("echo two | cat | cat", "two\n");
 	ok &= sh_expect("echo 'a | b' | cat", "a | b\n");
+	ok &= sh_expect("shv=4", "");
+	ok &= sh_expect("echo $((shv*shv+1))", "17\n");
+	ok &= sh_expect("let shv=shv*2", "");
+	ok &= sh_expect("echo $shv $((shv > 7 && shv < 9))", "8 1\n");
 	ok &= sh_expect("echo x > sht.txt", "");
 	ok &= sh_expect("echo y >> sht.txt", "");
 	ok &= sh_expect("cat sht.txt", "x\ny\n");
@@ -2979,6 +3032,7 @@ static int cmd_shtest(int argc, char **argv)
 	ok &= sh_expect("cat sht2.txt", "x\ny\n");
 	ok &= sh_expect("echo 'q > r' > sht.txt", "");
 	ok &= sh_expect("cat sht.txt", "q > r\n");
+	env_unset("shv");
 	vfs_unlink("sht.txt");
 	vfs_unlink("sht2.txt");
 	console_printf("shtest: %s\n", ok ? "ok" : "FAILED");
@@ -2993,6 +3047,38 @@ static int cmd_sh(int argc, char **argv)
 		return 1;
 	}
 	return script_run(argv[1], argc - 1, argv + 1);
+}
+
+static char *assignment_eq(const char *w);
+
+/* let expr... : "let x=x+1" assigns the value of an integer expression; "let 3*4" prints it */
+static int cmd_let(int argc, char **argv)
+{
+	int i, rc = 0;
+
+	if (argc < 2) {
+		console_write("usage: let NAME=expression | let expression\n");
+		return 1;
+	}
+	for (i = 1; i < argc; i++) {
+		char *eq = assignment_eq(argv[i]);
+		int32_t v;
+		char num[16];
+
+		if (arith_eval(eq ? eq + 1 : argv[i], &v)) {
+			console_printf("let: bad expression '%s'\n", argv[i]);
+			return 1;
+		}
+		if (!eq) {
+			console_printf("%d\n", v);
+		} else {
+			ksnprintf(num, sizeof num, "%d", v);
+			*eq = 0;
+			rc = env_set(argv[i], num) ? 1 : rc;
+			*eq = '=';
+		}
+	}
+	return rc;
 }
 
 /* panic [message] : test the panic path and its stack trace */
@@ -3500,6 +3586,7 @@ static const struct command commands[] = {
 	{ "jobs",    "jobs",                  "list background jobs", cmd_jobs },
 	{ "fg",      "fg [%n]",               "wait for a background job", cmd_fg },
 	{ "sh",      "sh <script> [args]",    "run a shell script", cmd_sh },
+	{ "let",     "let NAME=expr",         "integer arithmetic on shell variables", cmd_let },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
@@ -3532,6 +3619,8 @@ static char *find_pipe(char *s)
 				quote = 0;
 		} else if (*s == '"' || *s == '\'') {
 			quote = *s;
+		} else if (s[0] == '$' && s[1] == '(' && s[2] == '(') {
+			s = arith_end(s); /* operators inside $(( )) are not shell syntax */
 		} else if (*s == '\\' && s[1]) {
 			s++;
 		} else if (*s == '|') {
@@ -3581,6 +3670,8 @@ static int strip_ampersand(char *line)
 				quote = 0;
 		} else if (*s == '"' || *s == '\'') {
 			quote = *s;
+		} else if (s[0] == '$' && s[1] == '(' && s[2] == '(') {
+			s = arith_end(s); /* operators inside $(( )) are not shell syntax */
 		} else if (*s == '\\' && s[1]) {
 			s++;
 		}
@@ -3768,6 +3859,8 @@ static int take_redirect(char *line, char op, char *file, int size, int *append)
 		}
 		if (*s == '"' || *s == '\'') {
 			quote = *s;
+		} else if (s[0] == '$' && s[1] == '(' && s[2] == '(') {
+			s = arith_end(s);
 		} else if (*s == '\\' && s[1]) {
 			s++;
 		} else if (*s == op) {
@@ -3876,6 +3969,37 @@ static int exec_command(const char *line)
 	return rc;
 }
 
+/* "NAME=value" with a valid variable name: the position of '=', or NULL. */
+static char *assignment_eq(const char *w)
+{
+	const char *p = w;
+
+	if (!((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') || *p == '_'))
+		return 0;
+	while ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') || *p == '_' || (*p >= '0' && *p <= '9'))
+		p++;
+	return *p == '=' ? (char *)p : 0;
+}
+
+/* If every word is NAME=value, set them all (as environment variables) and return 1. */
+static int all_assignments(int argc, char **argv)
+{
+	int i;
+
+	for (i = 0; i < argc; i++)
+		if (!assignment_eq(argv[i]))
+			return 0;
+	for (i = 0; i < argc; i++) {
+		char *eq = assignment_eq(argv[i]);
+
+		*eq = 0;
+		if (env_set(argv[i], eq + 1))
+			console_printf("cannot set %s (environment full?)\n", argv[i]);
+		*eq = '=';
+	}
+	return 1;
+}
+
 static int exec_plain(const char *line)
 {
 	char copy[LINE_MAX];
@@ -3887,6 +4011,9 @@ static int exec_plain(const char *line)
 	argc = parse(copy, argv, ARGV_MAX);
 	if (argc == 0)
 		return 0;
+
+	if (all_assignments(argc, argv)) /* NAME=value ... sets shell variables */
+		return last_status = 0;
 
 	cmd_table = commands;
 	for (c = commands; c->name; c++) {
