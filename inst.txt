@@ -1,4 +1,3 @@
-Add filesystem journaling,
 Add FAT12 write support,
 Add FAT16 read support,
 Learn ext2 layout,

@@ -3539,6 +3539,34 @@ static int cmd_calc(int argc, char **argv)
 	return 0;
 }
 
+/* jtest : simulate a power failure between the journal commit and the in-place write; the remount must replay it */
+static int cmd_jtest(int argc, char **argv)
+{
+	int rc, ok = 1;
+
+	(void)argc;
+	(void)argv;
+	if (need_fs())
+		return 1;
+	vfs_unlink("jt1.txt");
+	vfs_unlink("jt2.txt");
+	rc = vfs_write("jt1.txt", "one", 3);
+	ok &= rc == 0;
+	fs_test_crash_next_commit();
+	rc = vfs_write("jt2.txt", "two", 3); /* fails: the "power" went out before it reached its place */
+	console_printf("write during the crash returned %d (expected an error)\n", rc);
+	ok &= rc != 0;
+	rc = fs_mount(); /* reboot: reads the tables and replays the journal */
+	ok &= rc == 0;
+	ok &= vfs_size("jt1.txt") == 3;
+	ok &= vfs_size("jt2.txt") == 3; /* only there if the journal was replayed */
+	console_printf("after remount: jt1=%d jt2=%d bytes\n", vfs_size("jt1.txt"), vfs_size("jt2.txt"));
+	vfs_unlink("jt1.txt");
+	vfs_unlink("jt2.txt");
+	console_printf("jtest: %s\n", ok ? "ok" : "FAILED");
+	return !ok;
+}
+
 /* panic [message] : test the panic path and its stack trace */
 static int cmd_panic(int argc, char **argv)
 {
@@ -4069,6 +4097,7 @@ static const struct command commands[] = {
 	{ "ln",      "ln [-s] TARGET LINK",   "make a hard or symbolic link", cmd_ln },
 	{ "readlink", "readlink LINK",        "print the target of a symbolic link", cmd_readlink },
 	{ "logout",  "logout",                "end the session and show the login prompt", cmd_logout },
+	{ "jtest",   "jtest",                 "journal crash-recovery test", cmd_jtest },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },

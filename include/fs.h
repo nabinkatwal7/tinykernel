@@ -60,6 +60,7 @@ int         fs_stat(const char *path, struct fs_stat *st);
 int         fs_link(const char *existing, const char *path); /* a second name for a (non-empty) file */
 int         fs_symlink(const char *target, const char *path); /* create a symbolic link at path */
 int         fs_readlink(const char *path, char *buf, uint32_t cap); /* target length, or FS_EINVAL if path is not a link */
+void        fs_test_crash_next_commit(void); /* the next metadata commit stops after the journal, as if power failed */
 int         fs_chmod(const char *path, uint16_t mode);
 int         fs_chown(const char *path, uint16_t uid, uint16_t gid);
 int         fs_touch(const char *path, uint32_t mtime); /* set the modification time */

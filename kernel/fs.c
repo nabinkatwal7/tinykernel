@@ -10,7 +10,8 @@
 #include "kstring.h"
 
 #define FS_MAGIC     0x31534654u /* "TFS1" */
-#define FS_VERSION   4
+#define FS_VERSION   5
+#define JOURNAL_MAGIC 0x4C4E524Au /* "JRNL" */
 #define DIR_SECTORS  8     /* 8 * 512 / 32 = 128 entries */
 #define META_SECTORS 4     /* 4 * 512 / 16 = one fs_meta per entry */
 #define FLAG_USED    1u
@@ -19,8 +20,15 @@
 #define ROOT         0xFFu /* parent value meaning "the root directory" */
 
 /* Disk layout, fixed at format time and stored in the superblock:
- *   0 superblock | bm_lba.. free-space bitmap (1 bit per sector) | dir_lba.. entry table | metadata | data */
-static uint32_t total_sectors, bm_lba, bm_sectors, dir_lba, data_start;
+ *   0 superblock | bm_lba.. free-space bitmap (1 bit per sector) | dir_lba.. entry table | metadata |
+ *   jr_lba.. journal | data
+ * The journal makes metadata updates atomic: the new entry table, metadata and bitmap are written to the journal
+ * first and sealed with a commit record; only then are they written to their real places. A crash in between is
+ * repaired at the next mount by replaying the committed journal; a crash before the commit record leaves the
+ * old, consistent state untouched. (File data is written before the commit, like ext3's "ordered" mode.) */
+static uint32_t total_sectors, bm_lba, bm_sectors, dir_lba, jr_lba, data_start;
+static uint32_t jr_seq;
+static int crash_after_journal; /* test hook: stop right after the commit record, as if the power failed */
 static uint8_t *bitmap;   /* bit set = sector in use */
 
 struct dirent {
@@ -86,11 +94,101 @@ static int link_count(int i)
 }
 static uint32_t parent(int i) { return (dir[i].flags >> 8) & 0xFF; }
 
-static int flush_dir(void)
+struct journal_header {
+	uint32_t magic, seq, sectors, checksum;
+};
+
+static uint32_t checksum_of(const void *p, uint32_t bytes, uint32_t sum)
 {
-	if (bc_write(dir_lba, DIR_SECTORS, dir) || bc_write(dir_lba + DIR_SECTORS, META_SECTORS, meta))
+	const uint8_t *b = p;
+	uint32_t i;
+
+	for (i = 0; i < bytes; i++)
+		sum = (sum << 5) + sum + b[i]; /* djb2-style */
+	return sum;
+}
+
+static uint32_t journal_checksum(const void *d, const void *m, const void *bm)
+{
+	uint32_t sum = 5381;
+
+	sum = checksum_of(d, DIR_SECTORS * SECTOR_SIZE, sum);
+	sum = checksum_of(m, META_SECTORS * SECTOR_SIZE, sum);
+	return checksum_of(bm, bm_sectors * SECTOR_SIZE, sum);
+}
+
+static int write_in_place(const void *d, const void *m, const void *bm)
+{
+	if (bc_write(dir_lba, DIR_SECTORS, d) || bc_write(dir_lba + DIR_SECTORS, META_SECTORS, m)
+	    || bc_write(bm_lba, bm_sectors, bm))
 		return FS_EIO;
 	return FS_OK;
+}
+
+static void journal_retire(void)
+{
+	uint8_t zero[SECTOR_SIZE];
+
+	memset(zero, 0, sizeof zero);
+	bc_write(jr_lba, 1, zero);
+}
+
+/* Atomically publish the in-memory entry table, metadata and bitmap (see the layout comment above). */
+static int commit_meta(void)
+{
+	uint8_t sector[SECTOR_SIZE];
+	struct journal_header *h = (struct journal_header *)sector;
+
+	if (bc_write(jr_lba + 1, DIR_SECTORS, dir) || bc_write(jr_lba + 1 + DIR_SECTORS, META_SECTORS, meta)
+	    || bc_write(jr_lba + 1 + DIR_SECTORS + META_SECTORS, bm_sectors, bitmap))
+		return FS_EIO;
+	if (bc_flush() < 0) /* the copy must be on disk before the commit record */
+		return FS_EIO;
+	memset(sector, 0, sizeof sector);
+	h->magic = JOURNAL_MAGIC;
+	h->seq = ++jr_seq;
+	h->sectors = DIR_SECTORS + META_SECTORS + bm_sectors;
+	h->checksum = journal_checksum(dir, meta, bitmap);
+	if (bc_write(jr_lba, 1, sector) || bc_flush() < 0)
+		return FS_EIO;
+	if (crash_after_journal) {
+		crash_after_journal = 0;
+		return FS_EIO; /* "power failure": committed in the journal, not yet in place */
+	}
+	if (write_in_place(dir, meta, bitmap) || bc_flush() < 0)
+		return FS_EIO;
+	journal_retire();
+	return FS_OK;
+}
+
+/* At mount: apply a committed journal that never reached its real place. Returns 1 if it replayed one. */
+static int journal_replay(void)
+{
+	uint8_t sector[SECTOR_SIZE];
+	const struct journal_header *h = (const struct journal_header *)sector;
+	void *d, *m, *bm;
+	int replayed = 0;
+
+	if (bc_read(jr_lba, 1, sector) || h->magic != JOURNAL_MAGIC || h->sectors != DIR_SECTORS + META_SECTORS + bm_sectors)
+		return 0;
+	d = kmalloc((size_t)(h->sectors) * SECTOR_SIZE);
+	if (!d)
+		return 0;
+	m = (uint8_t *)d + DIR_SECTORS * SECTOR_SIZE;
+	bm = (uint8_t *)m + META_SECTORS * SECTOR_SIZE;
+	if (!bc_read(jr_lba + 1, h->sectors, d) && journal_checksum(d, m, bm) == h->checksum) {
+		write_in_place(d, m, bm);
+		bc_flush();
+		replayed = 1;
+	}
+	kfree(d);
+	journal_retire();
+	return replayed;
+}
+
+static int flush_dir(void)
+{
+	return commit_meta();
 }
 
 static uint32_t now_secs(void)
@@ -110,9 +208,10 @@ static void meta_new(int i, int dir_flag)
 	meta[i].mtime = meta[i].ctime = now_secs();
 }
 
+/* The bitmap travels with every commit (flush_dir), so there is nothing separate to write. */
 static int flush_bitmap(void)
 {
-	return bc_write(bm_lba, bm_sectors, bitmap) ? FS_EIO : FS_OK;
+	return FS_OK;
 }
 
 static int bit_get(uint32_t sec)
@@ -249,6 +348,12 @@ static int free_slot(void)
 	return -1;
 }
 
+/* Test hook for 'jtest': make the next metadata commit "crash" after the journal is sealed. */
+void fs_test_crash_next_commit(void)
+{
+	crash_after_journal = 1;
+}
+
 int fs_mounted(void)
 {
 	return mounted;
@@ -272,11 +377,15 @@ int fs_mount(void)
 	bm_sectors = sb[4];
 	dir_lba = sb[5];
 	data_start = sb[6];
-	if (total_sectors != ata_fs_sectors() || bm_sectors == 0 || data_start >= total_sectors)
+	jr_lba = sb[7];
+	if (total_sectors != ata_fs_sectors() || bm_sectors == 0 || data_start >= total_sectors
+	    || jr_lba != dir_lba + DIR_SECTORS + META_SECTORS)
 		return FS_ENOMOUNT;
 	bitmap = kmalloc(bm_sectors * SECTOR_SIZE);
 	if (!bitmap)
 		return FS_ENOSPC;
+	if (journal_replay())
+		klog(LOG_WARN, "fs: replayed the journal after an unclean shutdown");
 	if (bc_read(bm_lba, bm_sectors, bitmap) || bc_read(dir_lba, DIR_SECTORS, dir)
 	    || bc_read(dir_lba + DIR_SECTORS, META_SECTORS, meta))
 		return FS_EIO;
@@ -295,7 +404,8 @@ int fs_format(void)
 	bm_lba = 1;
 	bm_sectors = (total_sectors + SECTOR_SIZE * 8 - 1) / (SECTOR_SIZE * 8);
 	dir_lba = bm_lba + bm_sectors;
-	data_start = dir_lba + DIR_SECTORS + META_SECTORS;
+	jr_lba = dir_lba + DIR_SECTORS + META_SECTORS;
+	data_start = jr_lba + 1 + DIR_SECTORS + META_SECTORS + bm_sectors;
 	if (data_start >= total_sectors)
 		return FS_ENOSPC; /* disk too small to hold the metadata */
 	bitmap = kcalloc(bm_sectors, SECTOR_SIZE);
@@ -311,9 +421,11 @@ int fs_format(void)
 	sb[4] = bm_sectors;
 	sb[5] = dir_lba;
 	sb[6] = data_start;
+	sb[7] = jr_lba;
 	memset(dir, 0, sizeof dir);
 	memset(meta, 0, sizeof meta);
-	if (bc_write(0, 1, sb) || flush_bitmap() || flush_dir())
+	journal_retire();
+	if (bc_write(0, 1, sb) || flush_dir())
 		return FS_EIO;
 	mounted = 1;
 	klog(LOG_INFO, "fs: formatted %u sectors (bitmap %u, data from %u)", total_sectors, bm_sectors,
@@ -899,14 +1011,14 @@ int fs_debug_corrupt(int kind)
 		for (i = (int)total_sectors - 1; i >= (int)data_start; i--)
 			if (!bit_get((uint32_t)i)) {
 				mark((uint32_t)i, 1, 1);
-				return flush_bitmap();
+				return flush_dir();
 			}
 		return FS_ENOSPC;
 	case 1: /* a used sector claimed free */
 		for (i = 0; i < FS_MAX_FILES; i++)
 			if (used(i) && !is_dir(i) && dir[i].size) {
 				mark(dir[i].start, 1, 0);
-				return flush_bitmap();
+				return flush_dir();
 			}
 		return FS_ENOENT;
 	case 2: /* orphan: point an entry at a parent that does not exist */
