@@ -50,6 +50,16 @@ int         fs_rmdir(const char *path);  /* must be empty */
 int         fs_rename(const char *from, const char *to);
 int         fs_list(const char *dir, struct fs_stat *out, int max); /* entries in a directory */
 uint32_t    fs_free_sectors(void);
+
+struct fs_info {
+	uint32_t total_sectors;   /* whole disk */
+	uint32_t used_sectors;    /* metadata + file data */
+	uint32_t free_sectors;
+	uint32_t largest_free;    /* longest contiguous run: the biggest file that can still be written */
+	uint32_t files, dirs;
+	uint32_t free_entries;    /* unused slots in the entry table */
+};
+int         fs_info(struct fs_info *out);   /* FS_ENOMOUNT if nothing is mounted */
 const char *fs_strerror(int err);
 
 #endif

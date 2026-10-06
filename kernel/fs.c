@@ -469,3 +469,56 @@ uint32_t fs_free_sectors(void)
 			usedsec += sectors_for(dir[i].size);
 	return ata_sectors() > usedsec ? ata_sectors() - usedsec : 0;
 }
+
+int fs_info(struct fs_info *out)
+{
+	uint32_t cand = DATA_START, total = ata_sectors(), best = 0;
+	int i, moved;
+
+	if (!mounted)
+		return FS_ENOMOUNT;
+	memset(out, 0, sizeof *out);
+	out->total_sectors = total;
+	out->used_sectors = DATA_START;
+	for (i = 0; i < FS_MAX_FILES; i++) {
+		if (!used(i)) {
+			out->free_entries++;
+		} else if (is_dir(i)) {
+			out->dirs++;
+		} else {
+			out->files++;
+			out->used_sectors += sectors_for(dir[i].size);
+		}
+	}
+	out->free_sectors = total > out->used_sectors ? total - out->used_sectors : 0;
+
+	/* Largest hole: sweep the extents in address order. */
+	for (;;) {
+		uint32_t next = total; /* start of the next file after 'cand' */
+
+		moved = 0;
+		for (i = 0; i < FS_MAX_FILES; i++) {
+			uint32_t s, e;
+
+			if (!used(i) || is_dir(i) || !dir[i].size)
+				continue;
+			s = dir[i].start;
+			e = s + sectors_for(dir[i].size);
+			if (cand >= s && cand < e) {
+				cand = e;
+				moved = 1;
+			} else if (s >= cand && s < next) {
+				next = s;
+			}
+		}
+		if (moved)
+			continue;
+		if (next - cand > best)
+			best = next - cand;
+		if (next >= total)
+			break;
+		cand = next;
+	}
+	out->largest_free = best;
+	return FS_OK;
+}

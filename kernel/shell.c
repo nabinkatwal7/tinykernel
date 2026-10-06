@@ -1259,6 +1259,27 @@ static int cmd_stat(int argc, char **argv)
 	return rc;
 }
 
+static int cmd_df(int argc, char **argv)
+{
+	struct fs_info fi;
+	uint32_t kb_total, kb_used;
+
+	(void)argc;
+	(void)argv;
+	console_write("Filesystem   Size(KiB)  Used(KiB)  Free(KiB)  Use%  Mounted on\n");
+	if (need_fs() == 0 && fs_info(&fi) == FS_OK) {
+		kb_total = fi.total_sectors / 2;
+		kb_used = fi.used_sectors / 2;
+		console_printf("tinyfs      %10u %10u %10u  %3u%%  /\n", kb_total, kb_used,
+			       kb_total - kb_used, kb_total ? kb_used * 100 / kb_total : 0);
+		console_printf("            %u file(s), %u dir(s), %u free table slot(s), largest free run %u KiB\n",
+			       fi.files, fi.dirs, fi.free_entries, fi.largest_free / 2);
+	}
+	console_write("devfs                 -          -          -     -  /dev\n");
+	console_write("procfs                -          -          -     -  /proc\n");
+	return 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -1759,6 +1780,7 @@ static const struct command commands[] = {
 	{ "mv",      "mv <src> <dst>",        "move or rename", cmd_mv },
 	{ "cp",      "cp <src> <dst>",        "copy a file", cmd_cp },
 	{ "stat",    "stat <path>",           "show file information", cmd_stat },
+	{ "df",      "df",                    "disk space usage", cmd_df },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },
