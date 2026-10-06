@@ -98,6 +98,11 @@ int tcp_conn_info(int c, uint32_t *ip, uint16_t *rport, uint16_t *lport, enum tc
 	return 0;
 }
 
+static uint32_t rx_count(const struct conn *c)
+{
+	return (c->rx_head - c->rx_tail + TCP_RXBUF) % TCP_RXBUF;
+}
+
 int tcp_conn_stats(int c, struct tcp_conn_stats *out)
 {
 	if (c < 0 || c >= TCP_MAX_CONN || !conns[c].used)
@@ -109,6 +114,8 @@ int tcp_conn_stats(int c, struct tcp_conn_stats *out)
 	out->queued = conns[c].tx_len;
 	out->retransmits = conns[c].stat_retransmits;
 	out->window_probes = conns[c].stat_probes;
+	out->rx_buffered = rx_count(&conns[c]);
+	out->advertised = conns[c].last_adv;
 	return 0;
 }
 
@@ -144,10 +151,6 @@ static uint16_t tcp_checksum(uint32_t src, uint32_t dst, const uint8_t *seg, uin
 	return (uint16_t)~sum;
 }
 
-static uint32_t rx_count(const struct conn *c)
-{
-	return (c->rx_head - c->rx_tail + TCP_RXBUF) % TCP_RXBUF;
-}
 
 /* Receive window: the free space in the receive ring. */
 static uint32_t rx_window(const struct conn *c)
@@ -271,10 +274,14 @@ static void rtx_arm(struct conn *c)
 	c->rtx_deadline = timer_ticks() + ms_to_ticks(c->rto_ms);
 }
 
-/* How many bytes may be in flight at once. */
+/*
+ * Sliding window: how many bytes may be in flight (sent, not yet acknowledged) at once. The peer's advertised window
+ * is the limit - it says how much room its receive buffer has - and the send buffer bounds it anyway. Several segments
+ * travel back to back; each cumulative ACK slides the left edge (snd_una) forward and lets more out.
+ */
 static uint32_t window_limit(const struct conn *c)
 {
-	return c->snd_wnd < MSS ? c->snd_wnd : MSS; /* one segment at a time (stop and wait) */
+	return c->snd_wnd < TCP_TXBUF ? c->snd_wnd : TCP_TXBUF;
 }
 
 /* Send whatever the window allows, then the FIN if the application has closed and everything went out. */
@@ -318,8 +325,9 @@ static void tcp_output(struct conn *c)
 	}
 }
 
-/* The timer fired: resend the oldest unacknowledged thing (go-back-N would resend all; one segment is enough
-   because the cumulative ACK that follows opens the window for the rest), with the timeout doubled. */
+/* The timer fired: go back to the oldest unacknowledged byte and resend from there (go-back-N), with the timeout doubled. */
+static void tcp_output(struct conn *c);
+
 static void retransmit(struct conn *c)
 {
 	uint32_t flight = c->snd_nxt - c->snd_una;
@@ -346,17 +354,10 @@ static void retransmit(struct conn *c)
 		stats.window_probes++;
 		send_segment(c, F_ACK, c->snd_nxt, &b, 1);
 		c->snd_nxt++;
-	} else if (flight) {
-		uint32_t data_flight = flight - (c->fin_sent ? 1 : 0), n = data_flight < MSS ? data_flight : MSS, i;
-		uint8_t seg[MSS];
-
-		if (n) {
-			for (i = 0; i < n; i++)
-				seg[i] = c->tx[(c->tx_start + i) % TCP_TXBUF];
-			send_segment(c, F_ACK | F_PSH, c->snd_una, seg, (uint16_t)n);
-		} else {
-			send_segment(c, F_FIN | F_ACK, c->snd_una, 0, 0); /* only the FIN is outstanding */
-		}
+	} else if (flight) { /* go back to the left edge of the window and send it all again (the receiver keeps no out-of-order data) */
+		c->fin_sent = 0;
+		c->snd_nxt = c->snd_una;
+		tcp_output(c);
 	}
 	rtx_arm(c);
 }
@@ -709,21 +710,20 @@ int tcp_recv(int conn, void *buf, uint16_t cap, uint32_t timeout_ms)
 	struct conn *c;
 	uint8_t *out = buf;
 	uint16_t n = 0;
-	uint32_t before;
-
 	if (conn < 0 || conn >= TCP_MAX_CONN || !conns[conn].used)
 		return -1;
 	c = &conns[conn];
 	if (wait_for(cond_data, c, timeout_ms))
 		return -1;
 	mutex_lock(&lock);
-	before = rx_window(c);
 	while (n < cap && rx_count(c) > 0) {
 		out[n++] = c->rx[c->rx_tail];
 		c->rx_tail = (c->rx_tail + 1) % TCP_RXBUF;
 	}
-	/* the application made room: tell the sender if the window it knows about was small (window update) */
-	if (n && c->state != TCP_CLOSED && before < MSS && rx_window(c) >= MSS)
+	/* The application made room. The sender only knows the window we last advertised: when the real one has grown by
+	   a segment (or half the buffer) since, say so, or a sender that was held back by a small window would wait forever
+	   (receiver-side silly window avoidance, RFC 1122 4.2.3.3). */
+	if (n && c->state != TCP_CLOSED && rx_window(c) >= c->last_adv + (MSS < TCP_RXBUF / 2 ? MSS : TCP_RXBUF / 2))
 		send_segment(c, F_ACK, c->snd_nxt, 0, 0);
 	mutex_unlock(&lock);
 	return n; /* 0 with nothing buffered = the peer has closed */
@@ -893,9 +893,85 @@ int cmd_tcpstat(int argc, char **argv)
 
 		if (tcp_conn_info(i, &ip, &rp, &lp, &st) || tcp_conn_stats(i, &cs))
 			continue;
-		console_printf("  %u -> %s:%u %-11s srtt %ums rto %ums peer window %u, %u in flight, %u queued, %u retransmits\n", lp,
+		console_printf("  %u -> %s:%u %-11s srtt %ums rto %ums peer window %u, %u in flight, %u queued, %u retransmits, %u buffered for the app, advertised %u\n", lp,
 			       ip_str(ip, ips), rp, tcp_state_name(st), cs.srtt_ms, cs.rto_ms, cs.peer_window, cs.in_flight, cs.queued,
-			       cs.retransmits);
+			       cs.retransmits, cs.rx_buffered, cs.advertised);
 	}
 	return 0;
+}
+
+/* tcpsend IP PORT BYTES : send BYTES of the pattern i % 251 to a server, wait until they are acknowledged */
+int cmd_tcpsend(int argc, char **argv)
+{
+	uint32_t ip, port, bytes, sent = 0, t0 = timer_ticks();
+	uint8_t chunk[1000];
+	int c, rc = 0;
+
+	if (argc != 4 || ip_parse(argv[1], &ip) || kstrtoul(argv[2], &port) || kstrtoul(argv[3], &bytes) || !port || port > 65535) {
+		console_write("usage: tcpsend IP PORT BYTES\n");
+		return 1;
+	}
+	c = tcp_connect(ip, (uint16_t)port, 4000);
+	if (c < 0) {
+		console_printf("tcpsend: connect failed (%d)\n", c);
+		return 1;
+	}
+	while (sent < bytes) {
+		uint32_t n = bytes - sent < sizeof chunk ? bytes - sent : (uint32_t)sizeof chunk, i;
+
+		for (i = 0; i < n; i++)
+			chunk[i] = (uint8_t)((sent + i) % 251);
+		if (tcp_send(c, chunk, n, 10000)) {
+			rc = 1;
+			break;
+		}
+		sent += n;
+	}
+	if (!rc && tcp_flush(c, 15000))
+		rc = 1;
+	{
+		struct tcp_conn_stats cs;
+
+		if (!tcp_conn_stats(c, &cs))
+			console_printf("tcpsend: %u bytes in %u ticks, %u retransmissions, peer window %u, srtt %u ms%s\n", sent, timer_ticks() - t0,
+				       cs.retransmits, cs.peer_window, cs.srtt_ms, rc ? ", FAILED" : "");
+	}
+	tcp_close(c);
+	return rc;
+}
+
+/* tcpget IP PORT [DELAY_MS] : read a stream until the server closes (sleeping DELAY_MS after each read to make the
+   receive window fill up) and check the pattern i % 251 */
+int cmd_tcpget(int argc, char **argv)
+{
+	uint32_t ip, port, delay = 0, total = 0, bad = 0, t0 = timer_ticks();
+	uint8_t buf[512];
+	int c, n;
+
+	if (argc < 3 || ip_parse(argv[1], &ip) || kstrtoul(argv[2], &port) || !port || port > 65535 || (argc > 3 && kstrtoul(argv[3], &delay))) {
+		console_write("usage: tcpget IP PORT [DELAY_MS]\n");
+		return 1;
+	}
+	c = tcp_connect(ip, (uint16_t)port, 4000);
+	if (c < 0) {
+		console_printf("tcpget: connect failed (%d)\n", c);
+		return 1;
+	}
+	while ((n = tcp_recv(c, buf, sizeof buf, 10000)) > 0) {
+		int i;
+
+		for (i = 0; i < n; i++)
+			bad += buf[i] != (uint8_t)((total + (uint32_t)i) % 251);
+		total += (uint32_t)n;
+		if (delay)
+			task_sleep(delay);
+	}
+	{
+		struct tcp_conn_stats cs;
+
+		if (!tcp_conn_stats(c, &cs))
+			console_printf("tcpget: %u bytes in %u ticks, %u wrong, %u retransmissions\n", total, timer_ticks() - t0, bad, cs.retransmits);
+	}
+	tcp_close(c);
+	return bad != 0;
 }

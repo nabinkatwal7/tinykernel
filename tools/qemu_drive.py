@@ -111,6 +111,45 @@ def main():
                 except Exception as e:
                     host_log.append("HOST TCP: server error %s" % e)
             t = threading.Thread(target=serve, daemon=True); t.start(); continue
+        if line.startswith("hostsink:"):   # hostsink:<port>[:<delay ms between reads>] -> accept one connection, read everything, check the byte pattern i % 251
+            import threading
+            parts = line[9:].split(":")
+            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            srv.bind(("0.0.0.0", int(parts[0]))); srv.listen(1); srv.settimeout(30)
+            delay = float(parts[1]) / 1000 if len(parts) > 1 else 0
+            def sink(srv=srv, delay=delay):
+                try:
+                    conn, addr = srv.accept(); conn.settimeout(15)
+                    total = bad = 0
+                    while True:
+                        chunk = conn.recv(4096)
+                        if not chunk: break
+                        for k, b in enumerate(chunk):
+                            if b != (total + k) % 251: bad += 1
+                        total += len(chunk)
+                        if delay: time.sleep(delay)
+                    host_log.append("HOST SINK: received %d bytes, %d wrong" % (total, bad))
+                    conn.close()
+                except Exception as e:
+                    host_log.append("HOST SINK: error %s" % e)
+            threading.Thread(target=sink, daemon=True).start(); continue
+        if line.startswith("hostsrc:"):   # hostsrc:<port>:<bytes> -> accept one connection and send <bytes> of the pattern i % 251 as fast as possible, then close
+            import threading
+            port_s, count_s = line[8:].split(":")
+            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            srv.bind(("0.0.0.0", int(port_s))); srv.listen(1); srv.settimeout(30)
+            def source(srv=srv, count=int(count_s)):
+                try:
+                    conn, addr = srv.accept(); conn.settimeout(30)
+                    data = bytes(i % 251 for i in range(count))
+                    conn.sendall(data)
+                    host_log.append("HOST SRC: sent %d bytes" % count)
+                    conn.close()
+                except Exception as e:
+                    host_log.append("HOST SRC: error %s" % e)
+            threading.Thread(target=source, daemon=True).start(); continue
         if line.startswith("mon:"):
             mon(line[4:]); time.sleep(0.4); continue
         if line.startswith("key:"):

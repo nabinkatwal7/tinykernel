@@ -28,6 +28,8 @@ int  tcp_listen(uint16_t port);                                        /* listen
 int  tcp_accept(int listener, uint32_t timeout_ms, uint32_t *peer_ip, uint16_t *peer_port); /* connection id, or -1 on timeout */
 int  tcp_close(int conn);                                              /* FIN handshake; 0 on a clean close */
 int  cmd_tcpstat(int argc, char **argv);    /* tcpstat [drop OUT IN [SKIP]] */
+int  cmd_tcpsend(int argc, char **argv);    /* tcpsend IP PORT BYTES */
+int  cmd_tcpget(int argc, char **argv);     /* tcpget IP PORT [DELAY_MS] */
 int  cmd_tcpserve(int argc, char **argv);   /* tcpserve PORT [CLIENTS]: echo server for testing */
 /* Statistics and test hooks. */
 struct tcp_stats {
@@ -35,6 +37,7 @@ struct tcp_stats {
 };
 struct tcp_conn_stats {
 	uint32_t rto_ms, srtt_ms, peer_window, in_flight, queued, retransmits, window_probes;
+	uint32_t rx_buffered, advertised;   /* bytes waiting for the application, window we last told the peer */
 };
 void tcp_get_stats(struct tcp_stats *out);
 int  tcp_conn_stats(int conn, struct tcp_conn_stats *out);

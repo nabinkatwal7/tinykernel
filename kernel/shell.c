@@ -4126,6 +4126,8 @@ static const struct command commands[] = {
 	{ "nslookup", "nslookup NAME [SERVER]", "look up a host name", cmd_nslookup },
 	{ "tcpserve", "tcpserve PORT [N]", "TCP echo server (for testing)", cmd_tcpserve },
 	{ "tcpstat", "tcpstat [drop O I]", "TCP counters, timers, loss simulation", cmd_tcpstat },
+	{ "tcpsend", "tcpsend IP PORT BYTES", "send a test pattern over TCP", cmd_tcpsend },
+	{ "tcpget", "tcpget IP PORT [MS]", "receive a test pattern over TCP", cmd_tcpget },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
