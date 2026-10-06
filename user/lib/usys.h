@@ -14,6 +14,8 @@
 #define SYS_READ     9
 #define SYS_FWRITE  10
 #define SYS_EXEC    14
+#define SYS_SPAWN   15
+#define SYS_KCMD    16
 #define SYS_SBRK    13
 #define SYS_GETPID  11
 #define SYS_GETPPID 12
@@ -47,6 +49,10 @@ static inline int  close(int fd)                     { return syscall3(SYS_CLOSE
 static inline void *sbrk(int delta)                 { return (void *)syscall3(SYS_SBRK, delta, 0, 0); }
 /* Replaces this program with another; only returns (-1) if it could not be started. */
 static inline int  exec(const char *path, char *const argv[]) { return syscall3(SYS_EXEC, (int)path, (int)argv, 0); }
+/* Runs a program to completion and returns its exit code (-1 if it does not exist). */
+static inline int  spawn(const char *path, char *const argv[]) { return syscall3(SYS_SPAWN, (int)path, (int)argv, 0); }
+/* Runs a kernel shell command ('ls', 'ps', ...) and returns its status. */
+static inline int  kcmd(const char *line)            { return syscall3(SYS_KCMD, (int)line, 0, 0); }
 static inline int  getpid(void)                    { return syscall3(SYS_GETPID, 0, 0, 0); }
 static inline int  getppid(void)                   { return syscall3(SYS_GETPPID, 0, 0, 0); }
 static inline void sleep_ms(int ms)                 { syscall3(SYS_SLEEP, ms, 0, 0); }

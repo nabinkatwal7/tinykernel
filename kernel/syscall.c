@@ -5,6 +5,7 @@
 #include "keyboard.h"
 #include "klog.h"
 #include "sched.h"
+#include "shell.h"
 #include "timer.h"
 #include "user.h"
 
@@ -104,7 +105,8 @@ void syscall_dispatch(struct regs *r)
 	case SYS_SBRK:
 		r->eax = user_sbrk((int32_t)r->ebx);
 		break;
-	case SYS_EXEC: {
+	case SYS_EXEC:
+	case SYS_SPAWN: {
 		char *const *av = (char *const *)r->ecx;
 		uint32_t i;
 		int ok = user_str_ok(r->ebx);
@@ -120,10 +122,18 @@ void syscall_dispatch(struct regs *r)
 					break;
 			}
 		}
-		if (!ok || user_exec(r, (const char *)r->ebx, av))
+		if (!ok)
 			r->eax = (uint32_t)-1;
+		else if (r->eax == SYS_EXEC)
+			r->eax = user_exec(r, (const char *)r->ebx, av) ? (uint32_t)-1 : 0;
+		else
+			r->eax = (uint32_t)user_spawn((const char *)r->ebx, av);
 		break;
 	}
+	case SYS_KCMD:
+		r->eax = user_str_ok(r->ebx) ? (uint32_t)shell_exec_from_user((const char *)r->ebx)
+					     : (uint32_t)-1;
+		break;
 	case SYS_GETPID:
 		r->eax = task_current()->id;
 		break;

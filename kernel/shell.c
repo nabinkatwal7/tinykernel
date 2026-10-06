@@ -1512,6 +1512,17 @@ int shell_exec(const char *line)
 	return last_status;
 }
 
+int shell_exec_from_user(const char *line)
+{
+	/* Starting another program from inside one is what the spawn syscall is for. */
+	if (!kstrncmp(line, "run ", 4) || !kstrncmp(line, "demo", 4) || !kstrncmp(line, "reboot", 6)
+	    || !kstrncmp(line, "halt", 4)) {
+		console_write("not allowed from a user program\n");
+		return 1;
+	}
+	return shell_exec(line);
+}
+
 void shell_run(void)
 {
 	char line[LINE_MAX];

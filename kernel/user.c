@@ -175,6 +175,32 @@ static uint32_t push_args(uint32_t frames, int argc, char **argv)
 	return sp;
 }
 
+/* Copy the path and argv out of the program's memory (it is about to be overwritten). */
+static char stage_path[FS_NAME_MAX];
+static char stage_names[ARGS_MAX][64];
+static char *stage_argv[ARGS_MAX];
+static int stage_argc;
+
+static void stage_args(const char *path, char *const *user_argv)
+{
+	int i;
+
+	kstrlcpy(stage_path, path, sizeof stage_path);
+	stage_argc = 0;
+	if (user_argv) {
+		for (i = 0; i < ARGS_MAX && user_argv[i]; i++) {
+			kstrlcpy(stage_names[i], user_argv[i], sizeof stage_names[i]);
+			stage_argv[i] = stage_names[i];
+			stage_argc++;
+		}
+	}
+	if (stage_argc == 0) {
+		kstrlcpy(stage_names[0], stage_path, sizeof stage_names[0]);
+		stage_argv[0] = stage_names[0];
+		stage_argc = 1;
+	}
+}
+
 /*
  * exec(): replace the running program with another one. The new image is loaded into the same
  * window and the interrupt frame is rewritten so that returning from the system call starts it
@@ -183,39 +209,73 @@ static uint32_t push_args(uint32_t frames, int argc, char **argv)
  */
 int user_exec(struct regs *r, const char *path, char *const *user_argv)
 {
-	static char names[ARGS_MAX][64];
-	static char pathbuf[FS_NAME_MAX];
-	char *argv[ARGS_MAX];
-	int argc = 0, i, rc;
 	uint32_t size, entry = USER_BASE, image_end = USER_BASE;
+	int rc;
 
-	kstrlcpy(pathbuf, path, sizeof pathbuf);
-	if (user_argv) {
-		for (; argc < ARGS_MAX && user_argv[argc]; argc++) {
-			kstrlcpy(names[argc], user_argv[argc], sizeof names[argc]);
-			argv[argc] = names[argc];
-		}
-	}
-	if (argc == 0) {
-		kstrlcpy(names[0], pathbuf, sizeof names[0]);
-		argv[argc++] = names[0];
-	}
-
-	rc = load_image(pathbuf, (uint8_t *)cur_frames, &size, &entry, &image_end);
+	stage_args(path, user_argv);
+	rc = load_image(stage_path, (uint8_t *)cur_frames, &size, &entry, &image_end);
 	if (rc == -1)
 		return -1;
 	if (rc) {
-		console_printf("exec: cannot load %s\n", pathbuf);
+		console_printf("exec: cannot load %s\n", stage_path);
 		user_abort();
 	}
 	file_close_all();
 	brk_min = brk = (image_end + 15) & ~15u;
-	r->useresp = push_args(cur_frames, argc, argv);
+	r->useresp = push_args(cur_frames, stage_argc, stage_argv);
 	r->eip = entry;
 	r->eax = r->ebx = r->ecx = r->edx = r->esi = r->edi = r->ebp = 0;
-	(void)i;
-	klog(LOG_INFO, "user: exec '%s' (%u bytes)", pathbuf, size);
+	klog(LOG_INFO, "user: exec '%s' (%u bytes)", stage_path, size);
 	return 0;
+}
+
+extern uint32_t user_saved_esp; /* switch.S: where enter_user()/user_return() meet */
+
+/*
+ * spawn(): run another program to completion and return its exit code, then carry on with the
+ * caller. There is only one program window, so the caller's whole window is parked in kernel
+ * memory while the child runs in it and put back afterwards (registers and kernel stack stay
+ * where they are: we are still inside the caller's system call). Returns -1 if the program does
+ * not exist or memory ran out.
+ */
+int user_spawn(const char *path, char *const *user_argv)
+{
+	uint32_t size, entry = USER_BASE, image_end = USER_BASE;
+	uint32_t saved_esp = user_saved_esp, saved_brk = brk, saved_brk_min = brk_min;
+	uint32_t saved_esp0 = task_current()->esp0;
+	uint8_t *backup;
+	volatile int marker;
+	int rc;
+
+	stage_args(path, user_argv);
+	backup = kmalloc(USER_PAGES * PAGE_SIZE);
+	if (!backup)
+		return -1;
+	memcpy(backup, (void *)cur_frames, USER_PAGES * PAGE_SIZE);
+
+	rc = load_image(stage_path, (uint8_t *)cur_frames, &size, &entry, &image_end);
+	if (rc) {
+		memcpy((void *)cur_frames, backup, USER_PAGES * PAGE_SIZE);
+		kfree(backup);
+		return rc == -1 ? -1 : -2;
+	}
+	klog(LOG_INFO, "user: spawn '%s' (%u bytes)", stage_path, size);
+	brk_min = brk = (image_end + 15) & ~15u;
+
+	task_current()->esp0 = (uint32_t)&marker - 256; /* ring 3 interrupts land below this frame */
+	gdt_set_kernel_stack(task_current()->esp0);
+	rc = enter_user(entry, push_args(cur_frames, stage_argc, stage_argv));
+
+	task_current()->esp0 = saved_esp0;
+	gdt_set_kernel_stack(saved_esp0);
+	user_saved_esp = saved_esp;
+	memcpy((void *)cur_frames, backup, USER_PAGES * PAGE_SIZE);
+	kfree(backup);
+	brk = saved_brk;
+	brk_min = saved_brk_min;
+	abort_requested = 0;
+	klog(LOG_INFO, "user: spawned '%s' exited with code %d", stage_path, rc);
+	return rc;
 }
 
 int user_run(const char *name)

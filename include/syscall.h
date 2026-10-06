@@ -17,6 +17,8 @@
 #define SYS_GETPPID 12
 #define SYS_SBRK    13 /* ebx = delta; returns the old program break or -1 */
 #define SYS_EXEC    14 /* ebx = path, ecx = NULL-terminated argv (or 0); does not return on success */
+#define SYS_SPAWN   15 /* like exec, but runs the program to completion and returns its exit code */
+#define SYS_KCMD    16 /* ebx = command line for the kernel shell; returns its status */
 #define SYS_FWRITE  10 /* ebx = fd, ecx = buffer, edx = count; fd 1 and 2 are the console */
 
 void syscall_dispatch(struct regs *r);

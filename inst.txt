@@ -1,4 +1,3 @@
-Write user-mode shell program,
 Add file descriptors table,
 Implement virtual filesystem layer,
 Add device files in VFS,
