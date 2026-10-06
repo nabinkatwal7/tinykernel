@@ -14,6 +14,17 @@
 #include "crashdump.h"
 #include "cred.h"
 #include "debug.h"
+#include "sb.h"
+#include "udpdemo.h"
+#include "netstat.h"
+#include "ntp.h"
+#include "telnetd.h"
+#include "dns.h"
+#include "usbhid.h"
+#include "usb.h"
+#include "ahci.h"
+#include "ext2.h"
+#include "blk.h"
 #include "sha256.h"
 #include "users.h"
 #include "gdbstub.h"
@@ -2393,6 +2404,15 @@ static int cmd_arp(int argc, char **argv)
 			arp_cache_clear();
 			return 0;
 		}
+		if (!kstrcmp(argv[1], "ttl")) { /* arp ttl [seconds] */
+			uint32_t secs;
+
+			if (argc > 2 && !kstrtoul(argv[2], &secs))
+				arp_set_ttl(secs);
+			console_printf("entries are trusted for %u s after the last packet from the neighbour; %u have aged out so far\n", arp_get_ttl(),
+				       arp_expired_count());
+			return 0;
+		}
 		if (ip_parse(argv[1], &ip)) {
 			console_write("usage: arp [a.b.c.d | flush]\n");
 			return 1;
@@ -2406,7 +2426,7 @@ static int cmd_arp(int argc, char **argv)
 	}
 	for (i = 0; i < ARP_CACHE_SIZE; i++) {
 		if (!arp_cache_get(i, &ip, mac)) {
-			console_printf("  %-15s %s\n", ip_str(ip, s), mac_str(mac, m));
+			console_printf("  %-15s %s  age %d s\n", ip_str(ip, s), mac_str(mac, m), arp_cache_age(i));
 			n++;
 		}
 	}
@@ -2483,20 +2503,28 @@ static int cmd_icmptest(int argc, char **argv)
 /* ping <ip> [count] */
 static int cmd_ping(int argc, char **argv)
 {
-	uint32_t ip, count = 4, bytes, sent = 0, got = 0, i, rtt_min = 0xFFFFFFFFu, rtt_max = 0, rtt_sum = 0;
+	uint32_t ip, count = 4, size = 32, bytes, sent = 0, got = 0, i, rtt_min = 0xFFFFFFFFu, rtt_max = 0, rtt_sum = 0;
 	char s[16];
 
 	if (!netif.up) {
 		console_write("no network interface\n");
 		return 1;
 	}
-	if (argc < 2 || ip_parse(argv[1], &ip) || (argc > 2 && (kstrtoul(argv[2], &count) || !count || count > 100))) {
-		console_write("usage: ping <a.b.c.d> [count]\n");
+	if (argc < 2 || (argc > 2 && (kstrtoul(argv[2], &count) || !count || count > 100)) || (argc > 3 && (kstrtoul(argv[3], &size) || size > 8000))) {
+		console_write("usage: ping <host or a.b.c.d> [count [bytes]]\n");
 		return 1;
 	}
-	console_printf("PING %s: 32 bytes of data\n", ip_str(ip, s));
+	{
+		int rc = dns_resolve(argv[1], &ip);
+
+		if (rc) {
+			console_printf("ping: %s: %s\n", argv[1], dns_strerror(rc));
+			return 1;
+		}
+	}
+	console_printf("PING %s: %u bytes of data\n", ip_str(ip, s), size);
 	for (i = 0; i < count && !shell_interrupted(); i++) {
-		int rtt = icmp_ping(ip, (uint16_t)(i + 1), 1500, &bytes, 0);
+		int rtt = icmp_ping_size(ip, (uint16_t)(i + 1), size, 1500, &bytes, 0);
 
 		sent++;
 		if (rtt >= 0) {
@@ -4098,6 +4126,29 @@ static const struct command commands[] = {
 	{ "readlink", "readlink LINK",        "print the target of a symbolic link", cmd_readlink },
 	{ "logout",  "logout",                "end the session and show the login prompt", cmd_logout },
 	{ "jtest",   "jtest",                 "journal crash-recovery test", cmd_jtest },
+	{ "blkdev", "blkdev", "list block devices", cmd_blkdev },
+	{ "ramdisk", "ramdisk create|destroy|test", "RAM disk block devices", cmd_ramdisk },
+	{ "losetup", "losetup NAME FILE", "present a file as a block device", cmd_losetup },
+	{ "fdisk", "fdisk DEVICE", "show and register MBR partitions", cmd_fdisk },
+	{ "ext2info", "ext2info DEVICE", "describe an ext2 volume", cmd_ext2info },
+	{ "ext2", "ext2 mount DEV /PATH", "mount an ext2 volume (read-only)", cmd_ext2 },
+	{ "dma", "dma [on|off|test]", "bus-master DMA for ATA transfers", cmd_dma },
+	{ "ahci", "ahci", "find the SATA controller and list its ports", cmd_ahci },
+	{ "usb", "usb", "list USB host controllers", cmd_usb },
+	{ "usbkbd", "usbkbd test", "USB keyboard report decoder test", cmd_usbkbd },
+	{ "txtest", "txtest", "transmit queue test", cmd_txtest },
+	{ "nslookup", "nslookup NAME [SERVER]", "look up a host name", cmd_nslookup },
+	{ "tcpserve", "tcpserve PORT [N]", "TCP echo server (for testing)", cmd_tcpserve },
+	{ "tcpstat", "tcpstat [drop O I]", "TCP counters, timers, loss simulation", cmd_tcpstat },
+	{ "tcpsend", "tcpsend IP PORT BYTES", "send a test pattern over TCP", cmd_tcpsend },
+	{ "tcpget", "tcpget IP PORT [MS]", "receive a test pattern over TCP", cmd_tcpget },
+	{ "telnetd", "telnetd [PORT [N]]", "tiny remote shell over TCP", cmd_telnetd },
+	{ "ntpdate", "ntpdate [-q] [SERVER]", "set the clock from an NTP server", cmd_ntpdate },
+	{ "netstat", "netstat [-s|-c|-a]", "network statistics and connections", cmd_netstat },
+	{ "udpecho", "udpecho [PORT [N]]", "UDP echo server", cmd_udpecho },
+	{ "udpchat", "udpchat LPORT IP PORT", "two-person UDP chat", cmd_udpchat },
+	{ "sb", "sb", "detect a Sound Blaster", cmd_sb },
+	{ "play", "play tone|scale|file", "play PCM audio on the Sound Blaster", cmd_play },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },

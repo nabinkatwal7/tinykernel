@@ -1,0 +1,1 @@
+A file inside a subdirectory of the ext2 test image.

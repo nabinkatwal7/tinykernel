@@ -6,6 +6,7 @@
 #include "sched.h"
 #include "keyboard.h"
 #include "pipe.h"
+#include "sock.h"
 #include "kmalloc.h"
 #include "kstring.h"
 
@@ -14,7 +15,7 @@
  * (after dup/dup2) may share one object - and with it the cursor. Objects are either the
  * console (stdin/stdout/stderr) or a buffered regular file.
  */
-enum { OBJ_FREE, OBJ_CONSOLE_IN, OBJ_CONSOLE_OUT, OBJ_FILE, OBJ_DEV, OBJ_PIPE_R, OBJ_PIPE_W };
+enum { OBJ_FREE, OBJ_CONSOLE_IN, OBJ_CONSOLE_OUT, OBJ_FILE, OBJ_DEV, OBJ_PIPE_R, OBJ_PIPE_W, OBJ_SOCK };
 
 struct ofile {
 	int kind;
@@ -26,6 +27,7 @@ struct ofile {
 	int dirty;
 	const struct vfs_device *dev; /* OBJ_DEV */
 	struct pipe *pipe;            /* OBJ_PIPE_R / OBJ_PIPE_W */
+	struct sock *sock;            /* OBJ_SOCK */
 	int lock;                     /* 0 none, LOCK_SH or LOCK_EX (as a number 1 / 2) */
 };
 
@@ -85,6 +87,8 @@ static int release(struct ofile *o)
 	}
 	if (o->lock)
 		wq_wake_all(&lock_wq); /* its lock goes with it */
+	if (o->kind == OBJ_SOCK)
+		sock_free(o->sock);
 	if (o->kind == OBJ_PIPE_R)
 		pipe_close_read(o->pipe);
 	else if (o->kind == OBJ_PIPE_W)
@@ -260,6 +264,55 @@ int file_flock(int fd, int op)
 	return FS_OK;
 }
 
+/* ---- sockets: descriptors whose reads and writes go to the network ---- */
+
+int file_socket(int type)
+{
+	struct sock *s;
+	int fd = new_fd(), oi = new_obj();
+
+	if (fd < 0 || oi < 0)
+		return FS_ENOSPC;
+	s = sock_new(type);
+	if (!s)
+		return FS_EINVAL;
+	memset(&objs[oi], 0, sizeof objs[oi]);
+	objs[oi].kind = OBJ_SOCK;
+	objs[oi].refs = 1;
+	objs[oi].flags = O_RDWR;
+	objs[oi].sock = s;
+	fdtab[fd] = oi;
+	return fd;
+}
+
+struct sock *file_get_sock(int fd)
+{
+	struct ofile *o = get(fd);
+
+	return o && o->kind == OBJ_SOCK ? o->sock : 0;
+}
+
+int file_accept(int fd)
+{
+	struct sock *s = file_get_sock(fd), *n;
+	int nfd = new_fd(), oi = new_obj(), err;
+
+	if (!s)
+		return FS_EINVAL;
+	if (nfd < 0 || oi < 0)
+		return FS_ENOSPC;
+	n = sock_accept(s, &err);
+	if (!n)
+		return err;
+	memset(&objs[oi], 0, sizeof objs[oi]);
+	objs[oi].kind = OBJ_SOCK;
+	objs[oi].refs = 1;
+	objs[oi].flags = O_RDWR;
+	objs[oi].sock = n;
+	fdtab[nfd] = oi;
+	return nfd;
+}
+
 int file_pipe(int fds[2])
 {
 	struct pipe *p;
@@ -422,6 +475,8 @@ int file_read(int fd, void *buf, uint32_t n)
 			return FS_EINVAL;
 		return o->dev->read(buf, n);
 	}
+	if (o->kind == OBJ_SOCK)
+		return sock_recv(o->sock, buf, n, 0, 0);
 	if (o->kind == OBJ_PIPE_R)
 		return pipe_read(o->pipe, buf, n);
 	if (o->kind != OBJ_FILE || (o->flags & O_WRONLY))
@@ -456,6 +511,8 @@ int file_write(int fd, const void *buf, uint32_t n)
 			return FS_EINVAL;
 		return o->dev->write(buf, n);
 	}
+	if (o->kind == OBJ_SOCK)
+		return sock_send(o->sock, buf, n, 0, 0);
 	if (o->kind == OBJ_PIPE_W) {
 		int rc = pipe_write(o->pipe, buf, n);
 

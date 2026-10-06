@@ -16,6 +16,13 @@ void clock_init(void)
 	boot_ns_offset = clock_monotonic_ns();
 }
 
+void clock_set_realtime(uint32_t unix_seconds)
+{
+	uint32_t elapsed = (uint32_t)((clock_monotonic_ns() - boot_ns_offset) / 1000000000u);
+
+	boot_unix = unix_seconds - elapsed;
+}
+
 uint32_t clock_boot_unix(void)
 {
 	return boot_unix;

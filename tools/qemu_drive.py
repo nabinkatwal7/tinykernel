@@ -44,7 +44,7 @@ def main():
         "-drive", f"format=raw,file={disk},if=ide,index=0",
         "-drive", f"format=raw,file={os.environ.get('FATIMG', os.path.join(BUILD,'fat.img'))},if=ide,index=1", "-boot", "a",
         "-smp", "2", "-netdev", "user,id=n0,hostfwd=udp::5601-:7777,hostfwd=tcp::5602-:8080", "-object", f"filter-dump,id=f0,netdev=n0,file={os.path.join(BUILD, 'net-test.pcap')}", "-device", "rtl8139,netdev=n0",
-        "-display", "none",
+        "-display", "none", *os.environ.get("QEMU_EXTRA", "").split(),
         "-chardev", f"socket,id=s0,host=127.0.0.1,port={port + 1},server=on,wait=off,logfile={serial}",
         "-serial", "chardev:s0",
         "-chardev", f"socket,id=s1,host=127.0.0.1,port={port + 2},server=on,wait=off",
@@ -76,8 +76,20 @@ def main():
             except socket.timeout: pass
             gdb.sendall(b"+")
             print("gdb<", data.decode(errors="replace")); continue
+        if line.startswith("guesttcp:"):   # guesttcp:<port>:<text> -> connect to the guest TCP service (forwarded ports 5602=8080), send text, print the reply
+            _, hp, htext = line.split(":", 2)
+            t = socket.create_connection(("127.0.0.1", int(hp)), timeout=4)
+            t.sendall(htext.replace('\\n', chr(10)).encode())
+            time.sleep(1.0)
+            t.settimeout(1.0)
+            try: reply = t.recv(65536)
+            except socket.timeout: reply = b""
+            print("tcp<", reply.decode(errors="replace").strip()); t.close(); continue
         if line.startswith("hostudp:"):   # hostudp:<text> -> datagram to guest port 7777 (forwarded 5601)
-            u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); u.sendto(line[8:].encode(), ("127.0.0.1", 5601)); time.sleep(0.6); continue
+            u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); u.sendto(line[8:].encode(), ("127.0.0.1", 5601)); u.settimeout(1.0)
+            try: print("udp<", u.recvfrom(2048)[0].decode(errors="replace"))
+            except socket.timeout: pass
+            time.sleep(0.3); continue
         if line.startswith("hostlisten:"):   # hostlisten:<udp port> -> collect datagrams the guest sends to 10.0.2.2:<port>
             host_udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); host_udp.bind(("0.0.0.0", int(line[11:]))); host_udp.settimeout(0.2); continue
         if line.startswith("hosttcp:"):   # hosttcp:<port>:<reply> -> one-shot TCP server on the host
@@ -102,6 +114,45 @@ def main():
                 except Exception as e:
                     host_log.append("HOST TCP: server error %s" % e)
             t = threading.Thread(target=serve, daemon=True); t.start(); continue
+        if line.startswith("hostsink:"):   # hostsink:<port>[:<delay ms between reads>] -> accept one connection, read everything, check the byte pattern i % 251
+            import threading
+            parts = line[9:].split(":")
+            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            srv.bind(("0.0.0.0", int(parts[0]))); srv.listen(1); srv.settimeout(30)
+            delay = float(parts[1]) / 1000 if len(parts) > 1 else 0
+            def sink(srv=srv, delay=delay):
+                try:
+                    conn, addr = srv.accept(); conn.settimeout(15)
+                    total = bad = 0
+                    while True:
+                        chunk = conn.recv(4096)
+                        if not chunk: break
+                        for k, b in enumerate(chunk):
+                            if b != (total + k) % 251: bad += 1
+                        total += len(chunk)
+                        if delay: time.sleep(delay)
+                    host_log.append("HOST SINK: received %d bytes, %d wrong" % (total, bad))
+                    conn.close()
+                except Exception as e:
+                    host_log.append("HOST SINK: error %s" % e)
+            threading.Thread(target=sink, daemon=True).start(); continue
+        if line.startswith("hostsrc:"):   # hostsrc:<port>:<bytes> -> accept one connection and send <bytes> of the pattern i % 251 as fast as possible, then close
+            import threading
+            port_s, count_s = line[8:].split(":")
+            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            srv.bind(("0.0.0.0", int(port_s))); srv.listen(1); srv.settimeout(30)
+            def source(srv=srv, count=int(count_s)):
+                try:
+                    conn, addr = srv.accept(); conn.settimeout(30)
+                    data = bytes(i % 251 for i in range(count))
+                    conn.sendall(data)
+                    host_log.append("HOST SRC: sent %d bytes" % count)
+                    conn.close()
+                except Exception as e:
+                    host_log.append("HOST SRC: error %s" % e)
+            threading.Thread(target=source, daemon=True).start(); continue
         if line.startswith("mon:"):
             mon(line[4:]); time.sleep(0.4); continue
         if line.startswith("key:"):

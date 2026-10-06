@@ -11,7 +11,10 @@
 #include "mmapf.h"
 #include "shell.h"
 #include "shm.h"
+#include "sock.h"
 #include "timer.h"
+#include "kmalloc.h"
+#include "kprintf.h"
 #include "kstring.h"
 #include "user.h"
 #include "vfs.h"
@@ -218,6 +221,105 @@ void syscall_dispatch(struct regs *r)
 	case SYS_CLS:
 		console_clear();
 		break;
+	case SYS_SOCKET:
+		r->eax = (uint32_t)file_socket((int)r->ebx);
+		break;
+	case SYS_CONNECT: {
+		struct sock *s = file_get_sock((int)r->ebx);
+
+		r->eax = (uint32_t)(s ? sock_connect(s, r->ecx, (uint16_t)r->edx) : FS_EINVAL);
+		break;
+	}
+	case SYS_BIND: {
+		struct sock *s = file_get_sock((int)r->ebx);
+
+		r->eax = (uint32_t)(s ? sock_bind(s, (uint16_t)r->ecx) : FS_EINVAL);
+		break;
+	}
+	case SYS_LISTEN: {
+		struct sock *s = file_get_sock((int)r->ebx);
+
+		r->eax = (uint32_t)(s ? sock_listen(s) : FS_EINVAL);
+		break;
+	}
+	case SYS_ACCEPT:
+		r->eax = (uint32_t)file_accept((int)r->ebx);
+		break;
+	case SYS_SENDTO: {
+		struct sock *s = file_get_sock((int)r->ebx);
+		const uint32_t *a = (const uint32_t *)r->ecx;
+
+		if (!s || !user_ptr_ok(r->ecx, 16) || !user_ptr_ok(a[0], a[1])) {
+			r->eax = (uint32_t)FS_EINVAL;
+			break;
+		}
+		r->eax = (uint32_t)sock_send(s, (const void *)a[0], a[1], a[2], (uint16_t)a[3]);
+		break;
+	}
+	case SYS_RECVFROM: {
+		struct sock *s = file_get_sock((int)r->ebx);
+		const uint32_t *a = (const uint32_t *)r->ecx;
+		uint32_t ip = 0;
+		uint16_t port = 0;
+
+		if (!s || !user_ptr_ok(r->ecx, 16) || !user_ptr_ok(a[0], a[1])) {
+			r->eax = (uint32_t)FS_EINVAL;
+			break;
+		}
+		r->eax = (uint32_t)sock_recv(s, (void *)a[0], a[1], &ip, &port);
+		if ((int)r->eax >= 0) {
+			if (a[2] && user_ptr_ok(a[2], 4))
+				*(uint32_t *)a[2] = ip;
+			if (a[3] && user_ptr_ok(a[3], 4))
+				*(uint32_t *)a[3] = port;
+		}
+		break;
+	}
+	case SYS_RESOLVE: {
+		uint32_t ip = 0;
+
+		if (!user_str_ok(r->ebx) || !user_ptr_ok(r->ecx, 4)) {
+			r->eax = (uint32_t)FS_EINVAL;
+			break;
+		}
+		r->eax = (uint32_t)sock_resolve((const char *)r->ebx, &ip);
+		if (!r->eax)
+			*(uint32_t *)r->ecx = ip;
+		break;
+	}
+	case SYS_DIRLIST: {
+		struct vfs_dirent *ent;
+		uint32_t n = 0;
+		int count, i;
+
+		if (!user_str_ok(r->ebx) || !user_ptr_ok(r->ecx, r->edx) || !r->edx) {
+			r->eax = (uint32_t)-1;
+			break;
+		}
+		ent = kmalloc(sizeof *ent * FS_MAX_FILES);
+		if (!ent) {
+			r->eax = (uint32_t)FS_ENOSPC;
+			break;
+		}
+		count = vfs_list((const char *)r->ebx, ent, FS_MAX_FILES);
+		if (count < 0) {
+			r->eax = (uint32_t)count;
+			kfree(ent);
+			break;
+		}
+		for (i = 0; i < count; i++) {
+			char line[VFS_NAME_MAX + 24];
+			int len = ksnprintf(line, sizeof line, "%s %u %c\n", ent[i].name, ent[i].size, ent[i].is_dir ? 'd' : 'f');
+
+			if (n + (uint32_t)len > r->edx)
+				break;
+			memcpy((char *)r->ecx + n, line, (size_t)len);
+			n += (uint32_t)len;
+		}
+		kfree(ent);
+		r->eax = n;
+		break;
+	}
 	case SYS_FLOCK:
 		r->eax = (uint32_t)file_flock((int)r->ebx, (int)r->ecx);
 		break;

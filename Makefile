@@ -33,7 +33,7 @@ FLAT_PROGS := $(patsubst user/%.asm,%,$(filter-out %.elf.asm,$(wildcard user/*.a
 ELF_PROGS  := $(patsubst user/%.elf.asm,%,$(wildcard user/*.elf.asm))
 # Programs that live on the FAT12 data disk (/fat/bin) instead of in the kernel image: the image has to fit the
 # bootloader's load area, and these do not need to exist before the disk is mounted. Names are 8.3 file names.
-FAT_PROGS  := advent snake tetris cal xxd sleep yes true false tee uniq rev nl basename dirname
+FAT_PROGS  := nc httpget wget httpd advent snake tetris cal xxd sleep yes true false tee uniq rev nl basename dirname
 C_PROGS    := $(filter-out $(FAT_PROGS),$(patsubst user/c/%.c,%,$(wildcard user/c/*.c)))
 FAT_BINS   := $(FAT_PROGS:%=$(BUILD)/c_%.elf)
 PROG_IMAGES := $(foreach p,$(FLAT_PROGS),$(p):$(BUILD)/$(p).bin) \
@@ -78,7 +78,7 @@ $(BUILD)/%.elf: user/%.elf.asm user/user.ld | $(BUILD)
 	$(OBJCOPY) -S -O elf32-i386 $(BUILD)/$*.upe $@
 
 # C user programs: user/c/NAME.c -> build/c_NAME.elf, linked with the C runtime in user/lib.
-UCFLAGS  := -m32 -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie             -fno-asynchronous-unwind-tables -mgeneral-regs-only -Wall -Wextra -Iuser/lib
+UCFLAGS  := -m32 -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie             -fno-asynchronous-unwind-tables -mgeneral-regs-only -Wall -Wextra -ffunction-sections -fdata-sections -Iuser/lib
 ULIB_OBJS := $(BUILD)/ucrt0.o $(BUILD)/ulib.o $(BUILD)/ustring.o $(BUILD)/ustdio.o $(BUILD)/umalloc.o
 
 $(BUILD)/ucrt0.o: user/lib/crt0.S | $(BUILD)
@@ -100,7 +100,7 @@ $(BUILD)/uc_%.o: user/c/%.c $(wildcard user/lib/*.h) | $(BUILD)
 	$(CC) $(UCFLAGS) -c $< -o $@
 
 $(BUILD)/c_%.elf: $(BUILD)/uc_%.o $(ULIB_OBJS) user/user.ld
-	$(LD) -m i386pe -T user/user.ld -nostdlib -o $(BUILD)/c_$*.upe $(ULIB_OBJS) $<
+	$(LD) -m i386pe -T user/user.ld -nostdlib --gc-sections -o $(BUILD)/c_$*.upe $(ULIB_OBJS) $<
 	$(OBJCOPY) -S -O elf32-i386 $(BUILD)/c_$*.upe $@
 
 $(BUILD)/kernel.pe: $(OBJS) kernel/linker.ld
@@ -137,11 +137,19 @@ $(BUILD):
 $(BUILD)/mkfat12.exe: tools/mkfat12.c | $(BUILD)
 	gcc -O1 -o $@ $<
 
-$(FATIMG): $(BUILD)/mkfat12.exe $(wildcard fatroot/* fatroot/*/*) $(FAT_BINS)
+# An ext2 test image (a partition table, then ext2) built from ext2root/; it rides on the FAT disk as EXT2.IMG.
+$(BUILD)/mkext2.exe: tools/mkext2.c | $(BUILD)
+	gcc -O1 -o $@ $<
+
+$(BUILD)/ext2.img: $(BUILD)/mkext2.exe $(wildcard ext2root/* ext2root/*/*)
+	$(BUILD)/mkext2.exe $@ ext2root mbr
+
+$(FATIMG): $(BUILD)/mkfat12.exe $(wildcard fatroot/* fatroot/*/*) $(FAT_BINS) $(BUILD)/ext2.img
 	rm -rf $(BUILD)/fatroot
 	mkdir -p $(BUILD)/fatroot/bin
 	cp -r fatroot/. $(BUILD)/fatroot/
 	for p in $(FAT_PROGS); do cp $(BUILD)/c_$$p.elf $(BUILD)/fatroot/bin/$$p; done
+	cp $(BUILD)/ext2.img $(BUILD)/fatroot/EXT2.IMG
 	$(BUILD)/mkfat12.exe $@ $(BUILD)/fatroot
 
 # A FAT16 test volume (10 MB, 4-sector clusters, a 100 KB file spanning many clusters); try it by passing FATIMG=build/fat16.img

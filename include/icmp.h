@@ -10,6 +10,7 @@ void icmp_init(void);
  * milliseconds (0 means "under a tick"), or a negative value: -1 could not send (no route/ARP),
  * -2 timed out. 'bytes' receives the size of the reply's ICMP payload.
  */
+int icmp_ping_size(uint32_t dst, uint16_t seq, uint32_t size, uint32_t timeout_ms, uint32_t *bytes, uint8_t *ttl); /* echo with SIZE bytes of data (fragmented above 1472) */
 int icmp_ping(uint32_t dst, uint16_t seq, uint32_t timeout_ms, uint32_t *bytes, uint8_t *ttl);
 
 struct icmp_stats {

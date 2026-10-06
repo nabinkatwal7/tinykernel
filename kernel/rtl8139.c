@@ -53,7 +53,6 @@ struct netif netif;
 
 static uint8_t *rx_buf;          /* DMA ring the card writes received frames into */
 static uint8_t *tx_buf[NTX];     /* one buffer per transmit descriptor */
-static int tx_cur;
 
 #define RXQ 16
 #define RX_FRAME_MAX 1536
@@ -186,40 +185,75 @@ const char *mac_str(const uint8_t mac[ETH_ALEN], char out[18])
 	return out;
 }
 
-/* Send one frame: pad it to the 60-byte minimum, copy into a DMA buffer, hand it to the card. */
+/*
+ * Transmit queue. The card has four transmit descriptors that it works through in order. Frames are copied into the
+ * next free descriptor's buffer and started immediately; the caller does not wait for the wire. A descriptor is free
+ * again once the card has set its OWN bit (the DMA is done). Only when all four are busy does a sender have to wait.
+ */
+static int tx_head, tx_tail;      /* next descriptor to fill, oldest one still owned by the card */
+static uint32_t tx_queue_full, tx_queue_max;
+
+/* Retire descriptors the card has finished with (interrupts must be off). */
+static void tx_reclaim(void)
+{
+	uint16_t io = netif.io_base;
+
+	while (tx_tail != tx_head) {
+		uint32_t tsd = inl((uint16_t)(io + REG_TSD(tx_tail % NTX)));
+
+		if (!(tsd & TSD_OWN))
+			break; /* still being sent */
+		if (!(tsd & TSD_TOK))
+			netif.tx_errors++;
+		else
+			netif.tx_frames++;
+		tx_tail++;
+	}
+}
+
+void net_tx_stats(uint32_t *queue_full, uint32_t *max_depth)
+{
+	*queue_full = tx_queue_full;
+	*max_depth = tx_queue_max;
+}
+
 int net_send_frame(const void *frame, uint16_t len)
 {
 	uint16_t io = netif.io_base;
-	int slot = tx_cur, spin;
-	uint32_t tsd;
+	int tries;
 
 	if (!netif.up || len < ETH_HLEN || len > ETH_MAX_FRAME)
 		return -1;
-	/* the previous user of this descriptor must have finished (OWN set means the DMA is done) */
-	for (spin = 100000; spin; spin--) {
-		tsd = inl((uint16_t)(io + REG_TSD(slot)));
-		if (tsd & (TSD_OWN | TSD_TOK) || !tsd)
-			break;
+	for (tries = 0; tries < 2000; tries++) {
+		uint32_t f = irq_save();
+
+		tx_reclaim();
+		if (tx_head - tx_tail < NTX) { /* a free descriptor */
+			int slot = tx_head % NTX;
+			uint16_t n = len;
+			int depth;
+
+			memcpy(tx_buf[slot], frame, n);
+			if (n < ETH_MIN_FRAME) {
+				memset(tx_buf[slot] + n, 0, (size_t)(ETH_MIN_FRAME - n));
+				n = ETH_MIN_FRAME;
+			}
+			outl((uint16_t)(io + REG_TSAD(slot)), (uint32_t)tx_buf[slot]);
+			outl((uint16_t)(io + REG_TSD(slot)), n); /* writing the length (OWN clear) starts the transfer */
+			tx_head++;
+			depth = tx_head - tx_tail;
+			if ((uint32_t)depth > tx_queue_max)
+				tx_queue_max = (uint32_t)depth;
+			irq_restore(f);
+			return 0;
+		}
+		irq_restore(f);
+		if (!tries)
+			tx_queue_full++;
+		task_sleep(1); /* all four are in flight: give the card a moment */
 	}
-	memcpy(tx_buf[slot], frame, len);
-	if (len < ETH_MIN_FRAME) {
-		memset(tx_buf[slot] + len, 0, (size_t)(ETH_MIN_FRAME - len));
-		len = ETH_MIN_FRAME;
-	}
-	outl((uint16_t)(io + REG_TSAD(slot)), (uint32_t)tx_buf[slot]);
-	outl((uint16_t)(io + REG_TSD(slot)), len); /* writing the length (OWN clear) starts the transfer */
-	for (spin = 1000000; spin; spin--) {
-		tsd = inl((uint16_t)(io + REG_TSD(slot)));
-		if (tsd & (TSD_TOK | TSD_TUN))
-			break;
-	}
-	tx_cur = (tx_cur + 1) % NTX;
-	if (!(tsd & TSD_TOK)) {
-		netif.tx_errors++;
-		return -1;
-	}
-	netif.tx_frames++;
-	return 0;
+	netif.tx_errors++;
+	return -1;
 }
 
 int eth_send(const uint8_t dst[ETH_ALEN], uint16_t ethertype, const void *payload, uint16_t len)
@@ -348,4 +382,34 @@ int rtl8139_init(void)
 		     mac_str(netif.mac, m), rtl8139_link_up() ? "up" : "down");
 	}
 	return 0;
+}
+
+/* txtest : queue 200 frames back to back; none may be lost, and the queue must have been used */
+int cmd_txtest(int argc, char **argv)
+{
+	static const uint8_t bcast[ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+	uint8_t payload[100];
+	uint32_t before_ok = netif.tx_frames, before_err = netif.tx_errors, full, depth, t0 = timer_ticks();
+	int i, sent = 0;
+
+	(void)argc;
+	(void)argv;
+	if (!netif.up) {
+		console_write("txtest: no network card\n");
+		return 1;
+	}
+	memset(payload, 0x42, sizeof payload);
+	for (i = 0; i < 200; i++)
+		sent += eth_send(bcast, 0x88B5, payload, sizeof payload) == 0; /* 0x88B5: local experimental ethertype */
+	task_sleep(100); /* let the card finish */
+	{
+		uint32_t f = irq_save();
+
+		tx_reclaim();
+		irq_restore(f);
+	}
+	net_tx_stats(&full, &depth);
+	console_printf("txtest: %d frames queued in %u ticks, %u sent by the card, %u errors, queue depth up to %u, sender waited %u time(s)\n",
+		       sent, timer_ticks() - t0, netif.tx_frames - before_ok, netif.tx_errors - before_err, depth, full);
+	return !(sent == 200 && netif.tx_frames - before_ok == 200 && netif.tx_errors == before_err);
 }

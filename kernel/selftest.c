@@ -37,6 +37,11 @@ static const struct test tests[] = {
 	{ "user: malloc",          "run malloctest",      0, 0 },
 	{ "user: devices",         "run devtest",         0, 0 },
 	{ "user: kernel isolation", "run evil",           0, 0 }, /* must be killed: see below */
+	{ "ram disk",              "ramdisk test",        0, 0 },
+	{ "loopback device",       "losetup test",        1, 0 },
+	{ "partition table",       "fdisk test",          0, 0 },
+	{ "ata dma",               "dma test",            0, 0 },
+	{ "ext2 read-only driver", "ext2 test",           0, 0 },
 	{ "filesystem",            "fstest",              1, 0 },
 	{ "fs journal replay",     "jtest",               1, 0 },
 	{ "pipes and redirection", "shtest",              1, 0 },
@@ -50,6 +55,8 @@ static const struct test tests[] = {
 	{ "user: file locks",      "run locktest",        1, 0 },
 	{ "icmp loopback",         "icmptest",            0, 1 },
 	{ "udp loopback",          "udp test",            0, 1 },
+	{ "tx queue",              "txtest",              0, 1 },
+	{ "ip fragmentation",      "ping 127.0.0.1 1 4000", 0, 1 },
 };
 #define NTESTS (sizeof tests / sizeof tests[0])
 
