@@ -3,6 +3,7 @@
 #include "ata.h"
 #include "bcache.h"
 #include "console.h"
+#include "cpu.h"
 #include "debug.h"
 #include "editor.h"
 #include "env.h"
@@ -1432,6 +1433,52 @@ static int cmd_lspci(int argc, char **argv)
 	return 0;
 }
 
+static int cmd_cpuinfo(int argc, char **argv)
+{
+	static const struct { uint32_t bit; const char *name; } edx[] = {
+		{ CPU_FPU, "fpu" }, { CPU_PSE, "pse" }, { CPU_TSC, "tsc" }, { CPU_MSR, "msr" },
+		{ CPU_PAE, "pae" }, { CPU_CX8, "cx8" }, { CPU_APIC, "apic" }, { CPU_SEP, "sep" },
+		{ CPU_PGE, "pge" }, { CPU_CMOV, "cmov" }, { CPU_MMX, "mmx" }, { CPU_FXSR, "fxsr" },
+		{ CPU_SSE, "sse" }, { CPU_SSE2, "sse2" },
+	};
+	static const struct { uint32_t bit; const char *name; } ecx[] = {
+		{ CPU_SSE3, "sse3" }, { CPU_SSSE3, "ssse3" }, { CPU_SSE41, "sse4.1" },
+		{ CPU_SSE42, "sse4.2" }, { CPU_POPCNT, "popcnt" }, { CPU_HYPERV, "hypervisor" },
+	};
+	const struct cpu_info *c = cpu_get();
+	unsigned i;
+	uint32_t mhz;
+
+	(void)argc;
+	(void)argv;
+	if (!c->has_cpuid) {
+		console_write("this CPU has no CPUID instruction\n");
+		return 1;
+	}
+	console_printf("vendor:   %s\n", c->vendor);
+	if (c->brand[0]) {
+		const char *b = c->brand;
+
+		while (*b == ' ')
+			b++;
+		console_printf("model:    %s\n", b);
+	}
+	console_printf("family %u, model %u, stepping %u (max cpuid leaf %u)\n", c->family, c->model,
+		       c->stepping, c->max_leaf);
+	mhz = cpu_mhz_estimate();
+	if (mhz)
+		console_printf("speed:    about %u MHz (measured with the TSC)\n", mhz);
+	console_write("features:");
+	for (i = 0; i < sizeof edx / sizeof edx[0]; i++)
+		if (c->features_edx & edx[i].bit)
+			console_printf(" %s", edx[i].name);
+	for (i = 0; i < sizeof ecx / sizeof ecx[0]; i++)
+		if (c->features_ecx & ecx[i].bit)
+			console_printf(" %s", ecx[i].name);
+	console_putchar('\n');
+	return 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -1940,6 +1987,7 @@ static const struct command commands[] = {
 	{ "fscorrupt", "fscorrupt <0-3>",     "damage the fs for testing fsck", cmd_fscorrupt },
 	{ "fat",     "fat info|ls|cat",       "read the FAT12 image on the IDE slave", cmd_fat },
 	{ "lspci",   "lspci [-v]",            "list PCI devices", cmd_lspci },
+	{ "cpuinfo", "cpuinfo",               "CPU identification and speed", cmd_cpuinfo },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },
