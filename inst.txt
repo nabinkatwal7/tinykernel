@@ -1,4 +1,3 @@
-Add kernel symbol table,
 Print stack traces on panic,
 Add backtrace shell command,
 Add kernel assertions with file names,

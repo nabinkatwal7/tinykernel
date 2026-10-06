@@ -31,6 +31,7 @@
 #include "net.h"
 #include "oom.h"
 #include "paging.h"
+#include "ksym.h"
 #include "pcache.h"
 #include "percpu.h"
 #include "pci.h"
@@ -2834,6 +2835,39 @@ static int cmd_shm(int argc, char **argv)
 	return 0;
 }
 
+/* ksym [name|0xADDR] : look up a kernel symbol; with no argument list the first few */
+static int cmd_ksym(int argc, char **argv)
+{
+	uint32_t addr, off, i;
+	const char *name;
+
+	if (argc < 2) {
+		console_printf("%u kernel symbols\n", ksym_count());
+		for (i = 0; i < 8 && (name = ksym_at(i, &addr)); i++)
+			console_printf("  %08x %s\n", addr, name);
+		return 0;
+	}
+	if (argv[1][0] == '0' && argv[1][1] == 'x') {
+		addr = 0;
+		for (i = 2; argv[1][i]; i++)
+			addr = addr * 16 + (argv[1][i] <= '9' ? argv[1][i] - '0' : (argv[1][i] | 32) - 'a' + 10);
+		name = ksym_lookup(addr, &off);
+		if (!name) {
+			console_printf("no symbol for %08x\n", addr);
+			return 1;
+		}
+		console_printf("%08x = %s+0x%x\n", addr, name, off);
+		return 0;
+	}
+	addr = ksym_find(argv[1]);
+	if (!addr) {
+		console_printf("no symbol '%s'\n", argv[1]);
+		return 1;
+	}
+	console_printf("%s = %08x\n", argv[1], addr);
+	return 0;
+}
+
 /* pcache [drop|test] */
 static int cmd_pcache(int argc, char **argv)
 {
@@ -3291,6 +3325,7 @@ static const struct command commands[] = {
 	{ "fstest",  "fstest",                "self-test the filesystem", cmd_fstest },
 	{ "pgtest",  "pgtest",                "self-test address spaces", cmd_pgtest },
 	{ "shm",     "shm [rm <key>]",        "shared memory segments", cmd_shm },
+	{ "ksym",    "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
 	{ "oomtest", "oomtest",               "out-of-memory killer self-test", cmd_oomtest },
 	{ "slabinfo", "slabinfo",             "show slab caches", cmd_slabinfo },
