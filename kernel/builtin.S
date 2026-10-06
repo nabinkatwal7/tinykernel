@@ -45,6 +45,11 @@ _builtin_strtest_start:
 	.incbin "build/c_strtest.elf"
 _builtin_strtest_end:
 
+.globl _builtin_printftest_start, _builtin_printftest_end
+_builtin_printftest_start:
+	.incbin "build/c_printftest.elf"
+_builtin_printftest_end:
+
 .globl _builtin_helloelf_start, _builtin_helloelf_end
 _builtin_helloelf_start:
 	.incbin "build/helloelf.elf"

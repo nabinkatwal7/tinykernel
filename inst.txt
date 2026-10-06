@@ -1,4 +1,3 @@
-Write tiny libc printf for user mode,
 Compile C programs for user mode,
 Add more syscalls: open and close,
 Add syscalls: read and write files,
