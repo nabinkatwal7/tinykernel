@@ -9,5 +9,10 @@ uint8_t gfx_getpixel(int x, int y);               /* 0 outside the screen */
 void    gfx_hline(int x0, int x1, int y, uint8_t color);
 void    gfx_vline(int x, int y0, int y1, uint8_t color);
 void    gfx_line(int x0, int y0, int x1, int y1, uint8_t color);    /* Bresenham, any slope */
+void    gfx_rect(int x, int y, int w, int h, uint8_t color);        /* outline */
+void    gfx_fill_rect(int x, int y, int w, int h, uint8_t color);
+void    gfx_circle(int cx, int cy, int r, uint8_t color);           /* midpoint algorithm */
+void    gfx_fill_circle(int cx, int cy, int r, uint8_t color);
+void    gfx_fill_triangle(int x0, int y0, int x1, int y1, int x2, int y2, uint8_t color);
 
 #endif

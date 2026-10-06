@@ -1,4 +1,3 @@
-Draw rectangles and filled shapes,
 Add bitmap font rendering,
 Add graphical console,
 Build simple window manager concept,

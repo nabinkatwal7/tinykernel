@@ -84,3 +84,106 @@ void gfx_line(int x0, int y0, int x1, int y1, uint8_t color)
 		}
 	}
 }
+
+void gfx_rect(int x, int y, int w, int h, uint8_t color)
+{
+	if (w <= 0 || h <= 0)
+		return;
+	gfx_hline(x, x + w - 1, y, color);
+	gfx_hline(x, x + w - 1, y + h - 1, color);
+	gfx_vline(x, y, y + h - 1, color);
+	gfx_vline(x + w - 1, y, y + h - 1, color);
+}
+
+void gfx_fill_rect(int x, int y, int w, int h, uint8_t color)
+{
+	int row;
+
+	for (row = 0; row < h; row++)
+		gfx_hline(x, x + w - 1, y + row, color);
+}
+
+/* Midpoint circle: plot the eight symmetric points of each step. */
+void gfx_circle(int cx, int cy, int r, uint8_t color)
+{
+	int x = r, y = 0, err = 1 - r;
+
+	if (r < 0)
+		return;
+	while (x >= y) {
+		gfx_putpixel(cx + x, cy + y, color);
+		gfx_putpixel(cx - x, cy + y, color);
+		gfx_putpixel(cx + x, cy - y, color);
+		gfx_putpixel(cx - x, cy - y, color);
+		gfx_putpixel(cx + y, cy + x, color);
+		gfx_putpixel(cx - y, cy + x, color);
+		gfx_putpixel(cx + y, cy - x, color);
+		gfx_putpixel(cx - y, cy - x, color);
+		y++;
+		if (err < 0) {
+			err += 2 * y + 1;
+		} else {
+			x--;
+			err += 2 * (y - x) + 1;
+		}
+	}
+}
+
+/* Same walk, but each step fills the horizontal spans instead of plotting points. */
+void gfx_fill_circle(int cx, int cy, int r, uint8_t color)
+{
+	int x = r, y = 0, err = 1 - r;
+
+	if (r < 0)
+		return;
+	while (x >= y) {
+		gfx_hline(cx - x, cx + x, cy + y, color);
+		gfx_hline(cx - x, cx + x, cy - y, color);
+		gfx_hline(cx - y, cx + y, cy + x, color);
+		gfx_hline(cx - y, cx + y, cy - x, color);
+		y++;
+		if (err < 0) {
+			err += 2 * y + 1;
+		} else {
+			x--;
+			err += 2 * (y - x) + 1;
+		}
+	}
+}
+
+/* Scanline fill: for every row, intersect with the three edges and fill between the extremes. */
+void gfx_fill_triangle(int x0, int y0, int x1, int y1, int x2, int y2, uint8_t color)
+{
+	int px[3] = { x0, x1, x2 }, py[3] = { y0, y1, y2 };
+	int ymin = y0, ymax = y0, y;
+
+	if (y1 < ymin) ymin = y1;
+	if (y2 < ymin) ymin = y2;
+	if (y1 > ymax) ymax = y1;
+	if (y2 > ymax) ymax = y2;
+	for (y = ymin; y <= ymax; y++) {
+		int lo = 100000, hi = -100000, i;
+
+		for (i = 0; i < 3; i++) {
+			int a = px[i], b = py[i], c = px[(i + 1) % 3], d = py[(i + 1) % 3];
+
+			if (b == d) { /* horizontal edge: it contributes both endpoints if on this row */
+				if (y == b) {
+					if (a < lo) lo = a;
+					if (c < lo) lo = c;
+					if (a > hi) hi = a;
+					if (c > hi) hi = c;
+				}
+				continue;
+			}
+			if ((y >= b && y <= d) || (y >= d && y <= b)) {
+				int x = a + (c - a) * (y - b) / (d - b);
+
+				if (x < lo) lo = x;
+				if (x > hi) hi = x;
+			}
+		}
+		if (lo <= hi)
+			gfx_hline(lo, hi, y, color);
+	}
+}

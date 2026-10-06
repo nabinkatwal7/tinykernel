@@ -1560,6 +1560,33 @@ static int cmd_gfxlines(int argc, char **argv)
 	return 0;
 }
 
+static int cmd_gfxshapes(int argc, char **argv)
+{
+	int i;
+
+	(void)argc;
+	(void)argv;
+	if (vga_set_graphics())
+		return 1;
+	vga_fill(1);                                   /* blue background */
+	gfx_fill_rect(10, 10, 100, 60, 4);
+	gfx_rect(10, 10, 100, 60, 15);
+	gfx_fill_rect(20, 20, 40, 40, 14);
+	gfx_rect(20, 20, 40, 40, 0);
+	gfx_fill_circle(200, 50, 35, 10);
+	gfx_circle(200, 50, 35, 15);
+	gfx_circle(200, 50, 20, 0);
+	gfx_fill_triangle(40, 180, 100, 90, 160, 180, 13);
+	gfx_fill_triangle(180, 190, 300, 190, 240, 100, 11);
+	for (i = 0; i < 6; i++)                        /* concentric rings */
+		gfx_circle(270, 110, 5 + i * 4, (uint8_t)(32 + i * 36));
+	gfx_fill_rect(-20, 190, 60, 30, 12);           /* partly off screen: clipped */
+	keyboard_getkey();
+	vga_set_text();
+	console_clear();
+	return 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -2072,6 +2099,7 @@ static const struct command commands[] = {
 	{ "mouse",   "mouse",                 "PS/2 mouse position and buttons", cmd_mouse },
 	{ "gfx",     "gfx",                   "graphics mode test card", cmd_gfx },
 	{ "gfxlines", "gfxlines",            "pixel and line drawing demo", cmd_gfxlines },
+	{ "gfxshapes", "gfxshapes",          "rectangles, circles and triangles demo", cmd_gfxshapes },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },
