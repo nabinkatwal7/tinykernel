@@ -1,4 +1,5 @@
 #include "ata.h"
+#include "crashdump.h"
 
 #include "io.h"
 #include "klog.h"
@@ -170,4 +171,10 @@ int ata_dev_write(int dev, uint32_t lba, uint32_t count, const void *buf)
 int ata_present(void)                                          { return ata_dev_present(0); }
 uint32_t ata_sectors(void)                                     { return ata_dev_sectors(0); }
 int ata_read(uint32_t lba, uint32_t count, void *buf)          { return ata_dev_read(0, lba, count, buf); }
+uint32_t ata_fs_sectors(void)
+{
+	uint32_t n = ata_dev_sectors(0);
+
+	return n > CRASH_SECTORS ? n - CRASH_SECTORS : 0;
+}
 int ata_write(uint32_t lba, uint32_t count, const void *buf)   { return ata_dev_write(0, lba, count, buf); }

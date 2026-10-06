@@ -3,9 +3,11 @@
 #include <stdarg.h>
 
 #include "console.h"
+#include "crashdump.h"
 #include "io.h"
 #include "klog.h"
 #include "kprintf.h"
+#include "ksym.h"
 
 void debug_hexdump(const void *addr, uint32_t len)
 {
@@ -38,9 +40,59 @@ void debug_dump_regs(const struct regs *r)
 		       r->int_no, r->err_code);
 }
 
+#define BT_MAX_FRAMES 16
+
+static void bt_line(int n, uint32_t eip)
+{
+	uint32_t off;
+	const char *name = ksym_lookup(eip - 1, &off); /* -1: a call that never returns must not look like the next function */
+
+	if (name)
+		console_printf("  #%d %08x %s+0x%x\n", n, eip, name, off + 1);
+	else
+		console_printf("  #%d %08x\n", n, eip);
+}
+
+/* Each frame is [saved ebp][return address]; the chain must climb and stay close, or we stop. */
+void debug_backtrace(uint32_t ebp)
+{
+	int n = 0;
+
+	while (n < BT_MAX_FRAMES && ebp && !(ebp & 3) && ebp >= 0x1000 && ebp < 0xFFFFFF00u) {
+		uint32_t *frame = (uint32_t *)ebp;
+		uint32_t next = frame[0];
+
+		if (!frame[1])
+			break;
+		bt_line(n++, frame[1]);
+		if (next <= ebp || next - ebp > 0x10000)
+			break;
+		ebp = next;
+	}
+}
+
+int debug_frames(uint32_t ebp, uint32_t *out, int max)
+{
+	int n = 0;
+
+	while (n < max && ebp && !(ebp & 3) && ebp >= 0x1000 && ebp < 0xFFFFFF00u) {
+		uint32_t *frame = (uint32_t *)ebp;
+		uint32_t next = frame[0];
+
+		if (!frame[1])
+			break;
+		out[n++] = frame[1];
+		if (next <= ebp || next - ebp > 0x10000)
+			break;
+		ebp = next;
+	}
+	return n;
+}
+
 void panic(const char *fmt, ...)
 {
 	char msg[160];
+	uint32_t frames[BT_MAX_FRAMES];
 	va_list ap;
 
 	cli();
@@ -50,6 +102,20 @@ void panic(const char *fmt, ...)
 	console_set_color(COLOR_WHITE, COLOR_RED);
 	console_printf("\n*** KERNEL PANIC: %s ***\n", msg);
 	klog(LOG_ERROR, "PANIC: %s", msg);
+	console_write("stack trace:\n");
+	debug_here();
+	crash_save(msg, frames, debug_frames((uint32_t)__builtin_frame_address(0), frames, BT_MAX_FRAMES));
 	for (;;)
 		hlt();
+}
+
+void assert_fail_msg(const char *expr, const char *file, int line, const char *func, const char *fmt, ...)
+{
+	char why[96];
+	va_list ap;
+
+	va_start(ap, fmt);
+	kvsnprintf(why, sizeof why, fmt, ap);
+	va_end(ap);
+	panic("assertion failed: %s (%s:%d in %s): %s", expr, file, line, func, why);
 }

@@ -13,6 +13,15 @@
 #define SYS_CLOSE    8
 #define SYS_READ     9
 #define SYS_FWRITE  10
+#define SYS_MMAP    31
+#define SYS_MUNMAP  32
+#define SYS_MSYNC   33
+#define SYS_PIPE    34
+#define SYS_SHMGET  28
+#define SYS_SHMAT   29
+#define SYS_SHMDT   30
+#define SYS_FORK    26
+#define SYS_WAITPID 27
 #define SYS_NANOSLEEP 25
 #define SYS_CLOCK   24
 #define SYS_LSEEK   23
@@ -79,6 +88,20 @@ struct timespec { unsigned tv_sec, tv_nsec; };
 static inline int  clock_gettime(int id, struct timespec *ts) { return syscall3(SYS_CLOCK, id, (int)ts, 0); }
 static inline int  nanosleep(unsigned sec, unsigned nsec) { return syscall3(SYS_NANOSLEEP, (int)sec, (int)nsec, 0); }
 static inline void usleep(unsigned us)               { nanosleep(us / 1000000, (us % 1000000) * 1000); }
+/* fork(): 0 in the child, the child's pid in the parent, -1 on failure. waitpid() blocks until that child exits. */
+static inline int  fork(void)                      { return syscall3(SYS_FORK, 0, 0, 0); }
+static inline int  waitpid(int pid, int *status)   { return syscall3(SYS_WAITPID, pid, (int)status, 0); }
+/* Shared memory: processes using the same key see the same pages. */
+static inline int   shmget(int key, unsigned size) { return syscall3(SYS_SHMGET, key, (int)size, 0); }
+static inline void *shmat(int id)                  { return (void *)syscall3(SYS_SHMAT, id, 0, 0); }
+static inline int   shmdt(void *addr)              { return syscall3(SYS_SHMDT, (int)addr, 0, 0); }
+#define MAP_PRIVATE 0
+#define MAP_SHARED  1
+/* Map a file (length 0 = all of it). Shared mappings are written back by msync/munmap. 0 on failure. */
+static inline void *mmap(const char *path, unsigned length, int flags) { return (void *)syscall3(SYS_MMAP, (int)path, (int)length, flags); }
+static inline int   munmap(void *addr)             { return syscall3(SYS_MUNMAP, (int)addr, 0, 0); }
+static inline int   pipe(int fds[2])                { return syscall3(SYS_PIPE, (int)fds, 0, 0); }
+static inline int   msync(void *addr)              { return syscall3(SYS_MSYNC, (int)addr, 0, 0); }
 static inline int  getpid(void)                    { return syscall3(SYS_GETPID, 0, 0, 0); }
 static inline int  getppid(void)                   { return syscall3(SYS_GETPPID, 0, 0, 0); }
 static inline void sleep_ms(int ms)                 { syscall3(SYS_SLEEP, ms, 0, 0); }

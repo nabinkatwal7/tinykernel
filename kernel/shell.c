@@ -10,11 +10,14 @@
 #include "console.h"
 #include "cpustat.h"
 #include "cpu.h"
+#include "crashdump.h"
 #include "debug.h"
+#include "gdbstub.h"
 #include "dhcp.h"
 #include "editor.h"
 #include "env.h"
 #include "fat12.h"
+#include "file.h"
 #include "fs.h"
 #include "gfx.h"
 #include "gui.h"
@@ -29,13 +32,18 @@
 #include "kstring.h"
 #include "mouse.h"
 #include "net.h"
+#include "oom.h"
 #include "paging.h"
+#include "ksym.h"
+#include "pcache.h"
+#include "pipe.h"
 #include "percpu.h"
 #include "pci.h"
 #include "pmm.h"
 #include "rtc.h"
 #include "sched.h"
 #include "selftest.h"
+#include "shm.h"
 #include "slab.h"
 #include "smp.h"
 #include "smpsched.h"
@@ -1148,10 +1156,16 @@ static int cmd_smpaffinity(int argc, char **argv)
 	return where_ran[0] != cpu;
 }
 
+static int job_kill(const char *spec); /* "%n": the job table is near the end of the file */
+static int cmd_jobs(int argc, char **argv);
+static int cmd_fg(int argc, char **argv);
+
 static int cmd_kill(int argc, char **argv)
 {
 	uint32_t id;
 
+	if (argc > 1 && argv[1][0] == '%')
+		return job_kill(argv[1]);
 	if (argc < 2 || kstrtoul(argv[1], &id)) {
 		console_write("usage: kill <id>\n");
 		return 1;
@@ -1207,9 +1221,18 @@ static int cmd_mount(int argc, char **argv)
 
 static int cmd_cat(int argc, char **argv)
 {
-	char *buf;
+	char *buf, rdbuf[128];
 	int n;
 
+	if (argc < 2 && file_stdin_active()) { /* cat as a filter: copy standard input to the output */
+		while ((n = console_stdin_read(rdbuf, sizeof rdbuf)) > 0) {
+			int i;
+
+			for (i = 0; i < n; i++)
+				console_putchar(rdbuf[i]);
+		}
+		return 0;
+	}
 	if (argc < 2) {
 		console_write("usage: cat <file>\n");
 		return 1;
@@ -1222,7 +1245,7 @@ static int cmd_cat(int argc, char **argv)
 		console_write("out of memory\n");
 		return 1;
 	}
-	n = vfs_read(argv[1], buf, (uint32_t)n);
+	n = pcache_read(argv[1], buf, (uint32_t)n);
 	if (n < 0) {
 		kfree(buf);
 		return fs_fail(argv[1], n);
@@ -2813,6 +2836,279 @@ static int cmd_pgtest(int argc, char **argv)
 	return fails != 0;
 }
 
+/* shm [rm <key>]: list shared memory segments */
+static int cmd_shm(int argc, char **argv)
+{
+	int i, key, att, n = 0;
+	uint32_t size, k;
+
+	if (argc == 3 && !kstrcmp(argv[1], "rm") && !kstrtoul(argv[2], &k))
+		return shm_remove((int)k) ? (console_write("no such segment\n"), 1) : 0;
+	for (i = 0; i < SHM_MAX_SEGMENTS; i++) {
+		if (!shm_info(i, &key, &size, &att)) {
+			console_printf("  id %d key %d size %u bytes at %x, %d attach(es)\n", i, key, size, SHM_BASE + (uint32_t)i * SHM_SLOT, att);
+			n++;
+		}
+	}
+	console_printf("%d segment(s)\n", n);
+	return 0;
+}
+
+/* backtrace : show the shell's own call chain */
+static int cmd_backtrace(int argc, char **argv)
+{
+	(void)argc;
+	(void)argv;
+	debug_here();
+	return 0;
+}
+
+/* assert [msg] : trip a failing assertion to show the message format */
+static int cmd_assert(int argc, char **argv)
+{
+	(void)argv;
+	ASSERT_MSG(argc > 5, "needs 5 arguments, got %d", argc - 1);
+	return 0;
+}
+
+/* crashdump [show|clear] : the dump written by the last panic */
+static int cmd_crashdump(int argc, char **argv)
+{
+	if (argc > 1 && !kstrcmp(argv[1], "clear"))
+		return crash_clear();
+	return crash_show();
+}
+
+/* gdbstub : break into a GDB session attached to COM2 */
+static int cmd_gdbstub(int argc, char **argv)
+{
+	(void)argc;
+	(void)argv;
+	gdbstub_arm();
+	return 0;
+}
+
+#define PIPE_TEST_BYTES 20000
+
+static void pipe_writer(void *arg)
+{
+	struct pipe *p = arg;
+	uint8_t chunk[333];
+	uint32_t sent = 0, i, n;
+
+	while (sent < PIPE_TEST_BYTES) {
+		n = PIPE_TEST_BYTES - sent < sizeof chunk ? PIPE_TEST_BYTES - sent : sizeof chunk;
+		for (i = 0; i < n; i++)
+			chunk[i] = (uint8_t)((sent + i) % 251);
+		if (pipe_write(p, chunk, n) != (int)n)
+			break;
+		sent += n;
+	}
+	pipe_close_write(p);
+}
+
+/* pipetest : a writer task pushes 20000 bytes through a 4 KiB pipe to this task (both sides must block) */
+static int cmd_pipetest(int argc, char **argv)
+{
+	struct pipe *p = pipe_new(), *q;
+	uint8_t buf[500];
+	uint32_t total = 0, bad = 0, i;
+	int n, ok;
+
+	(void)argc;
+	(void)argv;
+	if (!p)
+		return 1;
+	task_create("pipe-writer", pipe_writer, p, PRIO_DEFAULT);
+	while ((n = pipe_read(p, buf, sizeof buf)) > 0) {
+		for (i = 0; i < (uint32_t)n; i++)
+			if (buf[i] != (uint8_t)((total + i) % 251))
+				bad++;
+		total += (uint32_t)n;
+	}
+	ok = total == PIPE_TEST_BYTES && !bad;
+	console_printf("pipe: %u bytes through, %u wrong, end of file after the writer closed: %s\n", total, bad,
+		       ok ? "ok" : "FAILED");
+	pipe_close_read(p);
+
+	q = pipe_new(); /* writing with no reader left fails instead of blocking forever */
+	pipe_close_read(q);
+	n = pipe_write(q, "x", 1);
+	console_printf("write with no reader: %d (expected -1)\n", n);
+	pipe_close_write(q);
+	return !(ok && n == -1);
+}
+
+static int sh_expect(const char *cmd, const char *want)
+{
+	static char out[256];
+	int ok;
+
+	console_capture_begin(out, sizeof out);
+	shell_exec(cmd);
+	console_capture_end();
+	ok = !kstrcmp(out, want);
+	if (!ok)
+		console_printf("shtest: '%s' printed '%s', expected '%s'\n", cmd, out, want);
+	return ok;
+}
+
+/* shtest : pipelines and redirection (needs a formatted disk) */
+static int cmd_shtest(int argc, char **argv)
+{
+	int ok = 1;
+
+	(void)argc;
+	(void)argv;
+	ok &= sh_expect("echo one | cat", "one\n");
+	ok &= sh_expect("echo two | cat | cat", "two\n");
+	ok &= sh_expect("echo 'a | b' | cat", "a | b\n");
+	ok &= sh_expect("echo x > sht.txt", "");
+	ok &= sh_expect("echo y >> sht.txt", "");
+	ok &= sh_expect("cat sht.txt", "x\ny\n");
+	ok &= sh_expect("cat < sht.txt", "x\ny\n");
+	ok &= sh_expect("cat < sht.txt | cat", "x\ny\n");
+	ok &= sh_expect("cat < sht.txt > sht2.txt", "");
+	ok &= sh_expect("cat sht2.txt", "x\ny\n");
+	ok &= sh_expect("echo 'q > r' > sht.txt", "");
+	ok &= sh_expect("cat sht.txt", "q > r\n");
+	vfs_unlink("sht.txt");
+	vfs_unlink("sht2.txt");
+	console_printf("shtest: %s\n", ok ? "ok" : "FAILED");
+	return !ok;
+}
+
+/* panic [message] : test the panic path and its stack trace */
+static int cmd_panic(int argc, char **argv)
+{
+	panic("%s", argc > 1 ? argv[1] : "panic command");
+}
+
+/* ksym [name|0xADDR] : look up a kernel symbol; with no argument list the first few */
+static int cmd_ksym(int argc, char **argv)
+{
+	uint32_t addr, off, i;
+	const char *name;
+
+	if (argc < 2) {
+		console_printf("%u kernel symbols\n", ksym_count());
+		for (i = 0; i < 8 && (name = ksym_at(i, &addr)); i++)
+			console_printf("  %08x %s\n", addr, name);
+		return 0;
+	}
+	if (argv[1][0] == '0' && argv[1][1] == 'x') {
+		addr = 0;
+		for (i = 2; argv[1][i]; i++)
+			addr = addr * 16 + (argv[1][i] <= '9' ? argv[1][i] - '0' : (argv[1][i] | 32) - 'a' + 10);
+		name = ksym_lookup(addr, &off);
+		if (!name) {
+			console_printf("no symbol for %08x\n", addr);
+			return 1;
+		}
+		console_printf("%08x = %s+0x%x\n", addr, name, off);
+		return 0;
+	}
+	addr = ksym_find(argv[1]);
+	if (!addr) {
+		console_printf("no symbol '%s'\n", argv[1]);
+		return 1;
+	}
+	console_printf("%s = %08x\n", argv[1], addr);
+	return 0;
+}
+
+/* pcache [drop|test] */
+static int cmd_pcache(int argc, char **argv)
+{
+	struct pcache_stats s;
+	int fails = 0;
+
+	if (argc > 1 && !kstrcmp(argv[1], "drop"))
+		pcache_drop_all();
+	if (argc > 1 && !kstrcmp(argv[1], "test")) {
+		static char big[6000], back[6000];
+		uint32_t i;
+		struct pcache_stats a, b;
+
+		for (i = 0; i < sizeof big; i++)
+			big[i] = (char)(i * 13 + 1);
+		CHECK(vfs_write("/__pc.dat", big, sizeof big) == 0, "write a 6000-byte file");
+		pcache_stats(&a);
+		CHECK(pcache_read("/__pc.dat", back, sizeof back) == (int)sizeof back && !memcmp(big, back, sizeof big), "first read");
+		CHECK(pcache_read("__pc.dat", back, sizeof back) == (int)sizeof back && !memcmp(big, back, sizeof big), "second read, other spelling of the path");
+		pcache_stats(&b);
+		CHECK(b.misses - a.misses == 1 && b.hits - a.hits == 1, "one miss then one hit");
+		CHECK(b.pages - a.pages == 2, "two cache pages hold the file");
+		big[100] = 'Z';
+		CHECK(vfs_write("/__pc.dat", big, sizeof big) == 0, "rewrite the file");
+		CHECK(pcache_read("/__pc.dat", back, sizeof back) == (int)sizeof back && back[100] == 'Z', "a write invalidates the cached copy");
+		CHECK(pcache_shrink(100) >= 2, "memory pressure can drop every cached page");
+		vfs_unlink("/__pc.dat");
+		console_write(fails ? "pcache test: FAILED\n" : "pcache test: ok\n");
+		return fails != 0;
+	}
+	pcache_stats(&s);
+	console_printf("page cache: %u/%u pages, %u hits, %u misses, %u invalidations, %u reclaimed under pressure\n", s.pages,
+		       PCACHE_PAGES, s.hits, s.misses, s.invalidations, s.shrunk);
+	return 0;
+}
+
+static void oom_victim(void *arg)
+{
+	(void)arg;
+	for (;;)
+		task_sleep(1000);
+}
+
+/* oomtest: eat all memory; the OOM handler must kill a memory-hungry process instead of failing. */
+static int cmd_oomtest(int argc, char **argv)
+{
+	uint32_t victim_dir, f, hog = 0, kills0 = oom_kills(), v, i, flags;
+	task_t *t;
+	int fails = 0;
+
+	(void)argc;
+	(void)argv;
+	victim_dir = paging_new_dir();
+	t = task_create("victim", oom_victim, 0, PRIO_DEFAULT);
+	CHECK(victim_dir && t, "set up a victim process");
+	if (!victim_dir || !t)
+		return 1;
+	for (i = 0; i < 200; i++) {                       /* it owns 200 user pages */
+		f = pmm_alloc();
+		if (!f || paging_map(victim_dir, 0x40000000u + i * PAGE_SIZE, f, PTE_RW | PTE_US))
+			break;
+	}
+	flags = irq_save();
+	t->pgdir = victim_dir;
+	t->is_uproc = 1;
+	irq_restore(flags);
+	v = t->id;
+	pcache_drop_all();                                /* so only the kill can help */
+
+	while (pmm_free_frames() > 0 && (f = pmm_alloc()) != 0) { /* chain the frames through their first word */
+		*(volatile uint32_t *)f = hog;
+		hog = f;
+	}
+	console_printf("memory exhausted (%u free); allocating again must trigger the OOM killer\n", pmm_free_frames());
+	f = pmm_alloc();
+	CHECK(f != 0, "an allocation succeeds after the OOM handler ran");
+	CHECK(oom_kills() == kills0 + 1, "exactly one process was killed");
+	task_sleep(50);
+	CHECK(task_kill(v) != 0, "the victim is really gone");
+	while (hog) {                                     /* give everything back */
+		uint32_t next = *(volatile uint32_t *)hog;
+
+		pmm_free(hog);
+		hog = next;
+	}
+	if (f)
+		pmm_free(f);
+	console_printf("%u frames free again\n", pmm_free_frames());
+	console_write(fails ? "oomtest: FAILED\n" : "oomtest: ok\n");
+	return fails != 0;
+}
+
 static int cmd_slabinfo(int argc, char **argv)
 {
 	(void)argc;
@@ -2855,6 +3151,66 @@ static int cmd_slabtest(int argc, char **argv)
 		console_printf("slabtest: %d check(s) failed\n", fails);
 	else
 		console_write("slabtest: all checks passed\n");
+	return fails != 0;
+}
+
+/* cowtest: fork an address space copy-on-write and watch the page get copied on the first write. */
+static int cmd_cowtest(int argc, char **argv)
+{
+	const uint32_t va = 0x40000000;
+	uint32_t kdir = paging_kernel_dir(), a, b, frame, free0, flags;
+	volatile uint32_t *p = (volatile uint32_t *)va;
+	uint32_t *pte_a, *pte_b;
+	int fails = 0;
+
+	(void)argc;
+	(void)argv;
+	free0 = pmm_free_frames();
+	a = paging_new_dir();
+	frame = pmm_alloc();
+	CHECK(a && frame, "address space and frame allocated");
+	if (!a || !frame)
+		return 1;
+	CHECK(!paging_map(a, va, frame, PTE_RW | PTE_US), "map a user page");
+	*(volatile uint32_t *)frame = 0x11111111; /* the parent's data, written through the identity map */
+
+	b = paging_fork_dir(a);
+	CHECK(b != 0, "fork the address space");
+	pte_a = paging_pte(a, va);
+	pte_b = paging_pte(b, va);
+	CHECK(pte_a && pte_b && (*pte_a & ~0xFFFu) == frame && (*pte_b & ~0xFFFu) == frame, "both spaces map the same frame");
+	CHECK(!(*pte_a & PTE_RW) && (*pte_a & PTE_COW) && !(*pte_b & PTE_RW) && (*pte_b & PTE_COW),
+	      "both mappings are read-only copy-on-write");
+	CHECK(pmm_refcount(frame) == 2, "the frame has two owners");
+
+	flags = irq_save(); /* keep the scheduler from switching CR3 while we are in the child's space */
+	paging_switch(b);
+	CHECK(*p == 0x11111111, "the child reads the parent's data");
+	*p = 0x22222222;    /* write fault -> the kernel copies the page and retries the store */
+	paging_switch(kdir);
+	irq_restore(flags);
+
+	pte_a = paging_pte(a, va);
+	pte_b = paging_pte(b, va);
+	CHECK((*pte_b & ~0xFFFu) != frame, "the child got its own frame");
+	CHECK(*(volatile uint32_t *)(*pte_b & ~0xFFFu) == 0x22222222, "the child's write landed in its copy");
+	CHECK(*(volatile uint32_t *)frame == 0x11111111, "the parent's page is untouched");
+	CHECK(pmm_refcount(frame) == 1, "the original frame is back to a single owner");
+
+	flags = irq_save();
+	paging_switch(a);
+	*p = 0x33333333;    /* the parent is now the sole owner: its write just re-enables write access */
+	paging_switch(kdir);
+	irq_restore(flags);
+	CHECK(*(volatile uint32_t *)frame == 0x33333333 && (*paging_pte(a, va) & ~0xFFFu) == frame,
+	      "the last owner writes in place, no copy");
+
+	paging_free_dir(b);
+	paging_free_dir(a);
+	pmm_free((*pte_b) & ~0xFFFu);   /* pte_b pointed into b's (now freed) table: still readable, value kept */
+	pmm_free(frame);
+	CHECK(pmm_free_frames() >= free0 - 1, "no frames leaked (page tables are not reclaimed by free_dir for shared slots)");
+	console_write(fails ? "cowtest: FAILED\n" : "cowtest: ok\n");
 	return fails != 0;
 }
 
@@ -3117,8 +3473,22 @@ static const struct command commands[] = {
 	{ "format",  "format",                "erase the disk and make a filesystem", cmd_format },
 	{ "fstest",  "fstest",                "self-test the filesystem", cmd_fstest },
 	{ "pgtest",  "pgtest",                "self-test address spaces", cmd_pgtest },
+	{ "shm",     "shm [rm <key>]",        "shared memory segments", cmd_shm },
+	{ "backtrace", "backtrace",          "print the current kernel call chain", cmd_backtrace },
+	{ "assert",  "assert",                "trip a failing assertion (tests the panic message)", cmd_assert },
+	{ "crashdump", "crashdump [show|clear]", "show the crash dump saved by the last panic", cmd_crashdump },
+	{ "gdbstub", "gdbstub",               "stop in a GDB remote stub on COM2", cmd_gdbstub },
+	{ "pipetest", "pipetest",             "test pipes between two tasks", cmd_pipetest },
+	{ "shtest",  "shtest",                "test pipelines and redirection", cmd_shtest },
+	{ "jobs",    "jobs",                  "list background jobs", cmd_jobs },
+	{ "fg",      "fg [%n]",               "wait for a background job", cmd_fg },
+	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
+	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
+	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
+	{ "oomtest", "oomtest",               "out-of-memory killer self-test", cmd_oomtest },
 	{ "slabinfo", "slabinfo",             "show slab caches", cmd_slabinfo },
 	{ "slabtest", "slabtest",             "self-test the slab allocator", cmd_slabtest },
+	{ "cowtest", "cowtest",               "copy-on-write self-test", cmd_cowtest },
 	{ "disk",  "disk [lba]",            "disk info / dump a sector", cmd_disk },
 	{ "install", "install [name]",        "list/copy built-in programs to disk", cmd_install },
 	{ "run",     "run <program>",         "run a program in user mode", cmd_run },
@@ -3133,7 +3503,362 @@ static const struct command commands[] = {
 
 /* ---------------- dispatch ---------------- */
 
+/* The first '|' outside quotes (and not escaped, and not part of '||'), or NULL. */
+static char *find_pipe(char *s)
+{
+	char quote = 0;
+
+	for (; *s; s++) {
+		if (quote) {
+			if (*s == quote)
+				quote = 0;
+		} else if (*s == '"' || *s == '\'') {
+			quote = *s;
+		} else if (*s == '\\' && s[1]) {
+			s++;
+		} else if (*s == '|') {
+			if (s[1] == '|') {
+				s++;
+				continue;
+			}
+			return s;
+		}
+	}
+	return 0;
+}
+
+#define PIPELINE_CAP 16384
+
+/* ---------------- background jobs ---------------- */
+
+#define MAX_JOBS 8
+
+struct job {
+	int used, id;
+	uint32_t tid;
+	volatile int done, status;
+	char cmd[80];
+};
+
+static struct job jobs[MAX_JOBS];
+static int next_job_id = 1;
+
+static void job_entry(void *arg)
+{
+	struct job *j = arg;
+
+	j->status = shell_exec(j->cmd);
+	j->done = 1;
+}
+
+/* 1 (and the command without its '&') if the line ends in an unquoted single '&'. */
+static int strip_ampersand(char *line)
+{
+	char quote = 0;
+	char *s, *end = line + kstrlen(line);
+
+	for (s = line; *s; s++) {
+		if (quote) {
+			if (*s == quote)
+				quote = 0;
+		} else if (*s == '"' || *s == '\'') {
+			quote = *s;
+		} else if (*s == '\\' && s[1]) {
+			s++;
+		}
+	}
+	while (end > line && (end[-1] == ' ' || end[-1] == '\t'))
+		end--;
+	if (quote || end == line || end[-1] != '&' || (end - 1 > line && end[-2] == '&'))
+		return 0;
+	end[-1] = '\0';
+	return 1;
+}
+
+static int start_job(const char *cmd)
+{
+	struct job *j = 0;
+	int i;
+
+	for (i = 0; i < MAX_JOBS && !j; i++)
+		if (!jobs[i].used)
+			j = &jobs[i];
+	if (!j) {
+		console_write("too many background jobs\n");
+		return 1;
+	}
+	if (!kstrncmp(cmd, "run ", 4)) {
+		console_write("user programs cannot run in the background yet\n");
+		return 1;
+	}
+	memset(j, 0, sizeof *j);
+	kstrlcpy(j->cmd, cmd, sizeof j->cmd);
+	j->used = 1;
+	j->id = next_job_id++;
+	j->tid = task_create("job", job_entry, j, PRIO_DEFAULT)->id;
+	console_printf("[%d] %u\n", j->id, j->tid);
+	return 0;
+}
+
+/* Called before each prompt: report jobs that finished meanwhile. */
+static void report_jobs(void)
+{
+	int i;
+
+	for (i = 0; i < MAX_JOBS; i++) {
+		if (jobs[i].used && jobs[i].done) {
+			console_printf("[%d]+ Done (%d)  %s\n", jobs[i].id, jobs[i].status, jobs[i].cmd);
+			jobs[i].used = 0;
+		}
+	}
+}
+
+/* "%2" or "2" names job 2; no argument means the newest job. */
+static struct job *job_find(const char *spec)
+{
+	struct job *best = 0;
+	uint32_t id = 0;
+	int i;
+
+	if (spec) {
+		if (*spec == '%')
+			spec++;
+		if (kstrtoul(spec, &id))
+			return 0;
+	}
+	for (i = 0; i < MAX_JOBS; i++) {
+		if (!jobs[i].used)
+			continue;
+		if (spec ? jobs[i].id == (int)id : (!best || jobs[i].id > best->id))
+			best = &jobs[i];
+	}
+	return best;
+}
+
+static int job_kill(const char *spec)
+{
+	struct job *j = job_find(spec);
+
+	if (!j) {
+		console_printf("no such job: %s\n", spec);
+		return 1;
+	}
+	if (!j->done && task_kill(j->tid)) {
+		console_write("cannot kill that job\n");
+		return 1;
+	}
+	if (!j->done) {
+		j->status = -1;
+		j->done = 1;
+	}
+	console_printf("[%d] killed  %s\n", j->id, j->cmd);
+	j->used = 0;
+	return 0;
+}
+
+/* jobs : list the background jobs */
+static int cmd_jobs(int argc, char **argv)
+{
+	int i, n = 0;
+
+	(void)argc;
+	(void)argv;
+	for (i = 0; i < MAX_JOBS; i++) {
+		if (!jobs[i].used)
+			continue;
+		console_printf("[%d] %-8s task %u  %s\n", jobs[i].id, jobs[i].done ? "Done" : "Running", jobs[i].tid,
+			       jobs[i].cmd);
+		n++;
+	}
+	if (!n)
+		console_write("no jobs\n");
+	return 0;
+}
+
+/* fg [%n] : wait for a background job to finish (Ctrl+C leaves it running) */
+static int cmd_fg(int argc, char **argv)
+{
+	struct job *j = job_find(argc > 1 ? argv[1] : 0);
+	int status;
+
+	if (!j) {
+		console_write("fg: no such job\n");
+		return 1;
+	}
+	console_printf("%s\n", j->cmd);
+	while (!j->done && !shell_interrupted())
+		task_sleep(20);
+	if (!j->done)
+		return 130;
+	status = j->status;
+	j->used = 0;
+	return status;
+}
+
+static int exec_command(const char *line);
+
+/*
+ * "a | b": a runs to completion with its console output captured; b then runs with that text as its
+ * standard input. Stages are strictly sequential (like a pipe that always has room), which is all
+ * a single-console system needs. The result is b's status.
+ */
 int shell_exec(const char *line)
+{
+	char copy[LINE_MAX];
+	char *bar, *data;
+	int rc, len;
+
+	kstrlcpy(copy, line, sizeof copy);
+	if (strip_ampersand(copy))
+		return start_job(copy);
+	bar = find_pipe(copy);
+	if (!bar)
+		return exec_command(line);
+	*bar = '\0';
+	data = kmalloc(PIPELINE_CAP);
+	if (!data) {
+		console_write("pipe: out of memory\n");
+		return 1;
+	}
+	console_capture_begin(data, PIPELINE_CAP);
+	exec_command(copy);
+	len = console_capture_end();
+	file_stdin_set(data, (uint32_t)len);
+	rc = shell_exec(bar + 1);
+	file_stdin_clear();
+	kfree(data);
+	return rc;
+}
+
+#define REDIR_CAP 32768
+
+/*
+ * Cuts one redirection ("> file", ">> file", "< file") out of a command line, blanking its text so the rest
+ * parses normally. 'op' is '>' or '<'; returns 1 and fills file (expanded) / append, or 0 if there is none.
+ */
+static int take_redirect(char *line, char op, char *file, int size, int *append)
+{
+	char quote = 0, *s, *start, *end;
+	char raw[LINE_MAX];
+	int n = 0;
+
+	for (s = line; *s; s++) {
+		if (quote) {
+			if (*s == quote)
+				quote = 0;
+			continue;
+		}
+		if (*s == '"' || *s == '\'') {
+			quote = *s;
+		} else if (*s == '\\' && s[1]) {
+			s++;
+		} else if (*s == op) {
+			break;
+		}
+	}
+	if (!*s)
+		return 0;
+	start = s++;
+	*append = 0;
+	if (op == '>' && *s == '>') {
+		*append = 1;
+		s++;
+	}
+	while (*s == ' ' || *s == '\t')
+		s++;
+	end = s;
+	while (*end && *end != ' ' && *end != '\t' && *end != '<' && *end != '>' && n < (int)sizeof raw - 1)
+		raw[n++] = *end++;
+	raw[n] = '\0';
+	memset(start, ' ', (size_t)(end - start));
+	if (!n)
+		return -1; /* operator without a file name */
+	expand(raw, file, size);
+	return 1;
+}
+
+static int exec_plain(const char *line);
+
+/* A command with optional "> file" / ">> file" output redirection; the output is captured, then stored. */
+static int exec_output(const char *line)
+{
+	char copy[LINE_MAX], file[FILE_PATH_MAX];
+	char *buf;
+	int append, rc, len, got;
+
+	kstrlcpy(copy, line, sizeof copy);
+	got = take_redirect(copy, '>', file, sizeof file, &append);
+	if (!got)
+		return exec_plain(line);
+	if (got < 0) {
+		console_write("syntax error: missing file name after '>'\n");
+		return 2;
+	}
+	buf = kmalloc(REDIR_CAP);
+	if (!buf) {
+		console_write("redirect: out of memory\n");
+		return 1;
+	}
+	len = 0;
+	if (append && vfs_size(file) > 0) { /* keep what is already there */
+		int old = vfs_size(file);
+
+		if (old < REDIR_CAP / 2)
+			len = vfs_read(file, buf, (uint32_t)old);
+		if (len < 0)
+			len = 0;
+	}
+	console_capture_begin(buf + len, (unsigned)(REDIR_CAP - len));
+	rc = exec_plain(copy);
+	len += console_capture_end();
+	got = vfs_write(file, buf, (uint32_t)len);
+	kfree(buf);
+	if (got) {
+		fs_fail(file, got);
+		return 1;
+	}
+	return rc;
+}
+
+/* "cmd < file": the file's contents become the command's standard input. */
+static int exec_command(const char *line)
+{
+	char copy[LINE_MAX], file[FILE_PATH_MAX];
+	char *data;
+	int got, append, size, rc;
+
+	kstrlcpy(copy, line, sizeof copy);
+	got = take_redirect(copy, '<', file, sizeof file, &append);
+	if (!got)
+		return exec_output(line);
+	if (got < 0) {
+		console_write("syntax error: missing file name after '<'\n");
+		return 2;
+	}
+	size = vfs_size(file);
+	if (size < 0) {
+		fs_fail(file, size);
+		return 1;
+	}
+	data = kmalloc((size_t)size + 1);
+	if (!data) {
+		console_write("redirect: out of memory\n");
+		return 1;
+	}
+	got = size ? vfs_read(file, data, (uint32_t)size) : 0;
+	if (got < 0) {
+		kfree(data);
+		fs_fail(file, got);
+		return 1;
+	}
+	file_stdin_set(data, (uint32_t)got);
+	rc = exec_output(copy);
+	file_stdin_clear();
+	kfree(data);
+	return rc;
+}
+
+static int exec_plain(const char *line)
 {
 	char copy[LINE_MAX];
 	char *argv[ARGV_MAX];
@@ -3180,6 +3905,7 @@ void shell_run(void)
 	env_set("TERM", "vga80x25");
 	for (;;) {
 		interrupted = 0;
+		report_jobs();
 		prompt();
 		readline(line, sizeof line);
 		hist_add(line);

@@ -14,6 +14,7 @@
 #include "kmalloc.h"
 #include "kstring.h"
 #include "paging.h"
+#include "pcache.h"
 #include "pmm.h"
 #include "sched.h"
 
@@ -22,17 +23,30 @@
 
 static int active;
 static volatile int abort_requested;
-static uint32_t cur_frames; /* physical frames behind the running program's window */
-static uint32_t brk, brk_min; /* program break: the heap lives between the image and the stack */
 
 /* Move the break by delta bytes; returns the old break or (uint32_t)-1. */
+static uint32_t save_window(uint8_t *buf);
+static void restore_window(const uint8_t *buf, uint32_t heap_len);
+static void trim_heap(uint32_t brk);
+static void ensure_image_mapped(void);
+
+static uint32_t page_up(uint32_t a)
+{
+	return (a + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+}
+
 uint32_t user_sbrk(int32_t delta)
 {
-	uint32_t old = brk, top = USER_END - STACK_RESERVE;
+	task_t *t = task_current();
+	uint32_t old = t->ubrk, top = USER_BASE + IMAGE_PAGES * PAGE_SIZE;
 
-	if (delta < 0 ? old - brk_min < (uint32_t)-delta : delta > 0 && top - old < (uint32_t)delta)
+	if (delta < 0 ? old - t->ubrk_min < (uint32_t)-delta : delta > 0 && top - old < (uint32_t)delta)
 		return (uint32_t)-1;
-	brk += (uint32_t)delta;
+	t->ubrk += (uint32_t)delta;
+	if (delta < 0)
+		trim_heap(t->ubrk);   /* give whole pages above the new break back */
+	if (delta < 0 && (t->ubrk & (PAGE_SIZE - 1)))
+		memset((void *)t->ubrk, 0, PAGE_SIZE - (t->ubrk & (PAGE_SIZE - 1)));  /* and clear the rest of the last page */
 	return old;
 }
 
@@ -83,7 +97,7 @@ static int load_image(const char *name, uint8_t *dst, uint32_t *size, uint32_t *
 {
 	const uint8_t *img = 0;
 	uint8_t *heap_copy = 0;
-	uint32_t len = 0, limit = USER_PAGES * PAGE_SIZE - STACK_RESERVE;
+	uint32_t len = 0, limit = IMAGE_PAGES * PAGE_SIZE;
 	unsigned i;
 	int n, rc = 0;
 
@@ -93,7 +107,7 @@ static int load_image(const char *name, uint8_t *dst, uint32_t *size, uint32_t *
 		heap_copy = kmalloc((size_t)n);
 		if (!heap_copy)
 			return -2;
-		if (vfs_read(name, heap_copy, (uint32_t)n) < 0) {
+		if (pcache_read(name, heap_copy, (uint32_t)n) < 0) {
 			kfree(heap_copy);
 			return -2;
 		}
@@ -109,7 +123,8 @@ static int load_image(const char *name, uint8_t *dst, uint32_t *size, uint32_t *
 	if (!img)
 		return -1;
 
-	memset(dst, 0, USER_PAGES * PAGE_SIZE); /* only now: a failed lookup must not wipe the caller */
+	ensure_image_mapped();                    /* the heap pages of an earlier program may be missing */
+	memset(dst, 0, IMAGE_PAGES * PAGE_SIZE); /* only now: a failed lookup must not wipe the caller */
 	if (elf_is_elf(img, len)) {
 		rc = elf_load(img, len, dst, USER_BASE, limit, entry, image_end);
 		if (rc)
@@ -123,6 +138,8 @@ static int load_image(const char *name, uint8_t *dst, uint32_t *size, uint32_t *
 	}
 	*size = len;
 	kfree(heap_copy);
+	if (!rc)
+		trim_heap(*image_end);               /* the heap starts empty: its pages appear when first touched */
 	return rc ? -2 : 0;
 }
 
@@ -131,9 +148,9 @@ static int load_image(const char *name, uint8_t *dst, uint32_t *size, uint32_t *
  * envp pointer arrays (NULL terminated), then envp, argv, argc - so [esp]=argc, [esp+4]=argv,
  * [esp+8]=envp. Returns the initial user esp.
  */
-static uint32_t push_args(uint32_t frames, int argc, char **argv)
+static uint32_t push_args(int argc, char **argv)
 {
-	uint32_t sp = USER_END, ptrs[ARGS_MAX + 1], eptrs[ENV_MAX + 1], base = frames - USER_BASE;
+	uint32_t sp = USER_END, ptrs[ARGS_MAX + 1], eptrs[ENV_MAX + 1];
 	uint32_t envp_va;
 	int i, nenv = env_count();
 	char entry[ENV_NAME_MAX + ENV_VAL_MAX + 2];
@@ -144,7 +161,7 @@ static uint32_t push_args(uint32_t frames, int argc, char **argv)
 		env_entry(i, entry, sizeof entry);
 		len = (uint32_t)kstrlen(entry) + 1;
 		sp -= len;
-		memcpy((void *)(base + sp), entry, len);
+		memcpy((void *)sp, entry, len);
 		eptrs[i] = sp;
 	}
 	eptrs[nenv] = 0;
@@ -153,25 +170,25 @@ static uint32_t push_args(uint32_t frames, int argc, char **argv)
 		uint32_t len = (uint32_t)kstrlen(argv[i]) + 1;
 
 		sp -= len;
-		memcpy((void *)(base + sp), argv[i], len);
+		memcpy((void *)sp, argv[i], len);
 		ptrs[i] = sp;
 	}
 	sp &= ~3u;
 	sp -= 4 * (uint32_t)(nenv + 1);
-	memcpy((void *)(base + sp), eptrs, 4 * (uint32_t)(nenv + 1));
+	memcpy((void *)sp, eptrs, 4 * (uint32_t)(nenv + 1));
 	envp_va = sp;
 	ptrs[argc] = 0;
 	sp -= 4 * (uint32_t)(argc + 1);
-	memcpy((void *)(base + sp), ptrs, 4 * (uint32_t)(argc + 1));
+	memcpy((void *)sp, ptrs, 4 * (uint32_t)(argc + 1));
 	{
 		uint32_t argv_va = sp;
 
 		sp -= 4;
-		*(uint32_t *)(base + sp) = envp_va;
+		*(uint32_t *)sp = envp_va;
 		sp -= 4;
-		*(uint32_t *)(base + sp) = argv_va;
+		*(uint32_t *)sp = argv_va;
 		sp -= 4;
-		*(uint32_t *)(base + sp) = (uint32_t)argc;
+		*(uint32_t *)sp = (uint32_t)argc;
 	}
 	return sp;
 }
@@ -214,7 +231,7 @@ int user_exec(struct regs *r, const char *path, char *const *user_argv)
 	int rc;
 
 	stage_args(path, user_argv);
-	rc = load_image(stage_path, (uint8_t *)cur_frames, &size, &entry, &image_end);
+	rc = load_image(stage_path, (uint8_t *)USER_BASE, &size, &entry, &image_end);
 	if (rc == -1)
 		return -1;
 	if (rc) {
@@ -222,8 +239,8 @@ int user_exec(struct regs *r, const char *path, char *const *user_argv)
 		user_abort();
 	}
 	file_close_all();
-	brk_min = brk = (image_end + 15) & ~15u;
-	r->useresp = push_args(cur_frames, stage_argc, stage_argv);
+	task_current()->ubrk_min = task_current()->ubrk = (image_end + 15) & ~15u;
+	r->useresp = push_args(stage_argc, stage_argv);
 	r->eip = entry;
 	r->eax = r->ebx = r->ecx = r->edx = r->esi = r->edi = r->ebp = 0;
 	klog(LOG_INFO, "user: exec '%s' (%u bytes)", stage_path, size);
@@ -242,38 +259,40 @@ extern uint32_t user_saved_esp; /* switch.S: where enter_user()/user_return() me
 int user_spawn(const char *path, char *const *user_argv)
 {
 	uint32_t size, entry = USER_BASE, image_end = USER_BASE;
-	uint32_t saved_esp = user_saved_esp, saved_brk = brk, saved_brk_min = brk_min;
+	uint32_t saved_esp = user_saved_esp, saved_brk = task_current()->ubrk, saved_brk_min = task_current()->ubrk_min;
 	uint32_t saved_esp0 = task_current()->esp0;
 	uint8_t *backup;
+	uint32_t heap_len;
 	volatile int marker;
 	int rc;
 
 	stage_args(path, user_argv);
-	backup = kmalloc(USER_PAGES * PAGE_SIZE);
+	backup = kmalloc((IMAGE_PAGES + STACK_PAGES) * PAGE_SIZE);
 	if (!backup)
 		return -1;
-	memcpy(backup, (void *)cur_frames, USER_PAGES * PAGE_SIZE);
+	heap_len = save_window(backup);
 
-	rc = load_image(stage_path, (uint8_t *)cur_frames, &size, &entry, &image_end);
+	rc = load_image(stage_path, (uint8_t *)USER_BASE, &size, &entry, &image_end);
 	if (rc) {
-		memcpy((void *)cur_frames, backup, USER_PAGES * PAGE_SIZE);
+		restore_window(backup, heap_len);
 		kfree(backup);
 		return rc == -1 ? -1 : -2;
 	}
 	klog(LOG_INFO, "user: spawn '%s' (%u bytes)", stage_path, size);
-	brk_min = brk = (image_end + 15) & ~15u;
+	task_current()->ubrk_min = task_current()->ubrk = (image_end + 15) & ~15u;
 
 	task_current()->esp0 = (uint32_t)&marker - 256; /* ring 3 interrupts land below this frame */
 	gdt_set_kernel_stack(task_current()->esp0);
-	rc = enter_user(entry, push_args(cur_frames, stage_argc, stage_argv));
+	rc = enter_user(entry, push_args(stage_argc, stage_argv));
 
 	task_current()->esp0 = saved_esp0;
 	gdt_set_kernel_stack(saved_esp0);
 	user_saved_esp = saved_esp;
-	memcpy((void *)cur_frames, backup, USER_PAGES * PAGE_SIZE);
+	restore_window(backup, heap_len);
+	task_current()->ubrk = saved_brk;
+	task_current()->ubrk_min = saved_brk_min;
+	trim_heap(saved_brk);              /* pages the child grew into are not ours */
 	kfree(backup);
-	brk = saved_brk;
-	brk_min = saved_brk_min;
 	abort_requested = 0;
 	klog(LOG_INFO, "user: spawned '%s' exited with code %d", stage_path, rc);
 	return rc;
@@ -298,26 +317,32 @@ int user_run_args(const char *name, int argc, char **argv)
 		return -1;
 	}
 	/* Private frames + a private address space: nothing else can see or touch them. */
-	frames = pmm_alloc_contig(USER_PAGES);
+	frames = pmm_alloc_contig(IMAGE_PAGES); /* the stack pages are allocated when first touched */
 	udir = paging_new_dir();
 	if (!frames || !udir) {
 		console_write("out of memory\n");
 		goto fail;
 	}
-	for (i = 0; i < USER_PAGES; i++)
+	for (i = 0; i < IMAGE_PAGES; i++)
 		if (paging_map(udir, USER_BASE + i * PAGE_SIZE, frames + i * PAGE_SIZE,
 			       PTE_RW | PTE_US))
 			goto fail;
-	cur_frames = frames;
-	switch (load_image(name, (uint8_t *)frames, &size, &entry, &image_end)) { /* kernel writes via the identity map */
+	/* the cloned table still holds the kernel's identity entries for these addresses: remove them so
+	   the guard and stack pages really are "not present" (stack pages appear on first touch) */
+	for (i = IMAGE_PAGES; i < USER_PAGES; i++)
+		paging_unmap(udir, USER_BASE + i * PAGE_SIZE);
+	saved_dir = t->pgdir;
+	t->pgdir = udir;
+	paging_switch(udir);             /* from here on the window is addressed through the user mapping */
+	switch (load_image(name, (uint8_t *)USER_BASE, &size, &entry, &image_end)) {
 	case 0:
 		break;
 	case -1:
 		console_printf("no such program: %s\n", name);
-		goto fail;
+		goto fail_switched;
 	default:
 		console_printf("cannot load %s\n", name);
-		goto fail;
+		goto fail_switched;
 	}
 
 	klog(LOG_INFO, "user: running '%s' (%u bytes), entry %x", name, size, entry);
@@ -328,14 +353,11 @@ int user_run_args(const char *name, int argc, char **argv)
 	t->esp0 = esp0;
 	gdt_set_kernel_stack(esp0);
 
-	saved_dir = t->pgdir;
-	t->pgdir = udir;
-	paging_switch(udir);
 	abort_requested = 0;
 	file_reset(); /* descriptors 0-2 = console */
-	brk_min = brk = (image_end + 15) & ~15u;
+	t->ubrk_min = t->ubrk = (image_end + 15) & ~15u;
 	active = 1;
-	rc = enter_user(entry, push_args(frames, argc > ARGS_MAX ? ARGS_MAX : argc, argv));
+	rc = enter_user(entry, push_args(argc > ARGS_MAX ? ARGS_MAX : argc, argv));
 	active = 0;
 	file_close_all(); /* flush anything the program forgot to close */
 	t->pgdir = saved_dir;
@@ -343,25 +365,183 @@ int user_run_args(const char *name, int argc, char **argv)
 
 	t->esp0 = saved_esp0;
 	gdt_set_kernel_stack(saved_esp0);
-	paging_free_dir(udir);
-	pmm_free_range(frames, USER_PAGES);
+	paging_destroy_user(udir);       /* page tables and every user frame (some may be shared with forked children) */
 	klog(LOG_INFO, "user: '%s' exited with code %d", name, rc);
 	return rc;
 
+fail_switched:
+	t->pgdir = saved_dir;
+	paging_switch(saved_dir);
+	paging_destroy_user(udir);
+	return -1;
 fail:
 	if (udir)
 		paging_free_dir(udir);
 	if (frames)
-		pmm_free_range(frames, USER_PAGES);
+		pmm_free_range(frames, IMAGE_PAGES);
 	return -1;
 }
 
 void user_exit(int code)
 {
+	if (task_current()->is_uproc)
+		user_proc_exit(code);
 	user_return(code);
 }
 
 void user_abort(void)
 {
+	if (task_current()->is_uproc)
+		user_proc_exit(-1);
 	user_return(-1);
+}
+
+/*
+ * Demand paging for the stack: the pages at the top of the window are not mapped until the program
+ * (or the kernel on its behalf) first touches them. Anything else unmapped - including the guard page
+ * under the stack - is a real fault.
+ */
+int user_demand_fault(uint32_t addr)
+{
+	task_t *t = task_current();
+	uint32_t page = addr & ~(PAGE_SIZE - 1), frame;
+
+	if (!active && !t->is_uproc)
+		return 0;
+	if (!((page >= USER_END - STACK_RESERVE && page < USER_END)                 /* the stack */
+	      || (page >= USER_BASE && page < page_up(t->ubrk))))                    /* the heap, up to the break */
+		return 0;
+	frame = pmm_alloc();
+	if (!frame)
+		return 0;
+	memset((void *)frame, 0, PAGE_SIZE);               /* new memory is always zeroed */
+	if (paging_map(0, page, frame, PTE_RW | PTE_US)) {
+		pmm_free(frame);
+		return 0;
+	}
+	return 1;
+}
+
+/* The window is [image+heap][guard][stack]: the guard page is not mapped, so copy the two parts. */
+/* Copy image + heap up to the break (the part that exists), then the stack. Returns the heap length. */
+static uint32_t save_window(uint8_t *buf)
+{
+	uint32_t len = page_up(task_current()->ubrk) - USER_BASE;
+
+	memcpy(buf, (void *)USER_BASE, len);
+	memcpy(buf + IMAGE_PAGES * PAGE_SIZE, (void *)(USER_END - STACK_RESERVE), STACK_RESERVE);
+	return len;
+}
+
+static void restore_window(const uint8_t *buf, uint32_t heap_len)
+{
+	ensure_image_mapped();
+	memcpy((void *)USER_BASE, buf, heap_len);
+	memcpy((void *)(USER_END - STACK_RESERVE), buf + IMAGE_PAGES * PAGE_SIZE, STACK_RESERVE);
+}
+
+/* Map every page of the image+heap area that is not present (zeroed). */
+static void ensure_image_mapped(void)
+{
+	uint32_t va;
+
+	for (va = USER_BASE; va < USER_BASE + IMAGE_PAGES * PAGE_SIZE; va += PAGE_SIZE) {
+		uint32_t *pte = paging_pte(0, va), frame;
+
+		if (pte && (*pte & PTE_P))
+			continue;
+		frame = pmm_alloc();
+		if (!frame)
+			break;
+		memset((void *)frame, 0, PAGE_SIZE);
+		paging_map(0, va, frame, PTE_RW | PTE_US);
+	}
+}
+
+/* Unmap and free the whole pages at and above 'brk' (up to the guard page). */
+static void trim_heap(uint32_t brk)
+{
+	uint32_t va;
+
+	for (va = page_up(brk); va < USER_BASE + IMAGE_PAGES * PAGE_SIZE; va += PAGE_SIZE) {
+		uint32_t *pte = paging_pte(0, va);
+
+		if (pte && (*pte & PTE_P)) {
+			uint32_t frame = *pte & ~0xFFFu;
+
+			paging_unmap(0, va);
+			pmm_free(frame);
+		}
+	}
+}
+
+/* ---- fork ---- */
+
+extern void jump_to_regs(struct regs *r) __attribute__((noreturn)); /* switch.S: resume user mode from a saved frame */
+
+struct fork_start {
+	struct regs regs;
+	uint32_t dir, brk, brk_min;
+	struct mmap_rec maps[4];   /* the parent's mappings carry over (the pages are copy-on-write) */
+};
+
+/* First code of a forked process: adopt the copied address space and "return from the fork syscall". */
+static void fork_child_main(void *arg)
+{
+	struct fork_start *fs = arg;
+	struct regs regs = fs->regs;
+	task_t *t = task_current();
+
+	t->pgdir = fs->dir;
+	t->ubrk = fs->brk;
+	t->ubrk_min = fs->brk_min;
+	t->is_uproc = 1;
+	memcpy(t->maps, fs->maps, sizeof t->maps);
+	paging_switch(fs->dir);
+	kfree(fs);
+	jump_to_regs(&regs); /* eax is already 0: this is the child */
+}
+
+/* fork(): returns the child's pid to the caller; the child resumes after the same syscall with 0. */
+int user_fork(struct regs *r)
+{
+	task_t *me = task_current(), *child;
+	struct fork_start *fs;
+	uint32_t dir;
+
+	if (!active && !me->is_uproc)
+		return -1;
+	dir = paging_fork_dir(me->pgdir);
+	fs = kmalloc(sizeof *fs);
+	if (!dir || !fs) {
+		if (dir)
+			paging_destroy_user(dir);
+		kfree(fs);
+		return -1;
+	}
+	fs->regs = *r;
+	fs->regs.eax = 0;
+	fs->dir = dir;
+	fs->brk = me->ubrk;
+	fs->brk_min = me->ubrk_min;
+	memcpy(fs->maps, me->maps, sizeof fs->maps);
+	child = task_spawn("uproc", fork_child_main, fs, me->priority, TASKF_WAITABLE);
+	if (!child) {
+		paging_destroy_user(dir);
+		kfree(fs);
+		return -1;
+	}
+	return (int)child->id;
+}
+
+/* A forked process ends: release its address space and leave the scheduler with the exit code. */
+void user_proc_exit(int code)
+{
+	task_t *t = task_current();
+	uint32_t dir = t->pgdir;
+
+	t->pgdir = paging_kernel_dir();
+	paging_switch(t->pgdir);
+	paging_destroy_user(dir);
+	task_exit_with(code);
 }

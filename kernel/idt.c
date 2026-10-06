@@ -1,5 +1,7 @@
 #include "idt.h"
 
+#include "gdbstub.h"
+
 #include "console.h"
 #include "debug.h"
 #include "gdt.h"
@@ -102,8 +104,15 @@ static void exception(struct regs *r)
 {
 	const char *name = exc_names[r->int_no];
 
-	if (r->int_no == 14)
-		paging_fault(r);
+	if (r->int_no == 14) {
+		paging_fault(r); /* returns only when it resolved the fault (copy-on-write) */
+		return;
+	}
+
+	if ((r->int_no == 1 || r->int_no == 3) && !(r->cs & 3) && gdbstub_active()) {
+		gdbstub_trap(r);
+		return;
+	}
 
 	if (r->cs & 3) { /* fault in a user program: kill it, keep the kernel alive */
 		console_printf("\n[user fault] %s at eip=%08x (err=%x)\n", name, r->eip, r->err_code);

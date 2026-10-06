@@ -21,6 +21,18 @@ _switch_context:
 
 /* int enter_user(uint32_t entry, uint32_t user_esp)
    Runs a ring 3 program. Returns (via user_return) with its exit code. */
+/* void jump_to_regs(struct regs *r): resume a saved interrupt frame (the layout isr_common pushes). */
+.globl _jump_to_regs
+_jump_to_regs:
+	movl 4(%esp), %esp
+	popl %gs
+	popl %fs
+	popl %es
+	popl %ds
+	popa
+	addl $8, %esp
+	iret
+
 .globl _enter_user
 _enter_user:
 	pushl %ebp

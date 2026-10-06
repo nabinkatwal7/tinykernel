@@ -4,6 +4,7 @@
 #include "vfs.h"
 #include "io.h"
 #include "keyboard.h"
+#include "pipe.h"
 #include "kmalloc.h"
 #include "kstring.h"
 
@@ -12,7 +13,7 @@
  * (after dup/dup2) may share one object - and with it the cursor. Objects are either the
  * console (stdin/stdout/stderr) or a buffered regular file.
  */
-enum { OBJ_FREE, OBJ_CONSOLE_IN, OBJ_CONSOLE_OUT, OBJ_FILE, OBJ_DEV };
+enum { OBJ_FREE, OBJ_CONSOLE_IN, OBJ_CONSOLE_OUT, OBJ_FILE, OBJ_DEV, OBJ_PIPE_R, OBJ_PIPE_W };
 
 struct ofile {
 	int kind;
@@ -23,9 +24,10 @@ struct ofile {
 	uint32_t size, cap, pos;
 	int dirty;
 	const struct vfs_device *dev; /* OBJ_DEV */
+	struct pipe *pipe;            /* OBJ_PIPE_R / OBJ_PIPE_W */
 };
 
-#define NOBJ (FILE_MAX_OPEN + 3)
+#define NOBJ (FILE_MAX_OPEN + 3 + 8) /* files, the console, and a few pipe ends */
 
 static struct ofile objs[NOBJ];
 static int fdtab[FILE_FD_MAX]; /* index into objs, or -1 */
@@ -78,6 +80,10 @@ static int release(struct ofile *o)
 			rc = vfs_write(o->name, o->buf, o->size);
 		kfree(o->buf);
 	}
+	if (o->kind == OBJ_PIPE_R)
+		pipe_close_read(o->pipe);
+	else if (o->kind == OBJ_PIPE_W)
+		pipe_close_write(o->pipe);
 	memset(o, 0, sizeof *o);
 	return rc;
 }
@@ -196,6 +202,45 @@ int file_close(int fd)
 	return release(o);
 }
 
+int file_pipe(int fds[2])
+{
+	struct pipe *p;
+	int r = new_fd(), w, ro, wo;
+
+	if (r < 0)
+		return FS_ENOSPC;
+	fdtab[r] = 0; /* claim it while looking for the second descriptor */
+	w = new_fd();
+	fdtab[r] = -1;
+	ro = new_obj();
+	if (ro >= 0)
+		objs[ro].kind = OBJ_PIPE_R; /* claim it too */
+	wo = new_obj();
+	if (w < 0 || ro < 0 || wo < 0) {
+		if (ro >= 0)
+			objs[ro].kind = OBJ_FREE;
+		return FS_ENOSPC;
+	}
+	p = pipe_new();
+	if (!p) {
+		objs[ro].kind = OBJ_FREE;
+		return FS_ENOSPC;
+	}
+	memset(&objs[ro], 0, sizeof objs[ro]);
+	objs[ro].kind = OBJ_PIPE_R;
+	objs[ro].refs = 1;
+	objs[ro].pipe = p;
+	objs[wo].kind = OBJ_PIPE_W;
+	objs[wo].refs = 1;
+	objs[wo].flags = O_WRONLY;
+	objs[wo].pipe = p;
+	fdtab[r] = ro;
+	fdtab[w] = wo;
+	fds[0] = r;
+	fds[1] = w;
+	return 0;
+}
+
 int file_seek(int fd, int32_t off, int whence)
 {
 	struct ofile *o = get(fd);
@@ -267,9 +312,37 @@ static void read_console_line(void)
 	}
 }
 
+static const char *in_data;
+static uint32_t in_len, in_pos;
+
+void file_stdin_set(const char *data, uint32_t len)
+{
+	in_data = data;
+	in_len = len;
+	in_pos = 0;
+}
+
+void file_stdin_clear(void)
+{
+	in_data = 0;
+}
+
+int file_stdin_active(void)
+{
+	return in_data != 0;
+}
+
 int console_stdin_read(void *buf, uint32_t n)
 {
 	uint32_t got = 0;
+
+	if (in_data) {
+		if (n > in_len - in_pos)
+			n = in_len - in_pos;
+		memcpy(buf, in_data + in_pos, n);
+		in_pos += n;
+		return (int)n;
+	}
 
 	if (line_pos >= line_len)
 		read_console_line();
@@ -291,6 +364,8 @@ int file_read(int fd, void *buf, uint32_t n)
 			return FS_EINVAL;
 		return o->dev->read(buf, n);
 	}
+	if (o->kind == OBJ_PIPE_R)
+		return pipe_read(o->pipe, buf, n);
 	if (o->kind != OBJ_FILE || (o->flags & O_WRONLY))
 		return FS_EINVAL;
 	if (o->pos >= o->size)
@@ -319,6 +394,11 @@ int file_write(int fd, const void *buf, uint32_t n)
 		if (!writable(o->flags) || !o->dev->write)
 			return FS_EINVAL;
 		return o->dev->write(buf, n);
+	}
+	if (o->kind == OBJ_PIPE_W) {
+		int rc = pipe_write(o->pipe, buf, n);
+
+		return rc < 0 ? FS_EPIPE : rc;
 	}
 	if (o->kind != OBJ_FILE || !writable(o->flags))
 		return FS_EINVAL;

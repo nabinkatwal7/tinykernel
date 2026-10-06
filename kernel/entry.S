@@ -23,6 +23,12 @@ _kernel_start:
 	jmp *%eax
 
 high_half:
+	/* .bss is not stored in the image (it would be hundreds of sectors of zeros): clear it here. */
+	movl $_bss_start, %edi
+	movl $_kernel_end, %ecx
+	subl %edi, %ecx
+	xorl %eax, %eax
+	rep stosb
 	call _kernel_main
 1:	cli
 	hlt

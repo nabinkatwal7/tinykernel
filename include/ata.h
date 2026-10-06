@@ -16,6 +16,7 @@ int      ata_dev_write(int dev, uint32_t lba, uint32_t count, const void *buf); 
 /* Shorthand for the primary master, the disk TinyFS lives on. */
 int      ata_present(void);
 uint32_t ata_sectors(void);
+uint32_t ata_fs_sectors(void);          /* sectors TinyFS may use: the disk minus the crash-dump area at its end */
 int      ata_read(uint32_t lba, uint32_t count, void *buf);
 int      ata_write(uint32_t lba, uint32_t count, const void *buf);
 

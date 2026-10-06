@@ -6,6 +6,9 @@
 #define USER_BASE  0x800000u   /* programs are linked (org) here */
 #define USER_PAGES 32u         /* 128 KiB: image at the bottom, stack at the top */
 #define STACK_RESERVE (16 * 1024) /* top of the window is the stack; programs may not load there */
+/* Window layout: [image + heap: IMAGE_PAGES, mapped at start][guard page, never mapped][stack: STACK_PAGES, mapped on demand] */
+#define STACK_PAGES (STACK_RESERVE / 4096u)
+#define IMAGE_PAGES (USER_PAGES - STACK_PAGES - 1u)
 #define USER_END   (USER_BASE + USER_PAGES * 4096u)
 
 /* Loads the named program (file on disk first, then built-in) and runs it in ring 3.
@@ -16,6 +19,10 @@ int  user_run_args(const char *name, int argc, char **argv);
 void user_abort(void) __attribute__((noreturn)); /* called from the fault handler */
 void user_exit(int code) __attribute__((noreturn));
 int  user_is_active(void);
+int  user_demand_fault(uint32_t addr);   /* map a stack page on first touch; 1 if the fault is resolved */
+struct regs;
+int  user_fork(struct regs *r);          /* child pid in the parent; the child resumes with 0 */
+void user_proc_exit(int code) __attribute__((noreturn));
 struct regs;
 int  user_spawn(const char *path, char *const *user_argv); /* run to completion, return exit code */
 int  user_exec(struct regs *r, const char *path, char *const *user_argv); /* 0 = switched, -1 = no such program */

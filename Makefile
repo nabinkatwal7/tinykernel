@@ -5,13 +5,13 @@ NASM    := nasm
 QEMU    := qemu-system-i386
 
 CFLAGS  := -m32 -ffreestanding -fno-builtin -fno-stack-protector \
-           -fno-pic -fno-pie -fno-asynchronous-unwind-tables -mgeneral-regs-only \
+           -fno-pic -fno-pie -fno-asynchronous-unwind-tables -fno-omit-frame-pointer -mgeneral-regs-only \
            -Wall -Wextra -Iinclude
 # ponytail: MinGW PE may warn "section below image base"; entry/VMA are still 1 MiB.
 LDFLAGS := -m i386pe -T kernel/linker.ld -nostdlib
 
 BUILD          := build
-KERNEL_SECTORS := 896
+KERNEL_SECTORS := 1100
 KERNEL_ELF     := $(BUILD)/kernel.elf
 KERNEL_BIN     := $(BUILD)/kernel.bin
 BOOT_BIN       := $(BUILD)/boot.bin
@@ -102,10 +102,14 @@ $(BUILD)/c_%.elf: $(BUILD)/uc_%.o $(ULIB_OBJS) user/user.ld
 $(BUILD)/kernel.pe: $(OBJS) kernel/linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)
 
-# Include .bss so zero-initialised state lands in the image.
-$(KERNEL_BIN): $(BUILD)/kernel.pe
+$(BUILD)/ksymgen.exe: tools/ksymgen.c | $(BUILD)
+	gcc -O2 -o $@ $<
+
+# .bss is not part of the image (entry.S clears it at boot). The symbol table is filled in after linking: nm lists the functions, ksymgen patches them into the image.
+$(KERNEL_BIN): $(BUILD)/kernel.pe $(BUILD)/ksymgen.exe
 	$(OBJCOPY) -O binary -j .mbhdr -j .text -j .rodata -j .data -j .bootpd \
-		--set-section-flags .bss=alloc,load,contents -j .bss $< $@
+		$< $@
+	nm -n $< | $(BUILD)/ksymgen.exe $@ 0xC0100000
 	@test $$(stat -c%s $@) -le $$(($(KERNEL_SECTORS) * 512)) || \
 		{ echo "kernel.bin exceeds $(KERNEL_SECTORS) sectors: raise KERNEL_SECTORS"; rm -f $@; exit 1; }
 

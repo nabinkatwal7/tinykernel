@@ -22,7 +22,15 @@ struct e820_entry {
 extern char kernel_end[];
 
 static uint32_t bitmap[MAX_FRAMES / 32]; /* 1 = used */
+static uint8_t refs[MAX_FRAMES];  /* owners per frame: shared pages are freed when the last one lets go */
 static uint32_t hint;
+static uint32_t (*reclaim_fn)(void);
+static int reclaiming;
+
+void pmm_set_reclaim(uint32_t (*fn)(void))
+{
+	reclaim_fn = fn;
+}
 static uint32_t free_count;
 
 static int test(uint32_t f) { return bitmap[f / 32] & (1u << (f % 32)); }
@@ -114,8 +122,10 @@ uint32_t pmm_alloc_contig(uint32_t n)
 		if (run == n) {
 			uint32_t i;
 
-			for (i = start; i < start + n; i++)
+			for (i = start; i < start + n; i++) {
 				set(i);
+				refs[i] = 1;
+			}
 			free_count -= n;
 			hint = start + n;
 			irq_restore(flags);
@@ -124,6 +134,15 @@ uint32_t pmm_alloc_contig(uint32_t n)
 	}
 fail:
 	irq_restore(flags);
+	if (n && reclaim_fn && !reclaiming) { /* out of memory: ask the kernel to give something back, once */
+		uint32_t freed;
+
+		reclaiming = 1;
+		freed = reclaim_fn();
+		reclaiming = 0;
+		if (freed)
+			return pmm_alloc_contig(n);
+	}
 	return 0;
 }
 
@@ -142,8 +161,10 @@ int pmm_reserve(uint32_t addr, uint32_t n)
 	for (i = 0; i < n; i++)
 		if (test(f + i))
 			goto fail;
-	for (i = 0; i < n; i++)
+	for (i = 0; i < n; i++) {
 		set(f + i);
+		refs[f + i] = 1;
+	}
 	free_count -= n;
 	irq_restore(flags);
 	return 0;
@@ -159,6 +180,11 @@ void pmm_free_range(uint32_t addr, uint32_t n)
 
 	for (i = 0; i < n && f + i < MAX_FRAMES; i++) {
 		if (test(f + i)) {
+			if (refs[f + i] > 1) {      /* still shared with someone else */
+				refs[f + i]--;
+				continue;
+			}
+			refs[f + i] = 0;
 			clear(f + i);
 			free_count++;
 		}
@@ -166,6 +192,22 @@ void pmm_free_range(uint32_t addr, uint32_t n)
 	if (f < hint)
 		hint = f;
 	irq_restore(flags);
+}
+
+void pmm_ref(uint32_t addr)
+{
+	uint32_t f = addr / PAGE_SIZE, flags = irq_save();
+
+	if (f < MAX_FRAMES && test(f) && refs[f] < 255)
+		refs[f]++;
+	irq_restore(flags);
+}
+
+uint32_t pmm_refcount(uint32_t addr)
+{
+	uint32_t f = addr / PAGE_SIZE;
+
+	return f < MAX_FRAMES ? refs[f] : 0;
 }
 
 void pmm_free(uint32_t addr)

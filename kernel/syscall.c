@@ -6,7 +6,9 @@
 #include "keyboard.h"
 #include "klog.h"
 #include "sched.h"
+#include "mmapf.h"
 #include "shell.h"
+#include "shm.h"
 #include "timer.h"
 #include "kstring.h"
 #include "user.h"
@@ -173,6 +175,53 @@ void syscall_dispatch(struct regs *r)
 		}
 		task_sleep_ns((uint64_t)r->ebx * 1000000000u + r->ecx);
 		r->eax = 0;
+		break;
+	case SYS_FORK:
+		r->eax = (uint32_t)user_fork(r);
+		break;
+	case SYS_WAITPID: {
+		int code = 0;
+
+		if (r->ecx && !user_ptr_ok(r->ecx, 4)) {
+			r->eax = (uint32_t)-1;
+			break;
+		}
+		r->eax = (uint32_t)task_wait(r->ebx, &code);
+		if (!r->eax && r->ecx)
+			*(int *)r->ecx = code;
+		break;
+	}
+	case SYS_SHMGET:
+		r->eax = (uint32_t)shm_get((int)r->ebx, r->ecx);
+		break;
+	case SYS_SHMAT:
+		r->eax = shm_attach((int)r->ebx);
+		break;
+	case SYS_SHMDT:
+		r->eax = (uint32_t)shm_detach(r->ebx);
+		break;
+	case SYS_MMAP:
+		r->eax = user_str_ok(r->ebx) ? mmap_file((const char *)r->ebx, r->ecx, (int)r->edx) : 0;
+		break;
+	case SYS_MUNMAP:
+		r->eax = (uint32_t)mmap_unmap(r->ebx);
+		break;
+	case SYS_PIPE: {
+		int fds[2];
+
+		if (!user_ptr_ok(r->ebx, sizeof fds)) {
+			r->eax = (uint32_t)-1;
+			break;
+		}
+		r->eax = (uint32_t)file_pipe(fds);
+		if (!r->eax) {
+			((int *)r->ebx)[0] = fds[0];
+			((int *)r->ebx)[1] = fds[1];
+		}
+		break;
+	}
+	case SYS_MSYNC:
+		r->eax = (uint32_t)mmap_sync(r->ebx);
 		break;
 	case SYS_SBRK:
 		r->eax = user_sbrk((int32_t)r->ebx);
