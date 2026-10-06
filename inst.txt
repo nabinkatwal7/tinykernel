@@ -1,5 +1,4 @@
 Add tab completion,
-Add shell line cursor editing,
 Add shell command search path,
 Run script from /etc/rc at boot,
 Add 'grep' command,

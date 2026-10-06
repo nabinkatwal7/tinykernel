@@ -149,40 +149,131 @@ static void prompt(void)
 	console_set_color(COLOR_WHITE, COLOR_BLACK);
 }
 
+static void move_cursor(int n) /* n > 0 right, n < 0 left */
+{
+	while (n > 0) {
+		console_putchar(CON_RIGHT);
+		n--;
+	}
+	while (n < 0) {
+		console_putchar(CON_LEFT);
+		n++;
+	}
+}
+
+/* Redraw buf[from..len) at the cursor, blank 'extra' cells after it, and put the cursor back at 'cur'. */
+static void redraw_tail(const char *buf, int from, int len, int extra, int cur)
+{
+	int i;
+
+	for (i = from; i < len; i++)
+		console_putchar(buf[i]);
+	for (i = 0; i < extra; i++)
+		console_putchar(' ');
+	move_cursor(cur - (len + extra));
+}
+
+static int complete(char *buf, int *len, int max, int *cur); /* tab completion */
+
+/*
+ * Line editor: the cursor can be anywhere in the line. Left/Right/Home/End move it, characters are inserted at
+ * it, Backspace and Delete remove around it, Up/Down walk the history; Ctrl+A/E jump to the ends, Ctrl+U clears
+ * the line before the cursor, Ctrl+K the rest, Ctrl+L redraws the screen, Tab completes.
+ */
 static int readline(char *buf, int max)
 {
-	int len = 0, pos = hist_count;
+	int len = 0, cur = 0, pos = hist_count;
 
 	for (;;) {
 		int k = keyboard_getkey();
 
 		if (k == '\n') {
+			move_cursor(len - cur);
 			console_putchar('\n');
 			buf[len] = '\0';
 			return len;
 		} else if (k == '\b') {
-			if (len > 0) {
+			if (cur > 0) {
+				memmove(buf + cur - 1, buf + cur, (size_t)(len - cur));
 				len--;
-				console_putchar('\b');
+				cur--;
+				move_cursor(-1);
+				redraw_tail(buf, cur, len, 1, cur);
 			}
+		} else if (k == KEY_DEL) {
+			if (cur < len) {
+				memmove(buf + cur, buf + cur + 1, (size_t)(len - cur - 1));
+				len--;
+				redraw_tail(buf, cur, len, 1, cur);
+			}
+		} else if (k == KEY_LEFT) {
+			if (cur > 0) {
+				cur--;
+				move_cursor(-1);
+			}
+		} else if (k == KEY_RIGHT) {
+			if (cur < len) {
+				cur++;
+				move_cursor(1);
+			}
+		} else if (k == KEY_HOME || k == 0x01) { /* ctrl+A */
+			move_cursor(-cur);
+			cur = 0;
+		} else if (k == KEY_END || k == 0x05) {  /* ctrl+E */
+			move_cursor(len - cur);
+			cur = len;
+		} else if (k == 0x0B) {                  /* ctrl+K: delete to the end of the line */
+			redraw_tail(buf, len, len, len - cur, cur);
+			len = cur;
+		} else if (k == 0x15) {                  /* ctrl+U: delete to the start of the line */
+			int gone = cur;
+
+			move_cursor(-cur);
+			memmove(buf, buf + cur, (size_t)(len - cur));
+			len -= gone;
+			cur = 0;
+			redraw_tail(buf, 0, len, gone, 0);
 		} else if (k == KEY_UP) {
-			if (pos > 0)
+			if (pos > 0) {
+				move_cursor(len - cur);
 				set_line(buf, &len, hist[--pos]);
+				cur = len;
+			}
 		} else if (k == KEY_DOWN) {
 			if (pos < hist_count) {
+				move_cursor(len - cur);
 				pos++;
 				set_line(buf, &len, pos == hist_count ? "" : hist[pos]);
+				cur = len;
 			}
+		} else if (k == '\t') {
+			move_cursor(len - cur); /* completion works at the end of the line */
+			cur = len;
+			complete(buf, &len, max, &cur);
 		} else if (k == 0x0C) { /* ctrl+L */
 			console_clear();
 			prompt();
 			buf[len] = '\0';
 			console_write(buf);
+			move_cursor(cur - len);
 		} else if (k >= 32 && k < 127 && len < max - 1) {
-			buf[len++] = (char)k;
+			memmove(buf + cur + 1, buf + cur, (size_t)(len - cur));
+			buf[cur++] = (char)k;
+			len++;
 			console_putchar((char)k);
+			redraw_tail(buf, cur, len, 0, cur);
 		}
 	}
+}
+
+/* Tab completion is added in the next change; for now Tab does nothing. */
+static int complete(char *buf, int *len, int max, int *cur)
+{
+	(void)buf;
+	(void)len;
+	(void)max;
+	(void)cur;
+	return 0;
 }
 
 /* ---------------- variable expansion ---------------- */

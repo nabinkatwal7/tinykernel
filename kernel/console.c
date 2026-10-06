@@ -61,6 +61,22 @@ static void put_screen(char c)
 	case '\r':
 		cursor_x = 0;
 		return;
+	case CON_LEFT:
+		if (cursor_x > 0) {
+			cursor_x--;
+		} else if (cursor_y > VGA_TOP) {
+			cursor_y--;
+			cursor_x = VGA_WIDTH - 1;
+		}
+		return;
+	case CON_RIGHT:
+		if (cursor_x < VGA_WIDTH - 1) {
+			cursor_x++;
+		} else if (cursor_y < VGA_HEIGHT - 1) {
+			cursor_y++;
+			cursor_x = 0;
+		}
+		return;
 	case '\b':
 		if (cursor_x > 0) {
 			cursor_x--;
@@ -146,6 +162,10 @@ void console_putchar(char c)
 {
 	uint32_t f = irq_save();
 
+	if (cap_buf && (c == CON_LEFT || c == CON_RIGHT)) { /* cursor movement is not output */
+		irq_restore(f);
+		return;
+	}
 	if (cap_buf) { /* captured, not displayed */
 		if (cap_len + 1 < cap_size) {
 			cap_buf[cap_len++] = c;
@@ -159,6 +179,8 @@ void console_putchar(char c)
 		serial_putc('\b');
 		serial_putc(' ');
 		serial_putc('\b');
+	} else if (c == CON_LEFT || c == CON_RIGHT) {
+		serial_write(c == CON_LEFT ? "\x1b[D" : "\x1b[C");
 	} else {
 		serial_putc(c);
 	}

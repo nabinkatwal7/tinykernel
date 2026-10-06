@@ -20,6 +20,10 @@
 #define COLOR_YELLOW      14
 #define COLOR_WHITE       15
 
+/* Cursor movement without erasing, for line editing: written like characters. The cursor wraps between rows. */
+#define CON_LEFT  '\x11'
+#define CON_RIGHT '\x12'
+
 void console_clear(void);           /* clears the scrolling area (row 0 is the status bar) */
 void console_putchar(char c);       /* handles \n \r \b \t; mirrored to COM1 */
 void console_write(const char *s);

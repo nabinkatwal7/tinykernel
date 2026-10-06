@@ -70,6 +70,22 @@ void gfxcon_putchar(char c)
 	case '\r':
 		cx = 0;
 		break;
+	case CON_LEFT:
+		if (cx > 0) {
+			cx--;
+		} else if (cy > 0) {
+			cy--;
+			cx = COLS - 1;
+		}
+		break;
+	case CON_RIGHT:
+		if (cx < COLS - 1) {
+			cx++;
+		} else if (cy < ROWS - 1) {
+			cy++;
+			cx = 0;
+		}
+		break;
 	case '\b':
 		if (cx > 0) {
 			cx--;
