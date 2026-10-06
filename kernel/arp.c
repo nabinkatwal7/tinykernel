@@ -66,6 +66,41 @@ void arp_learn(uint32_t ip, const uint8_t mac[ETH_ALEN])
 	learn(ip, mac);
 }
 
+/*
+ * Aging: an entry is only trusted for arp_ttl seconds after the last time we heard from that neighbour (every ARP
+ * packet and every IP packet from it refreshes the stamp). A stale entry is dropped and the next lookup asks again,
+ * so a host whose MAC address changed is found again.
+ */
+static uint32_t arp_ttl = 60;
+static uint32_t arp_expired;
+
+static int stale(int i)
+{
+	return (timer_ticks() - cache[i].stamp) / timer_hz() >= arp_ttl;
+}
+
+void arp_set_ttl(uint32_t seconds)
+{
+	arp_ttl = seconds ? seconds : 1;
+}
+
+uint32_t arp_get_ttl(void)
+{
+	return arp_ttl;
+}
+
+uint32_t arp_expired_count(void)
+{
+	return arp_expired;
+}
+
+int arp_cache_age(int index)
+{
+	if (index < 0 || index >= ARP_CACHE_SIZE || !cache[index].used)
+		return -1;
+	return (int)((timer_ticks() - cache[index].stamp) / timer_hz());
+}
+
 int arp_lookup(uint32_t ip, uint8_t mac[ETH_ALEN])
 {
 	int i;
@@ -73,6 +108,11 @@ int arp_lookup(uint32_t ip, uint8_t mac[ETH_ALEN])
 
 	for (i = 0; i < ARP_CACHE_SIZE; i++) {
 		if (cache[i].used && cache[i].ip == ip) {
+			if (stale(i)) { /* too old to trust: forget it */
+				cache[i].used = 0;
+				arp_expired++;
+				break;
+			}
 			memcpy(mac, cache[i].mac, ETH_ALEN);
 			irq_restore(flags);
 			return 0;
@@ -86,6 +126,11 @@ int arp_cache_get(int index, uint32_t *ip, uint8_t mac[ETH_ALEN])
 {
 	if (index < 0 || index >= ARP_CACHE_SIZE || !cache[index].used)
 		return -1;
+	if (stale(index)) {
+		cache[index].used = 0;
+		arp_expired++;
+		return -1;
+	}
 	*ip = cache[index].ip;
 	memcpy(mac, cache[index].mac, ETH_ALEN);
 	return 0;

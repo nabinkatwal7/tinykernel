@@ -2402,6 +2402,15 @@ static int cmd_arp(int argc, char **argv)
 			arp_cache_clear();
 			return 0;
 		}
+		if (!kstrcmp(argv[1], "ttl")) { /* arp ttl [seconds] */
+			uint32_t secs;
+
+			if (argc > 2 && !kstrtoul(argv[2], &secs))
+				arp_set_ttl(secs);
+			console_printf("entries are trusted for %u s after the last packet from the neighbour; %u have aged out so far\n", arp_get_ttl(),
+				       arp_expired_count());
+			return 0;
+		}
 		if (ip_parse(argv[1], &ip)) {
 			console_write("usage: arp [a.b.c.d | flush]\n");
 			return 1;
@@ -2415,7 +2424,7 @@ static int cmd_arp(int argc, char **argv)
 	}
 	for (i = 0; i < ARP_CACHE_SIZE; i++) {
 		if (!arp_cache_get(i, &ip, mac)) {
-			console_printf("  %-15s %s\n", ip_str(ip, s), mac_str(mac, m));
+			console_printf("  %-15s %s  age %d s\n", ip_str(ip, s), mac_str(mac, m), arp_cache_age(i));
 			n++;
 		}
 	}

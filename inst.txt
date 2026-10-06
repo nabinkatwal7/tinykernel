@@ -1,4 +1,3 @@
-Add ARP cache aging,
 Add IP fragmentation reassembly,
 Add UDP echo and chat demo,
 Add sound blaster detection,
