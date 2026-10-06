@@ -1992,6 +1992,49 @@ static int cmd_icmptest(int argc, char **argv)
 	return fails != 0;
 }
 
+/* ping <ip> [count] */
+static int cmd_ping(int argc, char **argv)
+{
+	uint32_t ip, count = 4, bytes, sent = 0, got = 0, i, rtt_min = 0xFFFFFFFFu, rtt_max = 0, rtt_sum = 0;
+	char s[16];
+
+	if (!netif.up) {
+		console_write("no network interface\n");
+		return 1;
+	}
+	if (argc < 2 || ip_parse(argv[1], &ip) || (argc > 2 && (kstrtoul(argv[2], &count) || !count || count > 100))) {
+		console_write("usage: ping <a.b.c.d> [count]\n");
+		return 1;
+	}
+	console_printf("PING %s: 32 bytes of data\n", ip_str(ip, s));
+	for (i = 0; i < count && !shell_interrupted(); i++) {
+		int rtt = icmp_ping(ip, (uint16_t)(i + 1), 1500, &bytes, 0);
+
+		sent++;
+		if (rtt >= 0) {
+			got++;
+			rtt_sum += (uint32_t)rtt;
+			if ((uint32_t)rtt < rtt_min)
+				rtt_min = (uint32_t)rtt;
+			if ((uint32_t)rtt > rtt_max)
+				rtt_max = (uint32_t)rtt;
+			console_printf("%u bytes from %s: icmp_seq=%u time=%d ms\n", bytes, s, i + 1, rtt);
+		} else if (rtt == -1) {
+			console_printf("icmp_seq=%u: cannot send (no route / ARP failed)\n", i + 1);
+		} else {
+			console_printf("icmp_seq=%u: request timed out\n", i + 1);
+		}
+		if (i + 1 < count)
+			task_sleep(500);
+	}
+	console_printf("--- %s ping statistics ---\n%u sent, %u received, %u%% loss", s, sent, got,
+		       sent ? (sent - got) * 100 / sent : 0);
+	if (got)
+		console_printf(", rtt min/avg/max = %u/%u/%u ms", rtt_min, rtt_sum / got, rtt_max);
+	console_putchar('\n');
+	return got == 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -2517,6 +2560,7 @@ static const struct command commands[] = {
 	{ "arp",     "arp [ip|flush]",        "ARP cache / resolve an address", cmd_arp },
 	{ "iptest",  "iptest",                "IPv4 checksum / parsing self-test", cmd_iptest },
 	{ "icmptest", "icmptest",             "ICMP echo self-test (loopback)", cmd_icmptest },
+	{ "ping",    "ping <ip> [count]",     "send ICMP echo requests", cmd_ping },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },
