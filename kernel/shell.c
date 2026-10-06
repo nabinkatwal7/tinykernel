@@ -3438,6 +3438,28 @@ static int cmd_functions(int argc, char **argv)
 	return 0;
 }
 
+/* calc EXPRESSION : evaluate an integer expression (+ - * / % ( ) comparisons, && ||, variables) */
+static int cmd_calc(int argc, char **argv)
+{
+	char expr[LINE_MAX];
+	int32_t v;
+	int i, n = 0;
+
+	if (argc < 2) {
+		console_write("usage: calc <expression>   e.g. calc (3+4)*0x10\n");
+		return 1;
+	}
+	expr[0] = 0;
+	for (i = 1; i < argc; i++)
+		n += ksnprintf(expr + n, sizeof expr - (size_t)n, "%s%s", i > 1 ? " " : "", argv[i]);
+	if (arith_eval(expr, &v)) {
+		console_printf("calc: cannot evaluate '%s'\n", expr);
+		return 1;
+	}
+	console_printf("%d (0x%x)\n", v, (uint32_t)v);
+	return 0;
+}
+
 /* panic [message] : test the panic path and its stack trace */
 static int cmd_panic(int argc, char **argv)
 {
@@ -3955,6 +3977,7 @@ static const struct command commands[] = {
 	{ "sort",    "sort [-nru] [file...]", "sort lines", tu_sort },
 	{ "find",    "find [dir] [-name pat]", "search a directory tree", tu_find },
 	{ "diff",    "diff file1 file2",      "compare two files line by line", tu_diff },
+	{ "calc",    "calc EXPRESSION",       "evaluate an integer expression", cmd_calc },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
