@@ -4148,6 +4148,7 @@ static const struct command commands[] = {
 	{ "udpecho", "udpecho [PORT [N]]", "UDP echo server", cmd_udpecho },
 	{ "udpchat", "udpchat LPORT IP PORT", "two-person UDP chat", cmd_udpchat },
 	{ "sb", "sb", "detect a Sound Blaster", cmd_sb },
+	{ "play", "play tone|scale|file", "play PCM audio on the Sound Blaster", cmd_play },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },

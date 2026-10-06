@@ -9,6 +9,9 @@ int         sb_present(void);
 uint16_t    sb_base(void);
 const char *sb_model(void);
 
+int         sb_play(const uint8_t *samples, uint32_t len, uint32_t rate);   /* unsigned 8-bit mono; ticks taken, or -1 */
+uint32_t    sb_make_tone(uint8_t *buf, uint32_t cap, uint32_t freq, uint32_t ms, uint32_t rate);
+int cmd_play(int argc, char **argv);  /* play tone|scale|file */
 int cmd_sb(int argc, char **argv);    /* sb : detect and describe the card */
 
 #endif
