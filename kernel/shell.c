@@ -723,6 +723,35 @@ static int cmd_prodcons(int argc, char **argv)
 	return !ok;
 }
 
+static void nested_child(void *arg)
+{
+	(void)arg;
+	task_sleep(1500);
+}
+
+static void nested_parent(void *arg)
+{
+	(void)arg;
+	task_create("child-a", nested_child, 0, PRIO_DEFAULT);
+	task_create("child-b", nested_child, 0, PRIO_DEFAULT);
+	task_sleep(500); /* exits first: its children get reparented */
+}
+
+static int cmd_pstree(int argc, char **argv)
+{
+	(void)argc;
+	if (argc > 1 && !kstrcmp(argv[1], "demo")) {
+		task_create("parent", nested_parent, 0, PRIO_DEFAULT);
+		task_sleep(200);
+		console_write("while the parent lives:\n");
+		sched_tree();
+		task_sleep(600);
+		console_write("after the parent exited:\n");
+	}
+	sched_tree();
+	return 0;
+}
+
 static int cmd_nice(int argc, char **argv)
 {
 	uint32_t id, prio;
@@ -1225,6 +1254,7 @@ static const struct command commands[] = {
 	{ "semtest", "semtest",             "semaphore limits concurrency", cmd_semtest },
 	{ "spintest", "spintest",             "spinlock IRQ-safety self-test", cmd_spintest },
 	{ "prodcons", "prodcons",             "producer/consumer demo", cmd_prodcons },
+	{ "pstree",  "pstree [demo]",         "task tree by parent", cmd_pstree },
 	{ "nice",    "nice <id> <prio>",      "set a task priority", cmd_nice },
 	{ "priotest", "priotest",             "priority + aging scheduler test", cmd_priotest },
 	{ "kill",  "kill <id>",             "stop a task", cmd_kill },

@@ -26,7 +26,8 @@ typedef struct task {
 	uint32_t guard;        /* physical/virtual address of the unmapped stack guard page */
 	uint32_t heap_bytes;   /* live kmalloc bytes owned by this task */
 	uint32_t pgdir;        /* physical address of this task's page directory */
-	uint32_t id;
+	uint32_t id;           /* process id */
+	uint32_t ppid;         /* id of the creating task (0 = kernel main, also for orphans) */
 	char name[16];
 	task_state_t state;
 	uint32_t priority;     /* 1 (lowest) .. 9 (highest), default PRIO_DEFAULT */
@@ -60,7 +61,8 @@ void     sched_tick(void);
 void     wq_wait(struct waitq *q, wait_reason_t why);
 int      wq_wake_one(struct waitq *q);   /* 1 if a task was woken */
 int      wq_wake_all(struct waitq *q);   /* number woken */        /* called from the timer IRQ */
-void     sched_dump(void);        /* ps */
+void     sched_dump(void);
+void     sched_tree(void);        /* pstree: tasks indented under their parents */        /* ps */
 uint32_t task_count(void);
 uint32_t sched_current_id(void);
 void     sched_account(uint32_t id, int32_t delta); /* adjust a task's heap_bytes */

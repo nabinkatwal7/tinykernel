@@ -122,6 +122,7 @@ task_t *task_create(const char *name, void (*entry)(void *), void *arg, uint32_t
 	kstrlcpy(t->name, name, sizeof t->name);
 	t->esp = (uint32_t)sp;
 	t->esp0 = (uint32_t)t->stack + TASK_STACK_SIZE;
+	t->ppid = current ? current->id : 0;
 	t->pgdir = paging_kernel_dir();
 	t->entry = entry;
 	t->arg = arg;
@@ -186,6 +187,18 @@ static void reap(void)
 	}
 }
 
+/* A dying task's children are adopted by task 0, like orphans going to init. */
+static void reparent_children(task_t *dead)
+{
+	task_t *t = task_head;
+
+	do {
+		if (t->ppid == dead->id && t != dead)
+			t->ppid = 0;
+		t = t->next;
+	} while (t != task_head);
+}
+
 static void wq_remove(task_t *t);
 static void schedule_locked(void)
 {
@@ -234,6 +247,7 @@ void task_exit(void)
 {
 	cli();
 	current->state = TASK_DEAD;
+	reparent_children(current);
 	schedule_locked();
 	for (;;)
 		hlt();
@@ -276,6 +290,7 @@ int task_kill(uint32_t id)
 			if (t->state == TASK_BLOCKED)
 				wq_remove(t);
 			t->state = TASK_DEAD;
+			reparent_children(t);
 			rc = 0;
 			break;
 		}
@@ -436,17 +451,45 @@ void sched_dump(void)
 	task_t *t = task_head;
 	char state[24];
 
-	console_write("ID   NAME        STATE           PRIO  CPU-TICKS  HEAP    STACK\n");
+	console_write("ID   PPID NAME        STATE           PRIO  CPU-TICKS  HEAP    STACK\n");
 	do {
 		if (t->state != TASK_DEAD) {
 			if (t->state == TASK_BLOCKED)
 				ksnprintf(state, sizeof state, "blocked:%s", why[t->reason]);
 			else
 				ksnprintf(state, sizeof state, "%s", names[t->state]);
-			console_printf("%-4u %-11s %-15s %-5u %-10u %-7u %u\n", t->id, t->name,
+			console_printf("%-4u %-4u %-11s %-15s %-5u %-10u %-7u %u\n", t->id, t->ppid, t->name,
 				       state, t->priority, t->cpu_ticks, t->heap_bytes,
 				       t->stack ? TASK_STACK_SIZE : 0u);
 		}
+		t = t->next;
+	} while (t != task_head);
+	irq_restore(f);
+}
+
+static void tree_print(task_t *node, int depth)
+{
+	task_t *t = task_head;
+	int i;
+
+	for (i = 0; i < depth; i++)
+		console_write("  ");
+	console_printf("%s%s (%u)\n", depth ? "`- " : "", node->name, node->id);
+	do {
+		if (t->ppid == node->id && t != node && t->state != TASK_DEAD && !t->is_idle)
+			tree_print(t, depth + 1);
+		t = t->next;
+	} while (t != task_head);
+}
+
+void sched_tree(void)
+{
+	uint32_t f = irq_save();
+	task_t *t = task_head;
+
+	do { /* roots: task 0, the idle task and anything whose parent is gone */
+		if (t->state != TASK_DEAD && (t->id == 0 || t->is_idle))
+			tree_print(t, 0);
 		t = t->next;
 	} while (t != task_head);
 	irq_restore(f);
