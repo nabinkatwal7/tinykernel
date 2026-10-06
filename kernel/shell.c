@@ -10,6 +10,7 @@
 #include "kmalloc.h"
 #include "kprintf.h"
 #include "kstring.h"
+#include "paging.h"
 #include "pmm.h"
 #include "sched.h"
 #include "timer.h"
@@ -260,7 +261,56 @@ static int cmd_hexdump(int argc, char **argv)
 		console_write("usage: hexdump <addr> [len]\n");
 		return 1;
 	}
+	if (!paging_is_mapped(addr) || !paging_is_mapped(addr + (len ? len - 1 : 0))) {
+		console_printf("%08x is not mapped\n", addr);
+		return 1;
+	}
 	debug_hexdump((const void *)addr, len);
+	return 0;
+}
+
+static int cmd_vmap(int argc, char **argv)
+{
+	uint32_t virt, phys, flags = PTE_RW;
+
+	if (argc < 3 || kstrtoul(argv[1], &virt) || kstrtoul(argv[2], &phys)) {
+		console_write("usage: vmap <virt> <phys> [ro]\n");
+		return 1;
+	}
+	if (argc > 3 && !kstrcmp(argv[3], "ro"))
+		flags = 0;
+	if (paging_map(0, virt, phys, flags)) {
+		console_write("vmap failed\n");
+		return 1;
+	}
+	console_printf("%08x -> %08x (%s)\n", virt, phys, flags ? "rw" : "ro");
+	return 0;
+}
+
+static int cmd_vunmap(int argc, char **argv)
+{
+	uint32_t virt;
+
+	if (argc < 2 || kstrtoul(argv[1], &virt) || paging_unmap(0, virt)) {
+		console_write("usage: vunmap <virt>   (must be mapped)\n");
+		return 1;
+	}
+	return 0;
+}
+
+static int cmd_vtrans(int argc, char **argv)
+{
+	uint32_t virt, phys;
+
+	if (argc < 2 || kstrtoul(argv[1], &virt)) {
+		console_write("usage: vtrans <virt>\n");
+		return 1;
+	}
+	phys = paging_translate(0, virt);
+	if (phys == PAGING_NOT_MAPPED)
+		console_printf("%08x is not mapped\n", virt);
+	else
+		console_printf("%08x -> %08x\n", virt, phys);
 	return 0;
 }
 
@@ -668,7 +718,10 @@ static const struct command commands[] = {
 	{ "meminfo", "meminfo",               "memory map, frames and heap", cmd_meminfo },
 	{ "memtest", "memtest",               "stress test the allocator", cmd_memtest },
 	{ "hexdump", "hexdump <addr> [len]",  "dump memory", cmd_hexdump },
-	{ "dmesg",   "dmesg",                 "show the kernel log", cmd_dmesg },
+	{ "vmap",    "vmap <virt> <phys> [ro]", "map a page", cmd_vmap },
+	{ "vunmap",  "vunmap <virt>",         "unmap a page", cmd_vunmap },
+	{ "vtrans",  "vtrans <virt>",         "translate an address", cmd_vtrans },
+	{ "dmesg",  "dmesg",                 "show the kernel log", cmd_dmesg },
 	{ "ps",      "ps",                    "list tasks", cmd_ps },
 	{ "spawn",   "spawn [n]",             "start demo worker tasks", cmd_spawn },
 	{ "kill",    "kill <id>",             "stop a task", cmd_kill },

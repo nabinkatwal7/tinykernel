@@ -90,3 +90,77 @@ uint32_t paging_kernel_dir(void)
 {
 	return (uint32_t)kdir;
 }
+
+static uint32_t current_dir(void)
+{
+	uint32_t cr3;
+
+	__asm__ volatile ("movl %%cr3, %0" : "=r"(cr3));
+	return cr3;
+}
+
+static void flush_page(uint32_t virt)
+{
+	__asm__ volatile ("invlpg (%0)" : : "r"(virt) : "memory");
+}
+
+int paging_map(uint32_t dir, uint32_t virt, uint32_t phys, uint32_t flags)
+{
+	uint32_t *pd, *pt;
+	uint32_t *pde;
+
+	if (!dir)
+		dir = current_dir();
+	pd = (uint32_t *)dir;
+	pde = &pd[virt >> 22];
+	if (!(*pde & PTE_P)) {
+		pt = alloc_table();
+		if (!pt)
+			return -1;
+		*pde = (uint32_t)pt | PTE_P | PTE_RW | PTE_US;
+	}
+	pt = (uint32_t *)(*pde & ~0xFFFu);
+	pt[(virt >> 12) & 0x3FF] = (phys & ~0xFFFu) | (flags & 0xFFFu) | PTE_P;
+	if (dir == current_dir())
+		flush_page(virt);
+	return 0;
+}
+
+int paging_unmap(uint32_t dir, uint32_t virt)
+{
+	uint32_t *pd, *pt;
+
+	if (!dir)
+		dir = current_dir();
+	pd = (uint32_t *)dir;
+	if (!(pd[virt >> 22] & PTE_P))
+		return -1;
+	pt = (uint32_t *)(pd[virt >> 22] & ~0xFFFu);
+	if (!(pt[(virt >> 12) & 0x3FF] & PTE_P))
+		return -1;
+	pt[(virt >> 12) & 0x3FF] = 0;
+	if (dir == current_dir())
+		flush_page(virt);
+	return 0;
+}
+
+uint32_t paging_translate(uint32_t dir, uint32_t virt)
+{
+	uint32_t *pd, *pt, pte;
+
+	if (!dir)
+		dir = current_dir();
+	pd = (uint32_t *)dir;
+	if (!(pd[virt >> 22] & PTE_P))
+		return PAGING_NOT_MAPPED;
+	pt = (uint32_t *)(pd[virt >> 22] & ~0xFFFu);
+	pte = pt[(virt >> 12) & 0x3FF];
+	if (!(pte & PTE_P))
+		return PAGING_NOT_MAPPED;
+	return (pte & ~0xFFFu) | (virt & 0xFFFu);
+}
+
+int paging_is_mapped(uint32_t virt)
+{
+	return !enabled || paging_translate(0, virt) != PAGING_NOT_MAPPED;
+}
