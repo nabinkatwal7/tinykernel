@@ -1,4 +1,3 @@
-Implement waitpid style exit codes,
 Add Ctrl+C to stop running task,
 Learn ELF file format,
 Write ELF loader for user programs,

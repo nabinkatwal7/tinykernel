@@ -785,6 +785,40 @@ static int cmd_forktest(int argc, char **argv)
 	return 0;
 }
 
+static void exiter(void *arg)
+{
+	task_sleep(300);
+	task_exit_with((int)arg);
+}
+
+/* Parent waits for children and collects their exit codes (including a killed one). */
+static int cmd_waittest(int argc, char **argv)
+{
+	task_t *a = task_spawn("exit-42", exiter, (void *)42, PRIO_DEFAULT, TASKF_WAITABLE);
+	task_t *b = task_spawn("exit-kill", exiter, (void *)7, PRIO_DEFAULT, TASKF_WAITABLE);
+	int code_a = -100, code_b = -100, rc;
+	uint32_t id_a, id_b;
+
+	(void)argc;
+	(void)argv;
+	if (!a || !b)
+		return 1;
+	id_a = a->id;
+	id_b = b->id;
+	task_sleep(100);
+	console_write("both children running; table while they are alive:\n");
+	sched_dump();
+	task_kill(id_b);
+	rc = task_wait(id_a, &code_a);
+	console_printf("wait(%u): rc=%d exit code %d\n", id_a, rc, code_a);
+	rc = task_wait(id_b, &code_b);
+	console_printf("wait(%u): rc=%d exit code %d (killed)\n", id_b, rc, code_b);
+	rc = task_wait(id_a, &code_a);
+	console_printf("wait(%u) again: rc=%d (already collected)\n", id_a, rc);
+	console_write(code_a == 42 && code_b == -1 ? "waittest: ok\n" : "waittest: FAILED\n");
+	return !(code_a == 42 && code_b == -1);
+}
+
 static int cmd_nice(int argc, char **argv)
 {
 	uint32_t id, prio;
@@ -1289,6 +1323,7 @@ static const struct command commands[] = {
 	{ "prodcons", "prodcons",             "producer/consumer demo", cmd_prodcons },
 	{ "pstree",  "pstree [demo]",         "task tree by parent", cmd_pstree },
 	{ "forktest", "forktest",             "fork-style task cloning", cmd_forktest },
+	{ "waittest", "waittest",             "exit codes via task_wait", cmd_waittest },
 	{ "nice",    "nice <id> <prio>",      "set a task priority", cmd_nice },
 	{ "priotest", "priotest",             "priority + aging scheduler test", cmd_priotest },
 	{ "kill",  "kill <id>",             "stop a task", cmd_kill },

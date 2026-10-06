@@ -19,6 +19,7 @@ static task_t *task_head;   /* circular list */
 static task_t *current;
 static task_t *idle;
 static uint32_t next_id;
+static struct waitq exit_wq; /* task_wait() sleepers */
 static task_t *sleep_head; /* sleeping tasks, earliest wake_tick first */
 
 /* Insert keeping the list sorted; equal wake times keep FIFO order. */
@@ -149,6 +150,19 @@ task_t *task_create(const char *name, void (*entry)(void *), void *arg, uint32_t
 	return t;
 }
 
+task_t *task_spawn(const char *name, void (*entry)(void *), void *arg, uint32_t priority,
+		   uint32_t flags)
+{
+	/* The flag must be set before the task can run and exit, so create it with IRQs off. */
+	uint32_t f = irq_save();
+	task_t *t = task_create(name, entry, arg, priority);
+
+	if (t && (flags & TASKF_WAITABLE))
+		t->waitable = 1;
+	irq_restore(f);
+	return t;
+}
+
 /*
  * Fork experiment: duplicate the calling task's kernel stack so the child resumes right after
  * this call with return value 0 (the parent gets the child's id). The copy is only correct
@@ -221,6 +235,15 @@ static task_t *pick_next(void)
 }
 
 /* Free tasks that have exited. Never touches the one we are running on. */
+static void free_stack(task_t *t)
+{
+	paging_map(paging_kernel_dir(), t->guard, t->guard, PTE_RW);
+	pmm_free_range(t->guard, 1 + TASK_STACK_SIZE / PAGE_SIZE);
+	t->stack = 0;
+	t->guard = 0;
+}
+
+/* DEAD tasks are freed entirely; ZOMBIEs only lose their stack (the TCB keeps the exit code). */
 static void reap(void)
 {
 	task_t *t, *prev;
@@ -228,15 +251,19 @@ static void reap(void)
 	for (;;) {
 		prev = current;
 		for (t = current->next; t != current; prev = t, t = t->next)
-			if (t->state == TASK_DEAD)
+			if (t->state == TASK_DEAD || (t->state == TASK_ZOMBIE && t->stack))
 				break;
 		if (t == current)
 			return;
+		if (t->state == TASK_ZOMBIE) {
+			free_stack(t);
+			continue;
+		}
 		prev->next = t->next;
 		if (task_head == t)
 			task_head = prev;
-		paging_map(paging_kernel_dir(), t->guard, t->guard, PTE_RW);
-		pmm_free_range(t->guard, 1 + TASK_STACK_SIZE / PAGE_SIZE);
+		if (t->stack)
+			free_stack(t);
 		slab_free(&task_cache, t);
 	}
 }
@@ -297,14 +324,59 @@ void task_sleep(uint32_t ms)
 	irq_restore(f);
 }
 
-void task_exit(void)
+/* Mark a task finished: waitable ones linger as zombies, others vanish. */
+static void finish(task_t *t, int code)
+{
+	t->exit_code = code;
+	reparent_children(t);
+	if (t->waitable) {
+		t->state = TASK_ZOMBIE;
+		wq_wake_all(&exit_wq);
+	} else {
+		t->state = TASK_DEAD;
+	}
+}
+
+void task_exit_with(int code)
 {
 	cli();
-	current->state = TASK_DEAD;
-	reparent_children(current);
+	finish(current, code);
 	schedule_locked();
 	for (;;)
 		hlt();
+}
+
+void task_exit(void)
+{
+	task_exit_with(0);
+}
+
+int task_wait(uint32_t id, int *code)
+{
+	uint32_t f = irq_save();
+
+	for (;;) {
+		task_t *t = task_head;
+		task_t *found = 0;
+
+		do {
+			if (t->id == id && t->waitable && t->state != TASK_DEAD)
+				found = t;
+			t = t->next;
+		} while (t != task_head);
+		if (!found) {
+			irq_restore(f);
+			return -1;
+		}
+		if (found->state == TASK_ZOMBIE) {
+			if (code)
+				*code = found->exit_code;
+			found->state = TASK_DEAD; /* collected: the next reap frees it */
+			irq_restore(f);
+			return 0;
+		}
+		wq_wait(&exit_wq, WAIT_OTHER);
+	}
 }
 
 int task_set_priority(uint32_t id, uint32_t prio)
@@ -334,17 +406,17 @@ int task_kill(uint32_t id)
 	int rc = -1;
 
 	do {
-		if (t->id == id && id != 0 && !t->is_idle && t->state != TASK_DEAD) {
+		if (t->id == id && id != 0 && !t->is_idle && t->state != TASK_DEAD
+		    && t->state != TASK_ZOMBIE) {
 			if (t == current) {
 				irq_restore(f);
-				task_exit();
+				task_exit_with(-1);
 			}
 			if (t->state == TASK_SLEEPING)
 				sleep_remove(t);
 			if (t->state == TASK_BLOCKED)
 				wq_remove(t);
-			t->state = TASK_DEAD;
-			reparent_children(t);
+			finish(t, -1);
 			rc = 0;
 			break;
 		}
@@ -499,7 +571,7 @@ void sched_tick(void)
 
 void sched_dump(void)
 {
-	static const char *const names[] = { "ready", "running", "sleeping", "dead", "blocked" };
+	static const char *const names[] = { "ready", "running", "sleeping", "dead", "blocked", "zombie" };
 	static const char *const why[] = { "", "", "mutex", "sem", "kbd", "other" };
 	uint32_t f = irq_save();
 	task_t *t = task_head;
@@ -510,6 +582,8 @@ void sched_dump(void)
 		if (t->state != TASK_DEAD) {
 			if (t->state == TASK_BLOCKED)
 				ksnprintf(state, sizeof state, "blocked:%s", why[t->reason]);
+			else if (t->state == TASK_ZOMBIE)
+				ksnprintf(state, sizeof state, "zombie(%d)", t->exit_code);
 			else
 				ksnprintf(state, sizeof state, "%s", names[t->state]);
 			console_printf("%-4u %-4u %-11s %-15s %-5u %-10u %-7u %u\n", t->id, t->ppid, t->name,

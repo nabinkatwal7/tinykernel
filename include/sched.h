@@ -8,7 +8,7 @@
 #define PRIO_MAX     9
 #define AGING_TICKS  20 /* every this many waiting ticks a task's effective priority rises by 1 */
 
-typedef enum { TASK_READY, TASK_RUNNING, TASK_SLEEPING, TASK_DEAD, TASK_BLOCKED } task_state_t;
+typedef enum { TASK_READY, TASK_RUNNING, TASK_SLEEPING, TASK_DEAD, TASK_BLOCKED, TASK_ZOMBIE } task_state_t;
 
 /* Why a task is not runnable; shown by ps. */
 typedef enum { WAIT_NONE, WAIT_SLEEP, WAIT_MUTEX, WAIT_SEM, WAIT_KEYBOARD, WAIT_OTHER } wait_reason_t;
@@ -39,6 +39,8 @@ typedef struct task {
 	void (*entry)(void *);
 	void *arg;
 	int is_idle;
+	int waitable;          /* becomes a ZOMBIE holding exit_code until task_wait() collects it */
+	int exit_code;
 	struct task *next;     /* circular list of all tasks */
 	struct task *sleep_next; /* wake list, ordered by wake_tick */
 	struct task *wait_next;  /* next task in the wait queue we are blocked on */
@@ -48,6 +50,11 @@ typedef struct task {
 
 void     sched_init(void);   /* adopts the running code as task 0 and creates the idle task */
 task_t  *task_create(const char *name, void (*entry)(void *), void *arg, uint32_t priority);
+#define TASKF_WAITABLE 1
+task_t  *task_spawn(const char *name, void (*entry)(void *), void *arg, uint32_t priority,
+		    uint32_t flags);
+void     task_exit_with(int code) __attribute__((noreturn));
+int      task_wait(uint32_t id, int *code); /* blocks; 0 = collected, -1 = no such waitable task */
 void     task_exit(void) __attribute__((noreturn));
 void     task_yield(void);
 int      task_fork(void);          /* experimental: child gets 0, parent gets the child id, -1 on error */
