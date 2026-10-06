@@ -15,7 +15,7 @@ make run-headless    # same, no window
 make clean-disk      # forget everything stored on the data disk
 ```
 
-`KERNEL_SECTORS` in the Makefile (default 256 = 128 KiB) is passed to the bootloader; the build fails if `kernel.bin` outgrows it.
+`KERNEL_SECTORS` in the Makefile (default 896 = 448 KiB) is passed to the bootloader; the build fails if `kernel.bin` outgrows it.
 
 ## Automated driving
 
@@ -48,3 +48,10 @@ Tabs, kernel-style braces, `k`-prefixed helpers, comments only for the non-obvio
 ## User-space C programs
 
 `user/c/NAME.c` is compiled with `UCFLAGS`, linked with `user/lib/crt0.S` (entry `_start`, calls `main(argc, argv, envp)` and `exit`) and `user/lib/ulib.c`, linked at `0x800000` and converted to an ELF (`build/c_NAME.elf`). It is picked up automatically: the Makefile discovers programs by file name (`user/NAME.asm` flat binary, `user/NAME.elf.asm` assembly ELF, `user/c/NAME.c` C ELF) and `tools/genprogs.sh` generates `build/progs_gen.c`, which embeds every image in the kernel and registers it by name. Just add the file and `make`; `install` lists it and `run NAME` starts it. System calls are inline wrappers in `user/lib/usys.h`.
+
+## Testing
+
+- `selftest` inside the OS runs 26 checks (allocators, paging, locks, scheduler, user programs, filesystem, network loopback) and prints PASS/FAIL per test.
+- `make check` (`tools/ci.sh`) does a clean build that must be warning-free, boots the kernel, and runs `selftest` headless through QEMU; it exits non-zero on any problem. `tools/ci.sh --watch` re-runs the quick build+boot whenever a source file changes.
+- `tools/qemu_drive.py` understands extra tokens: `--menu N` (boot menu entry), `mon:<qemu monitor command>` (for example `mon:screendump file.ppm`, `mon:mouse_move 10 5`), `ser:<text>` (type on the serial port), `hostudp:<text>`, `hostlisten:<port>`, `hosttcp:<port>:<reply>` (talk to the guest over the user-mode network). `tools/ppm2png.py` converts screenshots.
+- The Makefile attaches `build/disk.img` (TinyFS, IDE master), `build/fat.img` (FAT12 sample, IDE slave) and an RTL8139 NIC on QEMU's user-mode network (guest `10.0.2.15`, gateway `10.0.2.2`).

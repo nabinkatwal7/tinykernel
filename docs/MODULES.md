@@ -24,6 +24,20 @@ Everything lives in `kernel/` (code) and `include/` (one header per module).
 | Debug | `debug.c` | `panic`, `ASSERT`, register dump, hexdump. |
 | Shell | `shell.c` | Line editor with history, quoting parser, command table. |
 
+## Later additions
+
+| Module | Files | Role |
+| --- | --- | --- |
+| Paging | `paging.c` | identity + higher-half mapping, per-task directories, page-fault decoding, guard pages |
+| Slab / canaries | `slab.c`, `kmalloc.c` | fixed-size object caches; heap overflow detection |
+| Sync | `sync.c` | mutex, semaphore, IRQ-safe spinlock on the scheduler's wait queues |
+| VFS | `vfs.c`, `devfs.c`, `procfs.c`, `fat12.c`, `file.c`, `bcache.c` | mounts, path normalization, /dev, /proc, read-only FAT12, descriptor table, write-back cache |
+| ELF / user libc | `elf.c`, `user/lib/*` | ELF32 loader, crt0, syscalls, string/stdio/stdlib |
+| Hardware | `pci.c`, `cpu.c`, `rtc.c`, `speaker.c`, `acpi.c`, `mouse.c` | discovery and small drivers |
+| Network | `rtl8139.c`, `arp.c`, `ip.c`, `icmp.c`, `udp.c`, `dhcp.c`, `tcp.c` | NIC driver and protocol stack |
+| Graphics | `vga.c`, `gfx.c`, `gfxcon.c`, `wm.c`, `gui.c`, `editor.c` | mode 13h, drawing, graphical console, windows, buttons, text editor |
+| Tooling | `cmdline.c`, `selftest.c` | kernel parameters, test runner |
+
 ## Memory map
 
 | Range | Use |

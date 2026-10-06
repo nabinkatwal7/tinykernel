@@ -606,17 +606,20 @@ static int cmd_spawn(int argc, char **argv)
 	return 0;
 }
 
+static int (*volatile recurse_fn)(int); /* indirect call: the compiler cannot prove the recursion is endless */
+
 static int recurse(int n)
 {
 	volatile char pad[256];
 
 	pad[0] = (char)n;
-	return recurse(n + 1) + pad[0];
+	return recurse_fn(n + 1) + pad[0];
 }
 
 static void overflow_main(void *arg)
 {
 	(void)arg;
+	recurse_fn = recurse;
 	recurse(0);
 }
 

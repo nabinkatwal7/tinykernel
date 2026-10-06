@@ -11,7 +11,7 @@ CFLAGS  := -m32 -ffreestanding -fno-builtin -fno-stack-protector \
 LDFLAGS := -m i386pe -T kernel/linker.ld -nostdlib
 
 BUILD          := build
-KERNEL_SECTORS := 768
+KERNEL_SECTORS := 896
 KERNEL_ELF     := $(BUILD)/kernel.elf
 KERNEL_BIN     := $(BUILD)/kernel.bin
 BOOT_BIN       := $(BUILD)/boot.bin
@@ -43,7 +43,7 @@ QEMU_DISKS := $(QEMU_NET) -drive format=raw,file=$(IMAGE),if=floppy \
               -drive format=raw,file=$(DISK),if=ide,index=0 \
               -drive format=raw,file=$(FATIMG),if=ide,index=1 -boot a
 
-.PHONY: all clean clean-disk run run-headless
+.PHONY: all clean clean-disk run run-headless check
 
 all: $(IMAGE) $(FATIMG)
 
@@ -132,6 +132,10 @@ run: $(IMAGE) $(DISK) $(FATIMG)
 
 run-headless: $(IMAGE) $(DISK) $(FATIMG)
 	$(QEMU) $(QEMU_DISKS) -display none -serial file:$(BUILD)/serial.log
+
+# Clean build + boot test + every self-test in QEMU (see tools/ci.sh; --quick and --watch also exist).
+check:
+	sh tools/ci.sh
 
 clean-disk:
 	rm -f $(DISK)
