@@ -12,6 +12,7 @@
 #include "kstring.h"
 #include "paging.h"
 #include "pmm.h"
+#include "rtc.h"
 #include "sched.h"
 #include "slab.h"
 #include "timer.h"
@@ -212,6 +213,40 @@ static int cmd_uptime(int argc, char **argv)
 	(void)argv;
 	console_printf("up %u:%02u:%02u\n", s / 3600, s / 60 % 60, s % 60);
 	return 0;
+}
+
+static int cmd_date(int argc, char **argv)
+{
+	struct rtc_time t;
+
+	(void)argc;
+	(void)argv;
+	rtc_read(&t);
+	console_printf("%04u-%02u-%02u %02u:%02u:%02u UTC (unix %u)\n", t.year, t.month, t.day,
+		       t.hour, t.minute, t.second, rtc_unix(&t));
+	return 0;
+}
+
+/* time <command...>: run a command and report how long it took. */
+static int cmd_time(int argc, char **argv)
+{
+	char line[LINE_MAX];
+	size_t len = 0;
+	uint32_t start, ticks;
+	int i, rc;
+
+	if (argc < 2) {
+		console_write("usage: time <command> [args...]\n");
+		return 1;
+	}
+	for (i = 1; i < argc && len + 2 < sizeof line; i++)
+		len += (size_t)ksnprintf(line + len, sizeof line - len, i > 1 ? " %s" : "%s", argv[i]);
+	start = timer_ticks();
+	rc = shell_exec(line);
+	ticks = timer_ticks() - start;
+	console_printf("real %u.%02us (%u ticks)\n", ticks / timer_hz(),
+		       ticks % timer_hz() * 100 / timer_hz(), ticks);
+	return rc;
 }
 
 static int cmd_sleep(int argc, char **argv)
@@ -876,6 +911,8 @@ static const struct command commands[] = {
 	{ "echo",    "echo [text...]",        "print arguments (quotes and \\ work)", cmd_echo },
 	{ "ticks",   "ticks",                 "timer tick counter", cmd_ticks },
 	{ "uptime",  "uptime",                "time since boot", cmd_uptime },
+	{ "date",    "date",                  "show the real-time clock", cmd_date },
+	{ "time",    "time <cmd...>",         "time a command", cmd_time },
 	{ "sleep",   "sleep <ms>",            "sleep via the scheduler", cmd_sleep },
 	{ "meminfo", "meminfo",               "memory map, frames and heap", cmd_meminfo },
 	{ "memtest", "memtest",               "stress test the allocator", cmd_memtest },
