@@ -14,6 +14,7 @@ struct timespec {
 void     clock_init(void);                      /* remembers the RTC time at boot */
 int      clock_gettime(int clock_id, struct timespec *ts);   /* 0, or -1 for an unknown clock */
 uint64_t clock_monotonic_ns(void);
+void     clock_set_realtime(uint32_t unix_seconds);   /* make CLOCK_REALTIME read this now (the RTC is not touched) */
 uint32_t clock_boot_unix(void);                 /* RTC time at boot, seconds since 1970 */
 
 #endif
