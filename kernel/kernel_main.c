@@ -8,6 +8,7 @@
 #include "klog.h"
 #include "kmalloc.h"
 #include "kprintf.h"
+#include "paging.h"
 #include "pic.h"
 #include "pmm.h"
 #include "sched.h"
@@ -44,6 +45,7 @@ void kernel_main(void)
 	pic_init();
 	pmm_init();
 	heap_init();
+	paging_init();
 	keyboard_init();
 	timer_init(100);
 	sched_init();
