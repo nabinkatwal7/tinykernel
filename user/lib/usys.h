@@ -17,6 +17,9 @@
 #define SYS_MUNMAP  32
 #define SYS_MSYNC   33
 #define SYS_PIPE    34
+#define SYS_TRYKEY  35
+#define SYS_PUTAT   36
+#define SYS_CLS     37
 #define SYS_SHMGET  28
 #define SYS_SHMAT   29
 #define SYS_SHMDT   30
@@ -100,6 +103,14 @@ static inline int   shmdt(void *addr)              { return syscall3(SYS_SHMDT, 
 /* Map a file (length 0 = all of it). Shared mappings are written back by msync/munmap. 0 on failure. */
 static inline void *mmap(const char *path, unsigned length, int flags) { return (void *)syscall3(SYS_MMAP, (int)path, (int)length, flags); }
 static inline int   munmap(void *addr)             { return syscall3(SYS_MUNMAP, (int)addr, 0, 0); }
+/* keys returned by getkey()/trykey() besides plain characters */
+#define KEY_UP    0x101
+#define KEY_DOWN  0x102
+#define KEY_LEFT  0x103
+#define KEY_RIGHT 0x104
+static inline int   trykey(void)                    { return syscall3(SYS_TRYKEY, 0, 0, 0); }
+static inline int   putat(int x, int y, char c, int attr) { return syscall3(SYS_PUTAT, x, y, (attr << 8) | (unsigned char)c); }
+static inline int   cls(void)                       { return syscall3(SYS_CLS, 0, 0, 0); }
 static inline int   pipe(int fds[2])                { return syscall3(SYS_PIPE, (int)fds, 0, 0); }
 static inline int   msync(void *addr)              { return syscall3(SYS_MSYNC, (int)addr, 0, 0); }
 static inline int  getpid(void)                    { return syscall3(SYS_GETPID, 0, 0, 0); }

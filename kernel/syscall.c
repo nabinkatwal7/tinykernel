@@ -206,6 +206,16 @@ void syscall_dispatch(struct regs *r)
 	case SYS_MUNMAP:
 		r->eax = (uint32_t)mmap_unmap(r->ebx);
 		break;
+	case SYS_TRYKEY:
+		r->eax = (uint32_t)keyboard_trygetkey();
+		break;
+	case SYS_PUTAT:
+		if (!gfxcon_active())
+			console_putat((int)r->ebx, (int)r->ecx, (char)(r->edx & 0xFF), (uint8_t)(r->edx >> 8));
+		break;
+	case SYS_CLS:
+		console_clear();
+		break;
 	case SYS_PIPE: {
 		int fds[2];
 
