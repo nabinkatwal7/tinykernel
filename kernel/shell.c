@@ -16,6 +16,7 @@
 #include "fs.h"
 #include "gfx.h"
 #include "gui.h"
+#include "hrtime.h"
 #include "icmp.h"
 #include "io.h"
 #include "ip.h"
@@ -2278,6 +2279,34 @@ static int cmd_apic(int argc, char **argv)
 	return 0;
 }
 
+/* hrtime: TSC-based timing vs the 10 ms tick, plus a check of the 64-bit division helpers. */
+static int cmd_hrtime(int argc, char **argv)
+{
+	uint64_t a, b, big = 0x123456789ABCDEF0ULL;
+	uint32_t t0, t1;
+	int fails = 0;
+
+	(void)argc;
+	(void)argv;
+	CHECK(big / 16 == 0x123456789ABCDEFULL && big % 1000 == 0x123456789ABCDEF0ULL % 1000, "64-bit div/mod helpers");
+	CHECK((long long)-7 / 2 == -3 && (long long)-7 % 2 == -1, "signed 64-bit division truncates toward zero");
+	CHECK(hrtime_available(), "TSC calibrated");
+	if (hrtime_available()) {
+		t0 = timer_ticks();
+		a = hrtime_ns();
+		task_sleep(100);
+		b = hrtime_ns();
+		t1 = timer_ticks();
+		console_printf("TSC %u kHz; slept ~100 ms: hrtime says %u us, the tick counter says %u ms\n", hrtime_khz(),
+			       (uint32_t)((b - a) / 1000), (t1 - t0) * 10);
+		/* wide margins: under emulation the TSC and the timer tick do not run at a fixed ratio */
+		CHECK(b - a > 50000000ULL && b - a < 400000000ULL, "a 100 ms sleep measures between 50 and 400 ms");
+		CHECK(hrtime_ns() >= b, "the clock never goes backwards");
+	}
+	console_write(fails ? "hrtime: FAILED\n" : "hrtime: ok\n");
+	return fails != 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -2813,6 +2842,7 @@ static const struct command commands[] = {
 	{ "cmdline", "cmdline",               "show the kernel parameters", cmd_cmdline },
 	{ "selftest", "selftest [-v]",         "run every self-test", cmd_selftest },
 	{ "apic",    "apic",                  "local/IO APIC information", cmd_apic },
+	{ "hrtime",  "hrtime",                "high-resolution clock self-test", cmd_hrtime },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },

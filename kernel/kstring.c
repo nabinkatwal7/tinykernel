@@ -109,3 +109,60 @@ int memcmp(const void *a, const void *b, size_t n)
 			return *p - *q;
 	return 0;
 }
+
+/*
+ * 64-bit division helpers. GCC calls these for '/' and '%' on 64-bit operands; we link without
+ * libgcc, so provide them (simple shift-and-subtract long division, 64 iterations at most).
+ */
+static unsigned long long udivmod64(unsigned long long n, unsigned long long d, unsigned long long *rem)
+{
+	unsigned long long q = 0, r = 0;
+	int i;
+
+	if (!d) { /* division by zero: return all ones like many CPUs do instead of faulting */
+		if (rem)
+			*rem = n;
+		return ~0ULL;
+	}
+	for (i = 63; i >= 0; i--) {
+		r = (r << 1) | ((n >> i) & 1);
+		if (r >= d) {
+			r -= d;
+			q |= 1ULL << i;
+		}
+	}
+	if (rem)
+		*rem = r;
+	return q;
+}
+
+unsigned long long __udivdi3(unsigned long long n, unsigned long long d)
+{
+	return udivmod64(n, d, 0);
+}
+
+unsigned long long __umoddi3(unsigned long long n, unsigned long long d)
+{
+	unsigned long long r;
+
+	udivmod64(n, d, &r);
+	return r;
+}
+
+long long __divdi3(long long n, long long d)
+{
+	int neg = (n < 0) != (d < 0);
+	unsigned long long q = udivmod64(n < 0 ? -(unsigned long long)n : (unsigned long long)n,
+					 d < 0 ? -(unsigned long long)d : (unsigned long long)d, 0);
+
+	return neg ? -(long long)q : (long long)q;
+}
+
+long long __moddi3(long long n, long long d)
+{
+	unsigned long long r;
+
+	udivmod64(n < 0 ? -(unsigned long long)n : (unsigned long long)n,
+		  d < 0 ? -(unsigned long long)d : (unsigned long long)d, &r);
+	return n < 0 ? -(long long)r : (long long)r;
+}
