@@ -107,8 +107,15 @@ def main():
             pass
     for entry in host_log:
         print(entry)
-    mon("quit")
-    q.wait(timeout=10)
+    exited_early = q.poll() is not None
+    if exited_early:
+        print("QEMU exited by itself with status %d (guest powered off)" % q.returncode)
+    else:
+        try:
+            mon("quit")
+        except OSError:
+            pass
+        q.wait(timeout=10)
     print(open(serial, errors="replace").read())
 
 main()

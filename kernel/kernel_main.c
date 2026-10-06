@@ -1,3 +1,4 @@
+#include "acpi.h"
 #include "ata.h"
 #include "bcache.h"
 #include "console.h"
@@ -67,6 +68,7 @@ void kernel_main(void)
 	klog(LOG_INFO, "interrupts enabled");
 
 	cpu_init();
+	acpi_init();
 	pci_scan();
 	vfs_init();
 	if (ata_init() == 0) {

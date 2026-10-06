@@ -1,6 +1,7 @@
 #include "shell.h"
 
 #include "ata.h"
+#include "acpi.h"
 #include "arp.h"
 #include "bcache.h"
 #include "console.h"
@@ -2193,6 +2194,48 @@ static int cmd_tcp(int argc, char **argv)
 	return 0;
 }
 
+static int cmd_acpi(int argc, char **argv)
+{
+	struct acpi_table_info t;
+	uint8_t rev;
+	char oem[7];
+	uint32_t cnt, smi;
+	int typ, en, i;
+
+	(void)argc;
+	(void)argv;
+	acpi_describe(&rev, oem, &cnt, &smi, &typ, &en);
+	if (!acpi_table_count()) {
+		console_write("no ACPI tables\n");
+		return 1;
+	}
+	console_printf("ACPI revision %u, OEM '%s', power-off %s\n", rev, oem, acpi_available() ? "available" : "unavailable");
+	console_printf("PM1a control port %x, SMI command port %x, \\_S5 sleep type %d, ACPI mode %s\n", cnt, smi, typ,
+		       en ? "on" : "off");
+	for (i = 0; i < acpi_table_count(); i++) {
+		acpi_table_get(i, &t);
+		console_printf("  %s at %08x, %u bytes\n", t.signature, t.address, t.length);
+	}
+	return 0;
+}
+
+/* shutdown: flush the disk cache, then power the machine off through ACPI. */
+static int cmd_shutdown(int argc, char **argv)
+{
+	(void)argc;
+	(void)argv;
+	console_write("syncing disks... ");
+	bc_flush();
+	console_write("powering off\n");
+	task_sleep(100); /* let the screen update and the serial line drain */
+	acpi_poweroff();
+	console_write("power-off did not work; the system is halted\n");
+	cli();
+	for (;;)
+		hlt();
+	return 1;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -2723,6 +2766,8 @@ static const struct command commands[] = {
 	{ "dhcp",    "dhcp",                  "get an address via DHCP", cmd_dhcp },
 	{ "ipconfig", "ipconfig <ip> <mask> [gw]", "set a static address", cmd_ipconfig },
 	{ "tcp",     "tcp connect|list",      "TCP client (handshake, send, receive)", cmd_tcp },
+	{ "acpi",    "acpi",                  "show ACPI tables and power-off info", cmd_acpi },
+	{ "shutdown", "shutdown",             "sync and power off", cmd_shutdown },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },
