@@ -331,6 +331,7 @@ int user_run_args(const char *name, int argc, char **argv)
 	t->pgdir = udir;
 	paging_switch(udir);
 	abort_requested = 0;
+	file_reset(); /* descriptors 0-2 = console */
 	brk_min = brk = (image_end + 15) & ~15u;
 	active = 1;
 	rc = enter_user(entry, push_args(frames, argc > ARGS_MAX ? ARGS_MAX : argc, argv));

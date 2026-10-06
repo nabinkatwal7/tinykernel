@@ -13,6 +13,8 @@
 #define SYS_CLOSE    8
 #define SYS_READ     9
 #define SYS_FWRITE  10
+#define SYS_DUP     17
+#define SYS_DUP2    18
 #define SYS_EXEC    14
 #define SYS_SPAWN   15
 #define SYS_KCMD    16
@@ -45,6 +47,8 @@ static inline int  getkey(void)                     { return syscall3(SYS_GETKEY
 #define O_APPEND 0x400
 
 static inline int  open(const char *path, int flags) { return syscall3(SYS_OPEN, (int)path, flags, 0); }
+static inline int  dup(int fd)                      { return syscall3(SYS_DUP, fd, 0, 0); }
+static inline int  dup2(int fd, int target)         { return syscall3(SYS_DUP2, fd, target, 0); }
 static inline int  close(int fd)                     { return syscall3(SYS_CLOSE, fd, 0, 0); }
 static inline void *sbrk(int delta)                 { return (void *)syscall3(SYS_SBRK, delta, 0, 0); }
 /* Replaces this program with another; only returns (-1) if it could not be started. */

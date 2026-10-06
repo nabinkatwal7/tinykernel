@@ -86,24 +86,18 @@ void syscall_dispatch(struct regs *r)
 		}
 		r->eax = (uint32_t)file_read((int)r->ebx, (void *)r->ecx, r->edx);
 		break;
-	case SYS_FWRITE: {
-		uint32_t i;
-
+	case SYS_FWRITE:
 		if (!user_ptr_ok(r->ecx, r->edx)) {
 			r->eax = (uint32_t)-1;
 			break;
 		}
-		if (r->ebx == 1 || r->ebx == 2) { /* standard output / error */
-			for (i = 0; i < r->edx; i++)
-				console_putchar(((const char *)r->ecx)[i]);
-			r->eax = r->edx;
-		} else {
-			r->eax = (uint32_t)file_write((int)r->ebx, (const void *)r->ecx, r->edx);
-		}
+		r->eax = (uint32_t)file_write((int)r->ebx, (const void *)r->ecx, r->edx);
 		break;
-	}
-	case SYS_SBRK:
-		r->eax = user_sbrk((int32_t)r->ebx);
+	case SYS_DUP:
+		r->eax = (uint32_t)file_dup((int)r->ebx);
+		break;
+	case SYS_DUP2:
+		r->eax = (uint32_t)file_dup2((int)r->ebx, (int)r->ecx);
 		break;
 	case SYS_EXEC:
 	case SYS_SPAWN: {
