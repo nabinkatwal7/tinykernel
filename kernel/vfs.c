@@ -57,6 +57,7 @@ static int tfs_stat(void *ctx, const char *path, struct vfs_stat *st)
 	st->size = fst.size;
 	st->is_dir = fst.is_dir;
 	st->is_link = fst.is_link;
+	st->nlink = fst.nlink;
 	st->mode = fst.meta.mode;
 	st->uid = fst.meta.uid;
 	st->gid = fst.meta.gid;
@@ -142,6 +143,13 @@ static int tfs_readlink(void *ctx, const char *path, char *buf, uint32_t cap)
 	return fs_readlink(tfs_name(path), buf, cap);
 }
 
+static int tfs_link(void *ctx, const char *existing, const char *path)
+{
+	(void)ctx;
+	ensure_mounted();
+	return fs_link(tfs_name(existing), tfs_name(path));
+}
+
 static int tfs_chmod(void *ctx, const char *path, uint16_t mode)
 {
 	(void)ctx;
@@ -222,12 +230,12 @@ static int fatv_list(void *ctx, const char *path, struct vfs_dirent *out, int ma
 }
 
 static const struct vfs_ops fat_ops = {
-	"fat12", fatv_stat, fatv_read, 0, 0, 0, fatv_list, 0, 0, 0, 0, 0, 0, 0, 0,
+	"fat12", fatv_stat, fatv_read, 0, 0, 0, fatv_list, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 };
 
 static const struct vfs_ops tinyfs_ops = {
 	"tinyfs", tfs_stat, tfs_read, tfs_write, tfs_create, tfs_unlink, tfs_list, tfs_mkdir, tfs_rmdir, tfs_rename,
-	tfs_chmod, tfs_chown, tfs_touch, tfs_symlink, tfs_readlink,
+	tfs_chmod, tfs_chown, tfs_touch, tfs_symlink, tfs_readlink, tfs_link,
 };
 
 /* ---- mount table ---- */
@@ -589,6 +597,21 @@ int vfs_readlink(const char *path, char *buf, uint32_t cap)
 	if (!m || !m->ops->readlink)
 		return FS_EINVAL;
 	return m->ops->readlink(m->ctx, rest, buf, cap);
+}
+
+int vfs_link(const char *existing, const char *path)
+{
+	char f1[VFS_PATH_MAX], f2[VFS_PATH_MAX];
+	const char *r1, *r2;
+	struct mount *m1 = lookup(existing, f1, sizeof f1, &r1);
+	struct mount *m2 = lookup_nofollow(path, f2, sizeof f2, &r2);
+	int rc = vfs_access(existing, VFS_R) ? FS_EACCES : access_parent(path, VFS_W);
+
+	if (!m1 || m1 != m2)
+		return FS_EINVAL; /* names must be on the same filesystem */
+	if (rc)
+		return rc;
+	return m1->ops->link ? m1->ops->link(m1->ctx, r1, r2) : FS_EROFS;
 }
 
 int vfs_symlink(const char *target, const char *linkpath)

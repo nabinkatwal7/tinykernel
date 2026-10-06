@@ -36,6 +36,7 @@ struct vfs_stat {
 	const struct vfs_device *dev;              /* non-NULL for device files */
 	int has_meta;
 	int is_link;                               /* (lstat only) this is a symbolic link */
+	int nlink;                                 /* names for the file (hard links), 1 if unknown */
 	uint16_t mode, uid, gid;                   /* permissions (0777 style) and owner; defaults on filesystems without them */
 	uint32_t mtime, ctime;                     /* last modification and creation, seconds since 1970 (0 = not recorded) */
 };
@@ -56,6 +57,7 @@ struct vfs_ops {
 	int (*touch)(void *ctx, const char *path, uint32_t mtime);
 	int (*symlink)(void *ctx, const char *target, const char *path);
 	int (*readlink)(void *ctx, const char *path, char *buf, uint32_t cap);
+	int (*link)(void *ctx, const char *existing, const char *path);
 };
 
 #define VFS_MAX_MOUNTS 8
@@ -91,6 +93,7 @@ int  vfs_access(const char *path, int want);
  * Symbolic links (TinyFS only). Every path is resolved through links - in the middle and at the end - before
  * it is used; unlink, rename, readlink and lstat act on the link itself.
  */
+int  vfs_link(const char *existing, const char *path);   /* a second name for a file (same mount, not empty) */
 int  vfs_symlink(const char *target, const char *linkpath);
 int  vfs_readlink(const char *path, char *buf, uint32_t cap);  /* target length, or FS_EINVAL if not a link */
 int  vfs_lstat(const char *path, struct vfs_stat *st);         /* like vfs_stat, but does not follow a final link */

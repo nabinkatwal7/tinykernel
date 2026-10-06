@@ -44,6 +44,7 @@ struct fs_stat {
 	uint32_t sectors;
 	int is_dir;
 	int is_link;            /* a symbolic link (its contents are the target path) */
+	int nlink;              /* names for this file (hard links) */
 	struct fs_meta meta;
 };
 
@@ -55,6 +56,7 @@ int         fs_write(const char *path, const void *data, uint32_t size); /* crea
 int         fs_read(const char *path, void *buf, uint32_t cap);          /* bytes read or error */
 int         fs_size(const char *path);   /* bytes (FS_EISDIR for a directory) or error */
 int         fs_stat(const char *path, struct fs_stat *st);
+int         fs_link(const char *existing, const char *path); /* a second name for a (non-empty) file */
 int         fs_symlink(const char *target, const char *path); /* create a symbolic link at path */
 int         fs_readlink(const char *path, char *buf, uint32_t cap); /* target length, or FS_EINVAL if path is not a link */
 int         fs_chmod(const char *path, uint16_t mode);

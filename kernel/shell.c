@@ -1739,6 +1739,7 @@ static int cmd_stat(int argc, char **argv)
 			mode_string(st.is_link ? 'l' : st.is_dir ? 'd' : '-', st.mode, ms);
 			time_string(st.mtime, mt);
 			time_string(st.ctime, ct);
+			console_printf("  Links: %d\n", st.nlink > 0 ? st.nlink : 1);
 			console_printf("  Mode: %s (0%u%u%u)  Owner: %s  Group: %u\n", ms, (st.mode >> 6) & 7u,
 				       (st.mode >> 3) & 7u, st.mode & 7u, user_name_of(st.uid), st.gid);
 			if (st.mtime)
@@ -4065,7 +4066,7 @@ static const struct command commands[] = {
 	{ "id",      "id",                    "numeric user and group ids", cmd_id },
 	{ "su",      "su [user]",             "switch user (exit returns)", cmd_su },
 	{ "exit",    "exit",                  "leave an su session, or log out", cmd_exit },
-	{ "ln",      "ln -s TARGET LINK",     "make a symbolic link", cmd_ln },
+	{ "ln",      "ln [-s] TARGET LINK",   "make a hard or symbolic link", cmd_ln },
 	{ "readlink", "readlink LINK",        "print the target of a symbolic link", cmd_readlink },
 	{ "logout",  "logout",                "end the session and show the login prompt", cmd_logout },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
@@ -5051,13 +5052,17 @@ static int cmd_exit(int argc, char **argv)
 	return cmd_logout(0, 0);
 }
 
-/* ln -s TARGET LINK : make a symbolic link (hard links: see ln without -s) */
+/* ln [-s] TARGET LINK : make a hard link, or with -s a symbolic link */
 static int cmd_ln(int argc, char **argv)
 {
 	int rc;
 
+	if (argc == 3) { /* a hard link: another name for the same file */
+		rc = vfs_link(argv[1], argv[2]);
+		return rc ? fs_fail(argv[2], rc) : 0;
+	}
 	if (argc != 4 || kstrcmp(argv[1], "-s")) {
-		console_write("usage: ln -s TARGET LINKNAME\n");
+		console_write("usage: ln TARGET LINKNAME   (hard link)  |  ln -s TARGET LINKNAME   (symbolic)\n");
 		return 1;
 	}
 	rc = vfs_symlink(argv[2], argv[3]);

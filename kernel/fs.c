@@ -62,6 +62,27 @@ static uint32_t sectors_for(uint32_t size)
 static int used(int i)      { return dir[i].flags & FLAG_USED; }
 static int is_dir(int i)    { return dir[i].flags & FLAG_DIR; }
 static int is_link(int i)   { return dir[i].flags & FLAG_LINK; }
+
+/*
+ * Hard links: several directory entries may name the same extent (same start sector and size). The extent is
+ * freed only when the last name goes, and writing through one name moves every name to the new extent.
+ */
+static int same_extent(int a, int b)
+{
+	return a != b && used(b) && !is_dir(b) && !is_link(b) && dir[b].size && dir[b].start == dir[a].start
+	       && dir[b].size == dir[a].size;
+}
+
+static int link_count(int i)
+{
+	int j, n = 1;
+
+	if (is_dir(i) || is_link(i) || !dir[i].size)
+		return 1;
+	for (j = 0; j < FS_MAX_FILES; j++)
+		n += same_extent(i, j);
+	return n;
+}
 static uint32_t parent(int i) { return (dir[i].flags >> 8) & 0xFF; }
 
 static int flush_dir(void)
@@ -316,7 +337,8 @@ int fs_write(const char *path, const void *data, uint32_t size)
 	struct dirent saved;
 	struct fs_meta saved_meta;
 	uint32_t n = sectors_for(size), start, i;
-	int par, idx;
+	uint8_t sib[FS_MAX_FILES]; /* other names of the extent being replaced (hard links) */
+	int par, idx, j;
 
 	if (!mounted)
 		return FS_ENOMOUNT;
@@ -326,10 +348,13 @@ int fs_write(const char *path, const void *data, uint32_t size)
 	if (!name_ok(leaf))
 		return FS_EINVAL;
 
+	memset(sib, 0, sizeof sib);
 	idx = find_in((uint32_t)par, leaf);
 	if (idx >= 0) {
 		if (is_dir(idx))
 			return FS_EISDIR;
+		for (j = 0; j < FS_MAX_FILES; j++)
+			sib[j] = (uint8_t)same_extent(idx, j);
 		saved = dir[idx];
 		saved_meta = meta[idx];
 		mark_entry(idx, 0); /* free the old extent while we look for space */
@@ -375,6 +400,13 @@ int fs_write(const char *path, const void *data, uint32_t size)
 		meta[idx].mtime = now_secs();
 	} else {
 		meta_new(idx, 0);
+	}
+	for (j = 0; j < FS_MAX_FILES; j++) { /* hard links follow the new contents */
+		if (sib[j]) {
+			dir[j].start = start;
+			dir[j].size = size;
+			meta[j].mtime = meta[idx].mtime;
+		}
 	}
 	mark(start, n, 1);
 	if (flush_bitmap())
@@ -429,7 +461,39 @@ int fs_stat(const char *path, struct fs_stat *st)
 	st->sectors = sectors_for(dir[idx].size);
 	st->is_dir = is_dir(idx) ? 1 : 0;
 	st->is_link = is_link(idx) ? 1 : 0;
+	st->nlink = link_count(idx);
 	return FS_OK;
+}
+
+int fs_link(const char *existing, const char *path)
+{
+	char leaf[FS_NAME_MAX];
+	int src = fs_entry(existing), par, idx;
+
+	if (src < 0)
+		return src;
+	if (src == (int)ROOT || is_dir(src))
+		return FS_EISDIR;
+	if (is_link(src) || !dir[src].size)
+		return FS_EINVAL; /* empty files own no extent that could be shared */
+	par = walk_parent(path, leaf);
+	if (par < 0)
+		return par;
+	if (!name_ok(leaf))
+		return FS_EINVAL;
+	if (find_in((uint32_t)par, leaf) >= 0)
+		return FS_EEXIST;
+	idx = free_slot();
+	if (idx < 0)
+		return FS_ENOSPC;
+	memset(&dir[idx], 0, sizeof dir[idx]);
+	kstrlcpy(dir[idx].name, leaf, FS_NAME_MAX);
+	dir[idx].start = dir[src].start;
+	dir[idx].size = dir[src].size;
+	dir[idx].flags = FLAG_USED | ((uint32_t)par << 8);
+	meta[idx] = meta[src];
+	meta[idx].ctime = now_secs();
+	return flush_dir();
 }
 
 int fs_symlink(const char *target, const char *path)
@@ -542,7 +606,8 @@ int fs_delete(const char *path)
 		return idx;
 	if (idx == (int)ROOT || is_dir(idx))
 		return FS_EISDIR;
-	mark_entry(idx, 0);
+	if (link_count(idx) == 1)
+		mark_entry(idx, 0); /* the last name frees the data */
 	memset(&dir[idx], 0, sizeof dir[idx]);
 	memset(&meta[idx], 0, sizeof meta[idx]);
 	if (flush_bitmap())
@@ -616,7 +681,8 @@ int fs_rename(const char *from, const char *to)
 	if (victim >= 0) {
 		if (is_dir(victim) || is_dir(src))
 			return FS_EEXIST;
-		mark_entry(victim, 0);
+		if (link_count(victim) == 1)
+			mark_entry(victim, 0);
 		memset(&dir[victim], 0, sizeof dir[victim]); /* replace the old file */
 		memset(&meta[victim], 0, sizeof meta[victim]);
 		if (flush_bitmap())
@@ -644,6 +710,7 @@ int fs_list(const char *path, struct fs_stat *out, int max)
 		out[n].sectors = sectors_for(dir[i].size);
 		out[n].is_dir = is_dir(i) ? 1 : 0;
 		out[n].is_link = is_link(i) ? 1 : 0;
+		out[n].nlink = link_count(i);
 		out[n].meta = meta[i];
 		n++;
 	}
@@ -689,6 +756,17 @@ int fs_info(struct fs_info *out)
 		}
 	}
 	return FS_OK;
+}
+
+/* Is there an earlier entry naming exactly the same extent (a hard link, not damage)? */
+static int twin_before(int i)
+{
+	int j;
+
+	for (j = 0; j < i; j++)
+		if (same_extent(i, j))
+			return 1;
+	return 0;
 }
 
 /* ---- fsck ---- */
@@ -752,7 +830,7 @@ int fs_check(int repair, void (*report)(const char *msg), struct fs_check_result
 				bad = 1;
 			} else {
 				for (s = dir[i].start; s < dir[i].start + n; s++) {
-					if (claimed[s >> 3] & (1u << (s & 7))) {
+					if ((claimed[s >> 3] & (1u << (s & 7))) && !twin_before(i)) {
 						PROBLEM(repair, "'%s': sector %u is also used by another file", dir[i].name, s);
 						bad = 1;
 						break;

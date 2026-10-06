@@ -1,4 +1,3 @@
-Add hard links,
 Add file locking,
 Add filesystem journaling,
 Add FAT12 write support,
