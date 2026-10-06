@@ -9,6 +9,7 @@
 #include "env.h"
 #include "fat12.h"
 #include "fs.h"
+#include "gfx.h"
 #include "io.h"
 #include "keyboard.h"
 #include "klog.h"
@@ -1532,6 +1533,33 @@ static int cmd_gfx(int argc, char **argv)
 	return 0;
 }
 
+/* gfxlines: pixels and lines - a fan, a box and a few steep/shallow cases, clipped at the edges. */
+static int cmd_gfxlines(int argc, char **argv)
+{
+	int i;
+
+	(void)argc;
+	(void)argv;
+	if (vga_set_graphics())
+		return 1;
+	vga_fill(0);
+	for (i = 0; i < 320; i += 10) { /* fan from the bottom centre */
+		gfx_line(160, 199, i, 0, (uint8_t)(32 + i % 200));
+		gfx_line(160, 0, i, 199, (uint8_t)(32 + (i * 3) % 200));
+	}
+	gfx_hline(0, 319, 100, 15);
+	gfx_vline(160, 0, 199, 15);
+	gfx_line(-50, -50, 400, 300, 12);     /* runs off both ends: must clip, not wrap */
+	gfx_line(10, 190, 10, 10, 14);        /* vertical via the general routine */
+	gfx_line(20, 20, 300, 20, 10);        /* horizontal */
+	for (i = 0; i < 64; i++)
+		gfx_putpixel(i * 5, 150 + (i % 8), 11);
+	keyboard_getkey();
+	vga_set_text();
+	console_clear();
+	return 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -2043,6 +2071,7 @@ static const struct command commands[] = {
 	{ "cpuinfo", "cpuinfo",               "CPU identification and speed", cmd_cpuinfo },
 	{ "mouse",   "mouse",                 "PS/2 mouse position and buttons", cmd_mouse },
 	{ "gfx",     "gfx",                   "graphics mode test card", cmd_gfx },
+	{ "gfxlines", "gfxlines",            "pixel and line drawing demo", cmd_gfxlines },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },
