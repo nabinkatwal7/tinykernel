@@ -78,6 +78,29 @@ void syscall_dispatch(struct regs *r)
 	case SYS_CLOSE:
 		r->eax = (uint32_t)file_close((int)r->ebx);
 		break;
+	case SYS_READ:
+		if (!user_ptr_ok(r->ecx, r->edx)) {
+			r->eax = (uint32_t)-1;
+			break;
+		}
+		r->eax = (uint32_t)file_read((int)r->ebx, (void *)r->ecx, r->edx);
+		break;
+	case SYS_FWRITE: {
+		uint32_t i;
+
+		if (!user_ptr_ok(r->ecx, r->edx)) {
+			r->eax = (uint32_t)-1;
+			break;
+		}
+		if (r->ebx == 1 || r->ebx == 2) { /* standard output / error */
+			for (i = 0; i < r->edx; i++)
+				console_putchar(((const char *)r->ecx)[i]);
+			r->eax = r->edx;
+		} else {
+			r->eax = (uint32_t)file_write((int)r->ebx, (const void *)r->ecx, r->edx);
+		}
+		break;
+	}
 	default:
 		klog(LOG_WARN, "unknown syscall %u", r->eax);
 		r->eax = (uint32_t)-1;

@@ -21,11 +21,11 @@ int main(int argc, char **argv, char **envp)
 	int envc = 0;
 
 	(void)argv;
-	write("C runtime: argc=", 16);
+	write(1, "C runtime: argc=", 16);
 	put_num(argc);
 	while (envp[envc])
 		envc++;
-	write(" envc=", 6);
+	write(1, " envc=", 6);
 	put_num(envc);
 	putchar('\n');
 	return 3;

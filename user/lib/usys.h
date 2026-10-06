@@ -11,6 +11,8 @@
 #define SYS_SLEEP    6
 #define SYS_OPEN     7
 #define SYS_CLOSE    8
+#define SYS_READ     9
+#define SYS_FWRITE  10
 
 static inline int syscall3(int num, int a, int b, int c)
 {
@@ -22,7 +24,9 @@ static inline int syscall3(int num, int a, int b, int c)
 
 void exit(int code) __attribute__((noreturn));
 
-static inline int  write(const char *buf, int len)  { return syscall3(SYS_WRITE, (int)buf, len, 0); }
+/* write(fd, buf, n): fd 1 and 2 print on the console, others are files from open() */
+static inline int  write(int fd, const void *buf, int len) { return syscall3(SYS_FWRITE, fd, (int)buf, len); }
+static inline int  read(int fd, void *buf, int len)        { return syscall3(SYS_READ, fd, (int)buf, len); }
 static inline int  putchar(int c)                   { return syscall3(SYS_PUTCHAR, c, 0, 0); }
 static inline int  ticks(void)                      { return syscall3(SYS_TICKS, 0, 0, 0); }
 static inline int  getkey(void)                     { return syscall3(SYS_GETKEY, 0, 0, 0); }

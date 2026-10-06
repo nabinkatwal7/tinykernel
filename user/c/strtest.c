@@ -7,8 +7,8 @@ static int fails;
 static void check(int ok, const char *what)
 {
 	if (!ok) {
-		write("FAIL: ", 6);
-		write(what, (int)strlen(what));
+		write(1, "FAIL: ", 6);
+		write(1, what, (int)strlen(what));
 		putchar('\n');
 		fails++;
 	}
@@ -42,6 +42,6 @@ int main(void)
 	check(atoi("42") == 42 && atoi("-17") == -17 && atoi("  +8x") == 8, "atoi");
 
 	if (fails == 0)
-		write("strtest: all checks passed\n", 27);
+		write(1, "strtest: all checks passed\n", 27);
 	return fails;
 }

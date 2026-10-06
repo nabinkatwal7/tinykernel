@@ -20,7 +20,7 @@ static void mem_put(struct sink *s, char c)
 static void flush(struct sink *s)
 {
 	if (s->used) {
-		write(s->tmp, s->used);
+		write(1, s->tmp, s->used);
 		s->used = 0;
 	}
 }
@@ -185,7 +185,7 @@ int printf(const char *fmt, ...)
 
 int puts(const char *s)
 {
-	write(s, (int)strlen(s));
+	write(1, s, (int)strlen(s));
 	putchar('\n');
 	return 0;
 }
