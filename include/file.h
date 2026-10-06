@@ -34,6 +34,11 @@ int file_seek(int fd, int32_t off, int whence); /* new position or a negative er
 #define LOCK_NB 4
 #define LOCK_UN 8
 int file_flock(int fd, int op);                /* 0, FS_EBUSY (LOCK_NB only) or FS_EINVAL */
+/* Sockets (see sock.h): a socket is a descriptor, read/write/close/dup work on it */
+struct sock;
+int file_socket(int type);                     /* SOCK_STREAM or SOCK_DGRAM; a new descriptor or FS_E* */
+struct sock *file_get_sock(int fd);            /* NULL if fd is not a socket */
+int file_accept(int fd);                       /* waits for a client on a listening socket; the connection's descriptor */
 int file_pipe(int fds[2]);                     /* a pipe: fds[0] reads what is written to fds[1]; 0 or FS_E* */
 int file_dup(int fd);                          /* new descriptor sharing the same open file */
 int file_dup2(int fd, int target);             /* make target refer to fd's open file (closing target) */

@@ -20,6 +20,16 @@
 #define SYS_TRYKEY  35
 #define SYS_PUTAT   36
 #define SYS_CLS     37
+#define SYS_SOCKET  40
+#define SYS_CONNECT 41
+#define SYS_BIND    42
+#define SYS_LISTEN  43
+#define SYS_ACCEPT  44
+#define SYS_SENDTO  45
+#define SYS_RECVFROM 46
+#define SYS_RESOLVE 47
+#define SOCK_STREAM 1
+#define SOCK_DGRAM  2
 #define SYS_FLOCK   39
 #define LOCK_SH 1
 #define LOCK_EX 2
@@ -122,6 +132,29 @@ static inline int   munmap(void *addr)             { return syscall3(SYS_MUNMAP,
 #define KEY_RIGHT 0x104
 static inline int   trykey(void)                    { return syscall3(SYS_TRYKEY, 0, 0, 0); }
 static inline int   putat(int x, int y, char c, int attr) { return syscall3(SYS_PUTAT, x, y, (attr << 8) | (unsigned char)c); }
+/* Sockets. Addresses are host-byte-order integers: (10 << 24) | (0 << 16) | (2 << 8) | 2 is 10.0.2.2. send/recv on a
+   connected stream socket are just write/read. */
+#define IP4(a, b, c, d) (((unsigned)(a) << 24) | ((unsigned)(b) << 16) | ((unsigned)(c) << 8) | (unsigned)(d))
+static inline int   socket(int type)                        { return syscall3(SYS_SOCKET, type, 0, 0); }
+static inline int   connect(int fd, unsigned ip, int port)  { return syscall3(SYS_CONNECT, fd, (int)ip, port); }
+static inline int   bind(int fd, int port)                  { return syscall3(SYS_BIND, fd, port, 0); }
+static inline int   listen(int fd)                          { return syscall3(SYS_LISTEN, fd, 0, 0); }
+static inline int   accept(int fd)                          { return syscall3(SYS_ACCEPT, fd, 0, 0); }
+static inline int   send(int fd, const void *buf, int len) { return write(fd, buf, len); }
+static inline int   recv(int fd, void *buf, int len)       { return read(fd, buf, len); }
+static inline int   sendto(int fd, const void *buf, int len, unsigned ip, int port)
+{
+	unsigned a[4] = { (unsigned)buf, (unsigned)len, ip, (unsigned)port };
+
+	return syscall3(SYS_SENDTO, fd, (int)a, 0);
+}
+static inline int   recvfrom(int fd, void *buf, int cap, unsigned *ip, unsigned *port)
+{
+	unsigned a[4] = { (unsigned)buf, (unsigned)cap, (unsigned)ip, (unsigned)port };
+
+	return syscall3(SYS_RECVFROM, fd, (int)a, 0);
+}
+static inline int   resolve(const char *name, unsigned *ip) { return syscall3(SYS_RESOLVE, (int)name, (int)ip, 0); }
 static inline int   flock(int fd, int op)          { return syscall3(SYS_FLOCK, fd, op, 0); }
 static inline int   gfx(int op, const int *args)     { return syscall3(SYS_GFX, op, (int)args, 0); }
 static inline int   gfx_enter(void)                 { int a[6] = { 0 }; return gfx(GFX_ENTER, a); }

@@ -40,6 +40,14 @@
 #define SYS_TRYKEY  35 /* a key if one is waiting, else -1 (never blocks) */
 #define SYS_PUTAT   36 /* ebx = column, ecx = row, edx = (attribute << 8) | character: write straight to the text screen */
 #define SYS_CLS     37 /* clear the screen */
+#define SYS_SOCKET  40 /* ebx = SOCK_STREAM (1) or SOCK_DGRAM (2); returns a descriptor */
+#define SYS_CONNECT 41 /* ebx = socket, ecx = IPv4 address (host byte order), edx = port */
+#define SYS_BIND    42 /* ebx = socket, ecx = port */
+#define SYS_LISTEN  43 /* ebx = socket */
+#define SYS_ACCEPT  44 /* ebx = listening socket; returns the connection's descriptor */
+#define SYS_SENDTO  45 /* ebx = socket, ecx = struct { buf, len, ip, port } */
+#define SYS_RECVFROM 46 /* ebx = socket, ecx = struct { buf, cap, uint32 *ip, uint32 *port }; the last two may be NULL */
+#define SYS_RESOLVE 47 /* ebx = host name, ecx = uint32 receiving the address */
 #define SYS_FLOCK   39 /* ebx = fd, ecx = LOCK_SH / LOCK_EX / LOCK_UN, optionally | LOCK_NB */
 #define SYS_GFX     38 /* ebx = operation, ecx = int[6] of arguments: the 320x200 graphics screen (see GFX_* below) */
 #define GFX_ENTER   0  /* switch to graphics mode */

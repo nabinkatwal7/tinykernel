@@ -1,4 +1,3 @@
-Add socket system calls,
 Add simple HTTP client,
 Add simple HTTP server,
 Add 'wget' command,
