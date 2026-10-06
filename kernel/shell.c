@@ -4106,6 +4106,7 @@ static const struct command commands[] = {
 	{ "fdisk", "fdisk DEVICE", "show and register MBR partitions", cmd_fdisk },
 	{ "ext2info", "ext2info DEVICE", "describe an ext2 volume", cmd_ext2info },
 	{ "ext2", "ext2 mount DEV /PATH", "mount an ext2 volume (read-only)", cmd_ext2 },
+	{ "dma", "dma [on|off|test]", "bus-master DMA for ATA transfers", cmd_dma },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },

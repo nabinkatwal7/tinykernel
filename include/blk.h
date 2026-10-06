@@ -48,5 +48,6 @@ int cmd_blkdev(int argc, char **argv);
 int cmd_ramdisk(int argc, char **argv);
 int cmd_losetup(int argc, char **argv);
 int cmd_fdisk(int argc, char **argv);
+int cmd_dma(int argc, char **argv);
 
 #endif

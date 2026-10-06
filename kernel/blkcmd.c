@@ -1,7 +1,9 @@
 #include "blk.h"
 
 #include "console.h"
+#include "ata.h"
 #include "fs.h"
+#include "hrtime.h"
 #include "kstring.h"
 #include "vfs.h"
 
@@ -175,5 +177,42 @@ int cmd_fdisk(int argc, char **argv)
 	n = part_scan(d);
 	if (n > 0)
 		console_printf("registered %d partition device(s) (see blkdev)\n", n);
+	return 0;
+}
+
+/* dma [on|off|test] : bus-master DMA for ATA transfers */
+int cmd_dma(int argc, char **argv)
+{
+	uint32_t transfers, fallbacks;
+
+	if (argc > 1 && !kstrcmp(argv[1], "on"))
+		ata_dma_enable(1);
+	else if (argc > 1 && !kstrcmp(argv[1], "off"))
+		ata_dma_enable(0);
+	else if (argc > 1 && !kstrcmp(argv[1], "test")) { /* the same 64 KiB by PIO and by DMA must be identical */
+		static uint8_t a[65536], b[65536];
+		uint64_t t0, t1, t2;
+		int was = ata_dma_enabled(), bad = 0;
+
+		if (!ata_dma_available()) {
+			console_write("dma: no bus-master IDE controller\n");
+			return 1;
+		}
+		ata_dma_enable(0);
+		t0 = hrtime_us();
+		bad += ata_dev_read(0, 0, 128, a) != 0;
+		t1 = hrtime_us();
+		ata_dma_enable(1);
+		bad += ata_dev_read(0, 0, 128, b) != 0;
+		t2 = hrtime_us();
+		bad += memcmp(a, b, sizeof a) != 0;
+		ata_dma_enable(was);
+		console_printf("dma test: 128 sectors, PIO %u us, DMA %u us, %s\n", (uint32_t)(t1 - t0), (uint32_t)(t2 - t1),
+			       bad ? "MISMATCH" : "identical");
+		return bad != 0;
+	}
+	ata_dma_stats(&transfers, &fallbacks);
+	console_printf("DMA: %s, %s; %u transfers, %u fallbacks to PIO\n", ata_dma_available() ? "available" : "not available",
+		       ata_dma_enabled() ? "on" : "off", transfers, fallbacks);
 	return 0;
 }

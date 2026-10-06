@@ -1,4 +1,3 @@
-Add DMA for ATA transfers,
 Learn AHCI basics,
 Add USB controller detection,
 Learn USB keyboard basics,
