@@ -10,6 +10,7 @@
 #include "paging.h"
 #include "pmm.h"
 #include "slab.h"
+#include "clock.h"
 #include "timer.h"
 
 #define TASK_STACK_SIZE 16384
@@ -344,6 +345,20 @@ void task_exit_with(int code)
 	schedule_locked();
 	for (;;)
 		hlt();
+}
+
+void task_sleep_ns(uint64_t ns)
+{
+	uint64_t start = clock_monotonic_ns(), end = start + ns;
+	uint32_t tick_ns = 1000000000u / timer_hz();
+
+	if (ns >= 2 * (uint64_t)tick_ns) { /* the scheduler can do the bulk of it: leave a tick of slack to spin */
+		uint32_t ms = (uint32_t)((ns - tick_ns) / 1000000);
+
+		task_sleep(ms ? ms : 1);
+	}
+	while (clock_monotonic_ns() < end) /* the last stretch: busy-wait for precision */
+		task_yield();
 }
 
 void task_exit(void)

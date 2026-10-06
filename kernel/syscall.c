@@ -166,6 +166,14 @@ void syscall_dispatch(struct regs *r)
 		r->eax = 0;
 		break;
 	}
+	case SYS_NANOSLEEP:
+		if (r->ecx >= 1000000000u || r->ebx > 3600) {
+			r->eax = (uint32_t)-1;
+			break;
+		}
+		task_sleep_ns((uint64_t)r->ebx * 1000000000u + r->ecx);
+		r->eax = 0;
+		break;
 	case SYS_SBRK:
 		r->eax = user_sbrk((int32_t)r->ebx);
 		break;
