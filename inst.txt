@@ -1,4 +1,3 @@
-Write RTL8139 driver,
 Send raw Ethernet frame,
 Receive Ethernet frames,
 Implement ARP,

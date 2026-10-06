@@ -18,6 +18,7 @@
 #include "kprintf.h"
 #include "kstring.h"
 #include "mouse.h"
+#include "net.h"
 #include "paging.h"
 #include "pci.h"
 #include "pmm.h"
@@ -1793,6 +1794,24 @@ static int cmd_beep(int argc, char **argv)
 	return 0;
 }
 
+static int cmd_ifconfig(int argc, char **argv)
+{
+	char m[18];
+
+	(void)argc;
+	(void)argv;
+	if (!netif.up) {
+		console_write("no network interface\n");
+		return 1;
+	}
+	console_printf("eth0: RTL8139  io %x  irq %u  link %s\n", netif.io_base, netif.irq,
+		       rtl8139_link_up() ? "up" : "down");
+	console_printf("      MAC %s\n", mac_str(netif.mac, m));
+	console_printf("      tx %u frames (%u errors), rx %u frames (%u errors, %u dropped)\n", netif.tx_frames,
+		       netif.tx_errors, netif.rx_frames, netif.rx_errors, netif.rx_dropped);
+	return 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -2311,6 +2330,7 @@ static const struct command commands[] = {
 	{ "wmdemo",  "wmdemo",                "window manager demo (mouse)", cmd_wmdemo },
 	{ "guidemo", "guidemo",              "button widget demo (mouse)", cmd_guidemo },
 	{ "beep",    "beep [hz] [ms]",        "PC speaker: tone, tune, off, status", cmd_beep },
+	{ "ifconfig", "ifconfig",              "network interface status", cmd_ifconfig },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },

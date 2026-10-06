@@ -11,6 +11,7 @@
 #include "klog.h"
 #include "kmalloc.h"
 #include "mouse.h"
+#include "net.h"
 #include "kprintf.h"
 #include "paging.h"
 #include "pci.h"
@@ -67,6 +68,7 @@ void kernel_main(void)
 
 	cpu_init();
 	pci_scan();
+	rtl8139_init();
 	vfs_init();
 	if (ata_init() == 0) {
 		if (ata_dev_present(1) && fat12_mount(1) != FS_OK)

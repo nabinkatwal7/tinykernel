@@ -40,6 +40,7 @@ def main():
         "-drive", f"format=raw,file={os.path.join(BUILD,'os-image.bin')},if=floppy",
         "-drive", f"format=raw,file={disk},if=ide,index=0",
         "-drive", f"format=raw,file={os.path.join(BUILD,'fat.img')},if=ide,index=1", "-boot", "a",
+        "-netdev", "user,id=n0", "-device", "rtl8139,netdev=n0",
         "-display", "none",
         "-chardev", f"socket,id=s0,host=127.0.0.1,port={port + 1},server=on,wait=off,logfile={serial}",
         "-serial", "chardev:s0",
