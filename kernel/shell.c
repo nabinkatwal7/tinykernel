@@ -14,6 +14,7 @@
 #include "crashdump.h"
 #include "cred.h"
 #include "debug.h"
+#include "udpdemo.h"
 #include "netstat.h"
 #include "ntp.h"
 #include "telnetd.h"
@@ -4143,6 +4144,8 @@ static const struct command commands[] = {
 	{ "telnetd", "telnetd [PORT [N]]", "tiny remote shell over TCP", cmd_telnetd },
 	{ "ntpdate", "ntpdate [-q] [SERVER]", "set the clock from an NTP server", cmd_ntpdate },
 	{ "netstat", "netstat [-s|-c|-a]", "network statistics and connections", cmd_netstat },
+	{ "udpecho", "udpecho [PORT [N]]", "UDP echo server", cmd_udpecho },
+	{ "udpchat", "udpchat LPORT IP PORT", "two-person UDP chat", cmd_udpchat },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },

@@ -86,7 +86,10 @@ def main():
             except socket.timeout: reply = b""
             print("tcp<", reply.decode(errors="replace").strip()); t.close(); continue
         if line.startswith("hostudp:"):   # hostudp:<text> -> datagram to guest port 7777 (forwarded 5601)
-            u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); u.sendto(line[8:].encode(), ("127.0.0.1", 5601)); time.sleep(0.6); continue
+            u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); u.sendto(line[8:].encode(), ("127.0.0.1", 5601)); u.settimeout(1.0)
+            try: print("udp<", u.recvfrom(2048)[0].decode(errors="replace"))
+            except socket.timeout: pass
+            time.sleep(0.3); continue
         if line.startswith("hostlisten:"):   # hostlisten:<udp port> -> collect datagrams the guest sends to 10.0.2.2:<port>
             host_udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); host_udp.bind(("0.0.0.0", int(line[11:]))); host_udp.settimeout(0.2); continue
         if line.startswith("hosttcp:"):   # hosttcp:<port>:<reply> -> one-shot TCP server on the host

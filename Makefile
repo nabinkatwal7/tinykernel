@@ -78,7 +78,7 @@ $(BUILD)/%.elf: user/%.elf.asm user/user.ld | $(BUILD)
 	$(OBJCOPY) -S -O elf32-i386 $(BUILD)/$*.upe $@
 
 # C user programs: user/c/NAME.c -> build/c_NAME.elf, linked with the C runtime in user/lib.
-UCFLAGS  := -m32 -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie             -fno-asynchronous-unwind-tables -mgeneral-regs-only -Wall -Wextra -Iuser/lib
+UCFLAGS  := -m32 -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie             -fno-asynchronous-unwind-tables -mgeneral-regs-only -Wall -Wextra -ffunction-sections -fdata-sections -Iuser/lib
 ULIB_OBJS := $(BUILD)/ucrt0.o $(BUILD)/ulib.o $(BUILD)/ustring.o $(BUILD)/ustdio.o $(BUILD)/umalloc.o
 
 $(BUILD)/ucrt0.o: user/lib/crt0.S | $(BUILD)
@@ -100,7 +100,7 @@ $(BUILD)/uc_%.o: user/c/%.c $(wildcard user/lib/*.h) | $(BUILD)
 	$(CC) $(UCFLAGS) -c $< -o $@
 
 $(BUILD)/c_%.elf: $(BUILD)/uc_%.o $(ULIB_OBJS) user/user.ld
-	$(LD) -m i386pe -T user/user.ld -nostdlib -o $(BUILD)/c_$*.upe $(ULIB_OBJS) $<
+	$(LD) -m i386pe -T user/user.ld -nostdlib --gc-sections -o $(BUILD)/c_$*.upe $(ULIB_OBJS) $<
 	$(OBJCOPY) -S -O elf32-i386 $(BUILD)/c_$*.upe $@
 
 $(BUILD)/kernel.pe: $(OBJS) kernel/linker.ld
