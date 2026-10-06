@@ -1,4 +1,3 @@
-Detect local APIC and IO-APIC,
 Replace PIC with APIC timer,
 Add high-resolution time with TSC,
 Add monotonic clock API,

@@ -6,6 +6,7 @@
 #define PTE_P  0x001u /* present */
 #define PTE_RW 0x002u /* writable */
 #define PTE_US 0x004u /* user accessible */
+#define PTE_PCD 0x010u /* cache disable: for memory-mapped device registers */
 
 /* Identity-maps the first 64 MiB (virtual == physical) and turns paging on. */
 void     paging_init(void);

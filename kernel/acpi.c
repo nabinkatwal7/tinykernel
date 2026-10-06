@@ -43,6 +43,47 @@ static uint8_t acpi_enable_val;
 static int slp_typa = -1, slp_typb = -1;
 static struct acpi_table_info tables[MAX_TABLES];
 static int ntables;
+static struct acpi_madt madt;
+
+const struct acpi_madt *acpi_madt(void)
+{
+	return &madt;
+}
+
+static void parse_madt(const struct sdt_header *t)
+{
+	const uint8_t *p = (const uint8_t *)t, *end = p + t->length;
+
+	memset(&madt, 0, sizeof madt);
+	madt.lapic_addr = *(const uint32_t *)(p + sizeof *t);
+	for (p += sizeof *t + 8; p + 2 <= end && p[1] >= 2; p += p[1]) {
+		switch (p[0]) {
+		case 0: /* processor local APIC */
+			if (madt.ncpus < ACPI_MAX_CPUS) {
+				madt.cpu_apic_id[madt.ncpus] = p[3];
+				madt.cpu_enabled[madt.ncpus] = p[4] & 1;
+				madt.ncpus++;
+			}
+			break;
+		case 1: /* I/O APIC */
+			if (madt.nioapics < ACPI_MAX_IOAPICS) {
+				madt.ioapic_id[madt.nioapics] = p[2];
+				madt.ioapic_addr[madt.nioapics] = *(const uint32_t *)(p + 4);
+				madt.ioapic_gsi_base[madt.nioapics] = *(const uint32_t *)(p + 8);
+				madt.nioapics++;
+			}
+			break;
+		case 2: /* interrupt source override */
+			if (madt.noverrides < ACPI_MAX_OVERRIDES) {
+				madt.override_source[madt.noverrides] = p[3];
+				madt.override_gsi[madt.noverrides] = *(const uint32_t *)(p + 4);
+				madt.noverrides++;
+			}
+			break;
+		}
+	}
+	madt.valid = 1;
+}
 
 static int checksum_ok(const void *p, uint32_t len)
 {
@@ -150,6 +191,8 @@ int acpi_init(void)
 		tables[ntables].address = phys;
 		tables[ntables].length = t->length;
 		ntables++;
+		if (!memcmp(t->signature, "APIC", 4) && checksum_ok(t, t->length))
+			parse_madt(t);
 		if (!memcmp(t->signature, "FACP", 4) && checksum_ok(t, t->length)) {
 			const struct fadt *f = (const struct fadt *)t;
 			const struct sdt_header *dsdt = map_table(f->dsdt);

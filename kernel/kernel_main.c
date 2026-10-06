@@ -1,4 +1,5 @@
 #include "acpi.h"
+#include "apic.h"
 #include "ata.h"
 #include "bcache.h"
 #include "cmdline.h"
@@ -75,6 +76,7 @@ void kernel_main(void)
 
 	cpu_init();
 	acpi_init();
+	apic_init();
 	pci_scan();
 	vfs_init();
 	if (ata_init() == 0) {

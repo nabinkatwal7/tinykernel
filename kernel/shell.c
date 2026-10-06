@@ -2,6 +2,7 @@
 
 #include "ata.h"
 #include "acpi.h"
+#include "apic.h"
 #include "arp.h"
 #include "bcache.h"
 #include "cmdline.h"
@@ -2254,6 +2255,28 @@ static int cmd_selftest(int argc, char **argv)
 	return selftest_run(argc > 1 && !kstrcmp(argv[1], "-v")) != 0;
 }
 
+static int cmd_apic(int argc, char **argv)
+{
+	const struct acpi_madt *m = acpi_madt();
+	int i;
+
+	(void)argc;
+	(void)argv;
+	if (!apic_present()) {
+		console_write("no local APIC\n");
+		return 1;
+	}
+	console_printf("local APIC at %08x, id %u, version %02x\n", apic_base(), apic_id(), apic_version() & 0xFF);
+	for (i = 0; i < m->ncpus; i++)
+		console_printf("  cpu %d: apic id %u %s\n", i, m->cpu_apic_id[i], m->cpu_enabled[i] ? "enabled" : "disabled");
+	for (i = 0; i < ioapic_count(); i++)
+		console_printf("  I/O APIC %d: id %u at %08x, gsi base %u, %u inputs\n", i, m->ioapic_id[i],
+			       m->ioapic_addr[i], m->ioapic_gsi_base[i], ioapic_max_redirection(i) + 1);
+	for (i = 0; i < m->noverrides; i++)
+		console_printf("  override: ISA irq %u -> GSI %u\n", m->override_source[i], m->override_gsi[i]);
+	return 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -2788,6 +2811,7 @@ static const struct command commands[] = {
 	{ "shutdown", "shutdown",             "sync and power off", cmd_shutdown },
 	{ "cmdline", "cmdline",               "show the kernel parameters", cmd_cmdline },
 	{ "selftest", "selftest [-v]",         "run every self-test", cmd_selftest },
+	{ "apic",    "apic",                  "local/IO APIC information", cmd_apic },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },
