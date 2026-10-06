@@ -42,6 +42,7 @@
 #include "pmm.h"
 #include "rtc.h"
 #include "sched.h"
+#include "script.h"
 #include "selftest.h"
 #include "shm.h"
 #include "slab.h"
@@ -207,8 +208,8 @@ static void expand(const char *in, char *out, int size)
 				out[o++] = *in++;
 			continue;
 		}
-		if (c == '$' && !single && (in[1] == '?' || in[1] == '_' || (in[1] >= 'A' && in[1] <= 'Z')
-					    || (in[1] >= 'a' && in[1] <= 'z'))) {
+		if (c == '$' && !single && (in[1] == '?' || in[1] == '#' || in[1] == '_' || (in[1] >= '0' && in[1] <= '9')
+					    || (in[1] >= 'A' && in[1] <= 'Z') || (in[1] >= 'a' && in[1] <= 'z'))) {
 			char name[ENV_NAME_MAX];
 			const char *val;
 			int n = 0;
@@ -218,6 +219,12 @@ static void expand(const char *in, char *out, int size)
 				in++;
 				ksnprintf(name, sizeof name, "%d", last_status);
 				val = name;
+			} else if (*in == '#') { /* number of script arguments */
+				in++;
+				ksnprintf(name, sizeof name, "%d", script_nargs());
+				val = name;
+			} else if (*in >= '0' && *in <= '9') { /* script parameter $0..$9 */
+				val = script_param(*in++ - '0');
 			} else {
 				while ((*in >= 'A' && *in <= 'Z') || (*in >= 'a' && *in <= 'z') || *in == '_'
 				       || (*in >= '0' && *in <= '9')) {
@@ -2978,6 +2985,16 @@ static int cmd_shtest(int argc, char **argv)
 	return !ok;
 }
 
+/* sh <script> [args...] : run a script file */
+static int cmd_sh(int argc, char **argv)
+{
+	if (argc < 2) {
+		console_write("usage: sh <script> [args...]\n");
+		return 1;
+	}
+	return script_run(argv[1], argc - 1, argv + 1);
+}
+
 /* panic [message] : test the panic path and its stack trace */
 static int cmd_panic(int argc, char **argv)
 {
@@ -3482,6 +3499,7 @@ static const struct command commands[] = {
 	{ "shtest",  "shtest",                "test pipelines and redirection", cmd_shtest },
 	{ "jobs",    "jobs",                  "list background jobs", cmd_jobs },
 	{ "fg",      "fg [%n]",               "wait for a background job", cmd_fg },
+	{ "sh",      "sh <script> [args]",    "run a shell script", cmd_sh },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
