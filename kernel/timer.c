@@ -2,6 +2,7 @@
 
 #include "idt.h"
 #include "io.h"
+#include "percpu.h"
 #include "pic.h"
 #include "console.h"
 #include "sched.h"
@@ -43,6 +44,7 @@ static void timer_irq(struct regs *r)
 {
 	(void)r;
 	ticks++;
+	this_cpu()->timer_irqs++;
 	run_ktimers();
 	sched_tick();
 }

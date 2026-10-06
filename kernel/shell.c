@@ -29,6 +29,7 @@
 #include "mouse.h"
 #include "net.h"
 #include "paging.h"
+#include "percpu.h"
 #include "pci.h"
 #include "pmm.h"
 #include "rtc.h"
@@ -2332,6 +2333,24 @@ static int cmd_nsleeptest(int argc, char **argv)
 	return fails != 0;
 }
 
+static int cmd_cpus(int argc, char **argv)
+{
+	int i;
+
+	(void)argc;
+	(void)argv;
+	console_printf("%d core(s) listed by ACPI, %d online; this is cpu %d\n", percpu_count(), percpu_online_count(),
+		       this_cpu()->id);
+	console_write("CPU  APIC  STATE    TIMER-IRQS  INTERRUPTS\n");
+	for (i = 0; i < percpu_count(); i++) {
+		struct percpu *c = percpu_get(i);
+
+		console_printf("%-4d %-5u %-8s %-11u %u\n", c->id, c->apic_id, c->online ? (c->is_bsp ? "boot" : "online") : "offline",
+			       c->timer_irqs, c->interrupts);
+	}
+	return 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -2869,6 +2888,7 @@ static const struct command commands[] = {
 	{ "apic",    "apic",                  "local/IO APIC information", cmd_apic },
 	{ "hrtime",  "hrtime",                "high-resolution clock self-test", cmd_hrtime },
 	{ "nsleeptest", "nsleeptest",           "nanosecond sleep self-test", cmd_nsleeptest },
+	{ "cpus",    "cpus",                  "per-CPU table", cmd_cpus },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },
