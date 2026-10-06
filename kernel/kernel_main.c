@@ -1,5 +1,6 @@
 #include "acpi.h"
 #include "apic.h"
+#include "clock.h"
 #include "hrtime.h"
 #include "ata.h"
 #include "bcache.h"
@@ -81,6 +82,7 @@ void kernel_main(void)
 	if (apic_present() && !cmdline_has("nopic") && !cmdline_has("safe"))
 		apic_timer_start(100);
 	hrtime_init();
+	clock_init();
 	pci_scan();
 	vfs_init();
 	if (ata_init() == 0) {
