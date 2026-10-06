@@ -272,7 +272,7 @@ static int fatv_rename(void *ctx, const char *from, const char *to)
 }
 
 static const struct vfs_ops fat_ops = {
-	"fat12", fatv_stat, fatv_read, fatv_write, fatv_create, fatv_unlink, fatv_list, fatv_mkdir, fatv_rmdir, fatv_rename,
+	"fat", fatv_stat, fatv_read, fatv_write, fatv_create, fatv_unlink, fatv_list, fatv_mkdir, fatv_rmdir, fatv_rename,
 	0, 0, 0, 0, 0, 0,
 };
 

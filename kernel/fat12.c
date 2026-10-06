@@ -21,6 +21,8 @@ struct dent { /* raw 32-byte directory entry */
 static int dev = -1;
 static uint32_t bytes_per_sector, spc, reserved, nfats, root_entries, total_sectors, spf;
 static uint32_t root_start, root_sectors, data_start, nclusters, cluster_bytes;
+static uint32_t eoc = 0xFF8;  /* first "end of chain" value: 0xFF8 (FAT12) or 0xFFF8 (FAT16) */
+static int is16;            /* FAT16: 16-bit entries, read only */
 static uint8_t *fat;        /* first FAT copy */
 static uint8_t *root_dir;   /* root directory, read once */
 
@@ -68,8 +70,10 @@ int fat12_mount(int ata_dev)
 	if (total_sectors <= data_start)
 		return FS_ENOMOUNT;
 	nclusters = (total_sectors - data_start) / spc;
-	if (nclusters >= 4085) /* that would be FAT16 */
+	if (nclusters >= 65525) /* FAT32 */
 		return FS_ENOMOUNT;
+	is16 = nclusters >= 4085; /* the cluster count decides, as the specification says */
+	eoc = is16 ? 0xFFF8 : 0xFF8;
 	cluster_bytes = spc * 512;
 
 	fat = kmalloc(spf * 512);
@@ -82,15 +86,19 @@ int fat12_mount(int ata_dev)
 		return FS_EIO;
 	}
 	dev = ata_dev;
-	klog(LOG_INFO, "fat12: drive %d: %u clusters of %u bytes", ata_dev, nclusters, cluster_bytes);
+	klog(LOG_INFO, "fat%d: drive %d: %u clusters of %u bytes%s", is16 ? 16 : 12, ata_dev, nclusters, cluster_bytes,
+	     is16 ? " (read-only)" : "");
 	return FS_OK;
 }
 
-/* Next cluster in a chain: 0xFF8+ means end, 0xFF7 bad, 0 free. */
+/* Next cluster in a chain: eoc+ means end, 0xFF7 bad, 0 free. */
 static uint32_t fat_next(uint32_t c)
 {
-	uint16_t w = rd16(fat + c + c / 2);
+	uint16_t w;
 
+	if (is16)
+		return rd16(fat + c * 2);
+	w = rd16(fat + c + c / 2);
 	return (c & 1) ? (uint32_t)(w >> 4) : (uint32_t)(w & 0x0FFF);
 }
 
@@ -150,12 +158,12 @@ static struct dent *load_dir(uint32_t cluster, int *count)
 		*count = (int)root_entries;
 		return (struct dent *)buf;
 	}
-	for (c = cluster; c >= 2 && c < 0xFF8 && n < 256; c = fat_next(c))
+	for (c = cluster; c >= 2 && c < eoc && n < 256; c = fat_next(c))
 		n++;
 	buf = kmalloc(n * cluster_bytes);
 	if (!buf)
 		return 0;
-	for (n = 0, c = cluster; c >= 2 && c < 0xFF8 && n < 256; c = fat_next(c), n++) {
+	for (n = 0, c = cluster; c >= 2 && c < eoc && n < 256; c = fat_next(c), n++) {
 		if (read_cluster(c, buf + n * cluster_bytes)) {
 			kfree(buf);
 			return 0;
@@ -255,7 +263,7 @@ int fat12_read(const char *path, void *buf, uint32_t cap)
 	tmp = kmalloc(cluster_bytes);
 	if (!tmp)
 		return FS_ENOSPC;
-	for (c = d.cluster; c >= 2 && c < 0xFF8 && got < d.size; c = fat_next(c)) {
+	for (c = d.cluster; c >= 2 && c < eoc && got < d.size; c = fat_next(c)) {
 		uint32_t n = d.size - got < cluster_bytes ? d.size - got : cluster_bytes;
 
 		if (read_cluster(c, tmp)) {
@@ -327,7 +335,7 @@ static void free_chain(uint32_t c)
 {
 	uint32_t guard = 0;
 
-	while (c >= 2 && c < 0xFF8 && guard++ < 4096) {
+	while (c >= 2 && c < eoc && guard++ < 4096) {
 		uint32_t next = fat_next(c);
 
 		fat_set(c, 0);
@@ -370,7 +378,7 @@ static int store_dir(uint32_t cluster, const struct dent *d)
 		memcpy(root_dir, d, root_entries * 32);
 		return ata_dev_write(dev, root_start, root_sectors, root_dir) ? FS_EIO : FS_OK;
 	}
-	for (c = cluster; c >= 2 && c < 0xFF8 && n < 256; c = fat_next(c), n++)
+	for (c = cluster; c >= 2 && c < eoc && n < 256; c = fat_next(c), n++)
 		if (ata_dev_write(dev, data_start + (c - 2) * spc, spc, (const uint8_t *)d + n * cluster_bytes))
 			return FS_EIO;
 	return FS_OK;
@@ -456,7 +464,7 @@ static struct dent *load_dir_for_insert(uint32_t cluster, int *count, const uint
 		uint32_t last = cluster, extra, n = 0;
 		uint8_t *bigger;
 
-		while (fat_next(last) >= 2 && fat_next(last) < 0xFF8 && n++ < 256)
+		while (fat_next(last) >= 2 && fat_next(last) < eoc && n++ < 256)
 			last = fat_next(last);
 		extra = alloc_chain(1);
 		if (!extra) {
@@ -497,6 +505,8 @@ int fat12_write(const char *path, const void *data, uint32_t size)
 
 	if (dev < 0)
 		return FS_ENOMOUNT;
+	if (is16)
+		return FS_EROFS; /* only reading FAT16 is supported */
 	rc = split_path(path, &dircluster, name);
 	if (rc)
 		return rc;
@@ -571,6 +581,8 @@ int fat12_delete(const char *path)
 
 	if (dev < 0)
 		return FS_ENOMOUNT;
+	if (is16)
+		return FS_EROFS; /* only reading FAT16 is supported */
 	rc = split_path(path, &dircluster, name);
 	if (rc)
 		return rc;
@@ -604,6 +616,8 @@ int fat12_mkdir(const char *path)
 
 	if (dev < 0)
 		return FS_ENOMOUNT;
+	if (is16)
+		return FS_EROFS; /* only reading FAT16 is supported */
 	rc = split_path(path, &dircluster, name);
 	if (rc)
 		return rc;
@@ -654,6 +668,8 @@ int fat12_rmdir(const char *path)
 
 	if (dev < 0)
 		return FS_ENOMOUNT;
+	if (is16)
+		return FS_EROFS; /* only reading FAT16 is supported */
 	rc = split_path(path, &dircluster, name);
 	if (rc)
 		return rc;
@@ -698,6 +714,8 @@ int fat12_rename(const char *from, const char *to)
 
 	if (dev < 0)
 		return FS_ENOMOUNT;
+	if (is16)
+		return FS_EROFS; /* only reading FAT16 is supported */
 	rc = split_path(from, &fc, fname);
 	if (!rc)
 		rc = split_path(to, &tc, tname);

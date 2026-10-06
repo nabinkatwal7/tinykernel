@@ -144,6 +144,18 @@ $(FATIMG): $(BUILD)/mkfat12.exe $(wildcard fatroot/* fatroot/*/*) $(FAT_BINS)
 	for p in $(FAT_PROGS); do cp $(BUILD)/c_$$p.elf $(BUILD)/fatroot/bin/$$p; done
 	$(BUILD)/mkfat12.exe $@ $(BUILD)/fatroot
 
+# A FAT16 test volume (10 MB, 4-sector clusters, a 100 KB file spanning many clusters); try it by passing FATIMG=build/fat16.img
+# to tools/qemu_drive.py, or replace the second drive in 'make run'.
+$(BUILD)/mkfat16.exe: tools/mkfat16.c | $(BUILD)
+	gcc -O1 -o $@ $<
+
+$(BUILD)/fat16.img: $(BUILD)/mkfat16.exe $(wildcard fatroot/* fatroot/*/*)
+	rm -rf $(BUILD)/fat16root
+	mkdir -p $(BUILD)/fat16root
+	cp -r fatroot/. $(BUILD)/fat16root/
+	python -c "import sys; sys.stdout.buffer.write(b''.join(b'line %05d of the FAT16 test file'.replace(b'%05d', b'%05d' % i) + bytes([10]) for i in range(3000)))" > $(BUILD)/fat16root/BIGFILE.TXT
+	$(BUILD)/mkfat16.exe $@ $(BUILD)/fat16root
+
 run: $(IMAGE) $(DISK) $(FATIMG)
 	$(QEMU) $(QEMU_DISKS) -serial file:$(BUILD)/serial.log
 
