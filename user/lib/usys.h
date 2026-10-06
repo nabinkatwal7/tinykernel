@@ -20,6 +20,13 @@
 #define SYS_TRYKEY  35
 #define SYS_PUTAT   36
 #define SYS_CLS     37
+#define SYS_GFX     38
+#define GFX_ENTER   0
+#define GFX_LEAVE   1
+#define GFX_RECT    2
+#define GFX_TEXT    3
+#define GFX_CLEAR   4
+#define GFX_PALETTE 5
 #define SYS_SHMGET  28
 #define SYS_SHMAT   29
 #define SYS_SHMDT   30
@@ -110,6 +117,13 @@ static inline int   munmap(void *addr)             { return syscall3(SYS_MUNMAP,
 #define KEY_RIGHT 0x104
 static inline int   trykey(void)                    { return syscall3(SYS_TRYKEY, 0, 0, 0); }
 static inline int   putat(int x, int y, char c, int attr) { return syscall3(SYS_PUTAT, x, y, (attr << 8) | (unsigned char)c); }
+static inline int   gfx(int op, const int *args)     { return syscall3(SYS_GFX, op, (int)args, 0); }
+static inline int   gfx_enter(void)                 { int a[6] = { 0 }; return gfx(GFX_ENTER, a); }
+static inline int   gfx_leave(void)                 { int a[6] = { 0 }; return gfx(GFX_LEAVE, a); }
+static inline int   gfx_clear(int color)            { int a[6] = { color }; return gfx(GFX_CLEAR, a); }
+static inline int   gfx_rect(int x, int y, int w, int h, int color) { int a[6] = { x, y, w, h, color }; return gfx(GFX_RECT, a); }
+static inline int   gfx_text(int x, int y, int fg, int bg, const char *s) { int a[6] = { x, y, fg, bg, (int)s }; return gfx(GFX_TEXT, a); }
+static inline int   gfx_palette(int i, int r, int g, int b) { int a[6] = { i, r, g, b }; return gfx(GFX_PALETTE, a); }
 static inline int   cls(void)                       { return syscall3(SYS_CLS, 0, 0, 0); }
 static inline int   pipe(int fds[2])                { return syscall3(SYS_PIPE, (int)fds, 0, 0); }
 static inline int   msync(void *addr)              { return syscall3(SYS_MSYNC, (int)addr, 0, 0); }
