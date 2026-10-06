@@ -71,6 +71,13 @@ int apic_init(void)
 static int timer_on;
 static uint32_t counts_per_ms;
 
+void apic_timer_start_local(void)
+{
+	apic_write(LAPIC_TIMER_DIV, 0x3);
+	apic_write(LAPIC_LVT_TIMER, (1u << 17) | TIMER_VECTOR);   /* periodic, same vector as the boot core */
+	apic_write(LAPIC_TIMER_INIT, counts_per_ms * 10);          /* 100 Hz */
+}
+
 void apic_eoi(void)
 {
 	apic_write(LAPIC_EOI, 0);

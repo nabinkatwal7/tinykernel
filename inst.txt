@@ -1,4 +1,3 @@
-Run scheduler on multiple cores,
 Add CPU load statistics,
 Add 'top' shell command,
 Add task CPU affinity,

@@ -10,6 +10,7 @@
 #include "percpu.h"
 #include "pmm.h"
 #include "sched.h"
+#include "smpsched.h"
 
 #define TRAMP_ADDR  0x8000u
 #define TRAMP_VECTOR (TRAMP_ADDR >> 12)
@@ -79,26 +80,31 @@ static void icr_send(uint32_t apic_id, uint32_t low)
 static void ap_main(void)
 {
 	struct percpu *c;
+	int me;
 
 	gdt_load_current();           /* the kernel's GDT (the trampoline used a private one) */
 	idt_load();
 	apic_write(0x0F0, 0x100 | 0xFF);   /* enable this core's local APIC */
 	c = percpu_by_apic(apic_id());
-	if (c) {
-		c->online = 1;
-		booting_cpu = c->id;
-	}
+	if (!c)
+		for (;;)
+			hlt();
+	me = c->id;
+	smpsched_cpu_init(me);
+	c->online = 1;
 	ap_ready = 1;
-	for (;;) { /* idle with interrupts off: no scheduler on this core yet */
-		heartbeat[booting_cpu]++;
-		if (job[booting_cpu].fn) {
-			void (*fn)(void *) = job[booting_cpu].fn;
+	apic_timer_start_local();
+	sti();
+	for (;;) { /* this is the core's idle context: run posted jobs, otherwise sleep until the next tick */
+		heartbeat[me]++;
+		if (job[me].fn) {
+			void (*fn)(void *) = job[me].fn;
 
-			job[booting_cpu].fn = 0;
-			fn(job[booting_cpu].arg);
-			job[booting_cpu].done = 1;
+			job[me].fn = 0;
+			fn(job[me].arg);
+			job[me].done = 1;
 		}
-		__asm__ volatile ("pause");
+		hlt();
 	}
 }
 

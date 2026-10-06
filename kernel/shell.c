@@ -37,6 +37,7 @@
 #include "selftest.h"
 #include "slab.h"
 #include "smp.h"
+#include "smpsched.h"
 #include "speaker.h"
 #include "sync.h"
 #include "timer.h"
@@ -1063,6 +1064,56 @@ static int cmd_spinsmp(int argc, char **argv)
 	console_printf("without a lock:   counter = %u (anything below 40000 = lost updates)\n", smp_counter_unsafe);
 	CHECK(smp_counter == 40000, "ticket lock keeps the count exact");
 	console_write(fails ? "spinsmp: FAILED\n" : "spinsmp: ok\n");
+	return fails != 0;
+}
+
+static volatile uint32_t prime_result[4];
+static const uint32_t prime_limit[4] = { 2000, 3000, 5000, 10000 };
+
+/* runs on an application processor: counts the primes below the limit by trial division */
+static void prime_thread(void *arg)
+{
+	uint32_t slot = (uint32_t)arg, n, d, count = 0;
+
+	for (n = 2; n < prime_limit[slot]; n++) {
+		for (d = 2; d * d <= n && n % d; d++)
+			;
+		if (d * d > n)
+			count++;
+	}
+	prime_result[slot] = count;
+}
+
+/* smptest: four compute threads share one application processor, preempted by its own scheduler. */
+static int cmd_smptest(int argc, char **argv)
+{
+	static const uint32_t expect[4] = { 303, 430, 669, 1229 };
+	uint32_t busy0, idle0, sw0, busy1, idle1, sw1;
+	int id[4], i, fails = 0;
+
+	(void)argc;
+	(void)argv;
+	if (percpu_online_count() < 2) {
+		console_write("needs a second core: run 'cpus start' first\n");
+		return 1;
+	}
+	smpsched_stats(1, &busy0, &idle0, &sw0);
+	for (i = 0; i < 4; i++) {
+		prime_result[i] = 0;
+		id[i] = smpt_create(1, "primes", prime_thread, (void *)i);
+		CHECK(id[i] > 0, "thread created on cpu 1");
+	}
+	for (i = 0; i < 4; i++)
+		CHECK(id[i] > 0 && smpt_join(id[i], 20000) == 0, "thread finished");
+	for (i = 0; i < 4; i++) {
+		console_printf("  primes below %5u: %u\n", prime_limit[i], prime_result[i]);
+		CHECK(prime_result[i] == expect[i], "correct prime count");
+	}
+	smpsched_stats(1, &busy1, &idle1, &sw1);
+	console_printf("cpu 1 ran %u busy ticks, %u context switches among the threads\n", busy1 - busy0, sw1 - sw0);
+	CHECK(sw1 - sw0 > 4, "the core preempted between threads");
+	smpt_reap();
+	console_write(fails ? "smptest: FAILED\n" : "smptest: ok\n");
 	return fails != 0;
 }
 
@@ -2885,6 +2936,7 @@ static const struct command commands[] = {
 	{ "nice",    "nice <id> <prio>",      "set a task priority", cmd_nice },
 	{ "priotest", "priotest",             "priority + aging scheduler test", cmd_priotest },
 	{ "spinsmp", "spinsmp",               "two-core spinlock test", cmd_spinsmp },
+	{ "smptest", "smptest",               "threads on the second core", cmd_smptest },
 	{ "kill",  "kill <id>",             "stop a task", cmd_kill },
 	{ "ls",      "ls",                    "list files", cmd_ls },
 	{ "mount",   "mount",                 "list mounted filesystems", cmd_mount },
