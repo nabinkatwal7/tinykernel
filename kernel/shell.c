@@ -1418,6 +1418,8 @@ static int cmd_smpaffinity(int argc, char **argv)
 static int cmd_useradd(int argc, char **argv);
 static int cmd_logout(int argc, char **argv);
 static int cmd_passwd(int argc, char **argv);
+static int cmd_chmod(int argc, char **argv);
+static int cmd_chown(int argc, char **argv);
 static int cmd_sha256(int argc, char **argv);
 static int job_kill(const char *spec); /* "%n": the job table is near the end of the file */
 static int cmd_jobs(int argc, char **argv);
@@ -4028,6 +4030,8 @@ static const struct command commands[] = {
 	{ "useradd", "useradd NAME PASSWORD",  "add a user (root only)", cmd_useradd },
 	{ "passwd",  "passwd [user]",         "change a password", cmd_passwd },
 	{ "sha256",  "sha256 text",           "SHA-256 digest of some text", cmd_sha256 },
+	{ "chmod",   "chmod MODE FILE...",    "change permissions (octal or u+x style)", cmd_chmod },
+	{ "chown",   "chown USER[:GROUP] FILE...", "change the owner (root only)", cmd_chown },
 	{ "logout",  "logout",                "end the session and show the login prompt", cmd_logout },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
@@ -4782,6 +4786,144 @@ static int cmd_sha256(int argc, char **argv)
 	out[64] = '\0';
 	console_printf("%s\n", out);
 	return 0;
+}
+
+/* New mode from "755" or from symbolic changes like "u+x", "go-w", "a=r" (several separated by commas). */
+static int parse_mode(const char *spec, unsigned old, unsigned *out)
+{
+	unsigned mode = old;
+
+	if (*spec >= '0' && *spec <= '7') {
+		mode = 0;
+		for (; *spec; spec++) {
+			if (*spec < '0' || *spec > '7')
+				return -1;
+			mode = mode * 8 + (unsigned)(*spec - '0');
+		}
+		if (mode > 0777)
+			return -1;
+		*out = mode;
+		return 0;
+	}
+	while (*spec) {
+		unsigned who = 0, bits = 0, mask = 0;
+		char op;
+		int i;
+
+		for (; *spec == 'u' || *spec == 'g' || *spec == 'o' || *spec == 'a'; spec++)
+			who |= *spec == 'u' ? 1u : *spec == 'g' ? 2u : *spec == 'o' ? 4u : 7u;
+		if (!who)
+			who = 7;
+		op = *spec++;
+		if (op != '+' && op != '-' && op != '=')
+			return -1;
+		for (; *spec == 'r' || *spec == 'w' || *spec == 'x'; spec++)
+			bits |= *spec == 'r' ? 4u : *spec == 'w' ? 2u : 1u;
+		for (i = 0; i < 3; i++) /* spread the rwx bits over the selected classes */
+			if (who & (1u << i))
+				mask |= 7u << (6 - 3 * i);
+		{
+			unsigned spread = 0;
+
+			for (i = 0; i < 3; i++)
+				if (who & (1u << i))
+					spread |= bits << (6 - 3 * i);
+			if (op == '+')
+				mode |= spread;
+			else if (op == '-')
+				mode &= ~spread;
+			else
+				mode = (mode & ~mask) | spread;
+		}
+		if (*spec == ',')
+			spec++;
+		else if (*spec)
+			return -1;
+	}
+	*out = mode;
+	return 0;
+}
+
+/* chmod MODE FILE... : "chmod 640 f", "chmod u+x f", "chmod go-rwx f" */
+static int cmd_chmod(int argc, char **argv)
+{
+	int i, rc = 0;
+
+	if (argc < 3) {
+		console_write("usage: chmod MODE FILE...   (octal like 644, or u+x, go-w, a=r)\n");
+		return 1;
+	}
+	for (i = 2; i < argc; i++) {
+		struct vfs_stat st;
+		unsigned mode;
+		int r = vfs_stat(argv[i], &st);
+
+		if (r < 0) {
+			rc = fs_fail(argv[i], r);
+			continue;
+		}
+		if (parse_mode(argv[1], st.mode, &mode)) {
+			console_printf("chmod: bad mode '%s'\n", argv[1]);
+			return 1;
+		}
+		r = vfs_chmod(argv[i], (uint16_t)mode);
+		if (r)
+			rc = fs_fail(argv[i], r);
+	}
+	return rc;
+}
+
+/* A user given by name or by number. */
+static int resolve_user(const char *s, uint16_t *uid, uint16_t *gid)
+{
+	struct user u;
+	uint32_t n;
+
+	if (!user_find_name(s, &u)) {
+		*uid = u.uid;
+		*gid = u.gid;
+		return 0;
+	}
+	if (!kstrtoul(s, &n)) {
+		*uid = (uint16_t)n;
+		*gid = (uint16_t)n;
+		return 0;
+	}
+	return -1;
+}
+
+/* chown USER[:GROUP-UID] FILE... : root only. The group is given as a user name or a number. */
+static int cmd_chown(int argc, char **argv)
+{
+	char owner[USER_NAME_MAX + USER_NAME_MAX + 2], *colon;
+	uint16_t uid, gid, dummy;
+	int i, rc = 0;
+
+	if (argc < 3) {
+		console_write("usage: chown USER[:GROUP] FILE...\n");
+		return 1;
+	}
+	kstrlcpy(owner, argv[1], sizeof owner);
+	colon = owner;
+	while (*colon && *colon != ':')
+		colon++;
+	if (*colon)
+		*colon++ = '\0';
+	if (resolve_user(owner, &uid, &gid)) {
+		console_printf("chown: unknown user '%s'\n", owner);
+		return 1;
+	}
+	if (*colon && resolve_user(colon, &dummy, &gid)) {
+		console_printf("chown: unknown group '%s'\n", colon);
+		return 1;
+	}
+	for (i = 2; i < argc; i++) {
+		int r = vfs_chown(argv[i], uid, gid);
+
+		if (r)
+			rc = fs_fail(argv[i], r);
+	}
+	return rc;
 }
 
 /* useradd NAME PASSWORD : add a user (root only). The first user must be "root". */
