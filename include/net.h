@@ -25,6 +25,8 @@ extern struct netif netif;
 const char *ip_str(uint32_t ip, char out[16]);
 int  ip_parse(const char *s, uint32_t *ip);      /* dotted quad -> host-order address; 0 on success */
 
+void net_tx_stats(uint32_t *queue_full, uint32_t *max_depth);   /* times a sender found all four descriptors busy, deepest queue seen */
+int  cmd_txtest(int argc, char **argv);                  /* txtest: queue 200 frames back to back */
 int  net_send_frame(const void *frame, uint16_t len);   /* a complete Ethernet frame (no FCS); 0 on success */
 /* Received frames are queued by the IRQ handler and delivered, in task context, to the handler
    registered for their ethertype. 'frame' includes the Ethernet header but not the FCS. */

@@ -55,6 +55,7 @@ static const struct test tests[] = {
 	{ "user: file locks",      "run locktest",        1, 0 },
 	{ "icmp loopback",         "icmptest",            0, 1 },
 	{ "udp loopback",          "udp test",            0, 1 },
+	{ "tx queue",              "txtest",              0, 1 },
 };
 #define NTESTS (sizeof tests / sizeof tests[0])
 
