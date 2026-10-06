@@ -14,6 +14,7 @@
 #include "crashdump.h"
 #include "cred.h"
 #include "debug.h"
+#include "usb.h"
 #include "ahci.h"
 #include "ext2.h"
 #include "blk.h"
@@ -4109,6 +4110,7 @@ static const struct command commands[] = {
 	{ "ext2", "ext2 mount DEV /PATH", "mount an ext2 volume (read-only)", cmd_ext2 },
 	{ "dma", "dma [on|off|test]", "bus-master DMA for ATA transfers", cmd_dma },
 	{ "ahci", "ahci", "find the SATA controller and list its ports", cmd_ahci },
+	{ "usb", "usb", "list USB host controllers", cmd_usb },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
