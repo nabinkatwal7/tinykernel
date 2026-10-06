@@ -38,6 +38,7 @@ static const struct test tests[] = {
 	{ "user: devices",         "run devtest",         0, 0 },
 	{ "user: kernel isolation", "run evil",           0, 0 }, /* must be killed: see below */
 	{ "filesystem",            "fstest",              1, 0 },
+	{ "pipes and redirection", "shtest",              1, 0 },
 	{ "fsck on a clean disk",  "fsck",                1, 0 },
 	{ "user: open/close",      "run opentest",        1, 0 },
 	{ "user: read/write",      "run filetest",        1, 0 },

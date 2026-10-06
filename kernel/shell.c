@@ -2933,6 +2933,45 @@ static int cmd_pipetest(int argc, char **argv)
 	return !(ok && n == -1);
 }
 
+static int sh_expect(const char *cmd, const char *want)
+{
+	static char out[256];
+	int ok;
+
+	console_capture_begin(out, sizeof out);
+	shell_exec(cmd);
+	console_capture_end();
+	ok = !kstrcmp(out, want);
+	if (!ok)
+		console_printf("shtest: '%s' printed '%s', expected '%s'\n", cmd, out, want);
+	return ok;
+}
+
+/* shtest : pipelines and redirection (needs a formatted disk) */
+static int cmd_shtest(int argc, char **argv)
+{
+	int ok = 1;
+
+	(void)argc;
+	(void)argv;
+	ok &= sh_expect("echo one | cat", "one\n");
+	ok &= sh_expect("echo two | cat | cat", "two\n");
+	ok &= sh_expect("echo 'a | b' | cat", "a | b\n");
+	ok &= sh_expect("echo x > sht.txt", "");
+	ok &= sh_expect("echo y >> sht.txt", "");
+	ok &= sh_expect("cat sht.txt", "x\ny\n");
+	ok &= sh_expect("cat < sht.txt", "x\ny\n");
+	ok &= sh_expect("cat < sht.txt | cat", "x\ny\n");
+	ok &= sh_expect("cat < sht.txt > sht2.txt", "");
+	ok &= sh_expect("cat sht2.txt", "x\ny\n");
+	ok &= sh_expect("echo 'q > r' > sht.txt", "");
+	ok &= sh_expect("cat sht.txt", "q > r\n");
+	vfs_unlink("sht.txt");
+	vfs_unlink("sht2.txt");
+	console_printf("shtest: %s\n", ok ? "ok" : "FAILED");
+	return !ok;
+}
+
 /* panic [message] : test the panic path and its stack trace */
 static int cmd_panic(int argc, char **argv)
 {
@@ -3434,6 +3473,7 @@ static const struct command commands[] = {
 	{ "crashdump", "crashdump [show|clear]", "show the crash dump saved by the last panic", cmd_crashdump },
 	{ "gdbstub", "gdbstub",               "stop in a GDB remote stub on COM2", cmd_gdbstub },
 	{ "pipetest", "pipetest",             "test pipes between two tasks", cmd_pipetest },
+	{ "shtest",  "shtest",                "test pipelines and redirection", cmd_shtest },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
@@ -3564,7 +3604,7 @@ static int take_redirect(char *line, char op, char *file, int size, int *append)
 static int exec_plain(const char *line);
 
 /* A command with optional "> file" / ">> file" output redirection; the output is captured, then stored. */
-static int exec_command(const char *line)
+static int exec_output(const char *line)
 {
 	char copy[LINE_MAX], file[FILE_PATH_MAX];
 	char *buf;
@@ -3601,6 +3641,44 @@ static int exec_command(const char *line)
 		fs_fail(file, got);
 		return 1;
 	}
+	return rc;
+}
+
+/* "cmd < file": the file's contents become the command's standard input. */
+static int exec_command(const char *line)
+{
+	char copy[LINE_MAX], file[FILE_PATH_MAX];
+	char *data;
+	int got, append, size, rc;
+
+	kstrlcpy(copy, line, sizeof copy);
+	got = take_redirect(copy, '<', file, sizeof file, &append);
+	if (!got)
+		return exec_output(line);
+	if (got < 0) {
+		console_write("syntax error: missing file name after '<'\n");
+		return 2;
+	}
+	size = vfs_size(file);
+	if (size < 0) {
+		fs_fail(file, size);
+		return 1;
+	}
+	data = kmalloc((size_t)size + 1);
+	if (!data) {
+		console_write("redirect: out of memory\n");
+		return 1;
+	}
+	got = size ? vfs_read(file, data, (uint32_t)size) : 0;
+	if (got < 0) {
+		kfree(data);
+		fs_fail(file, got);
+		return 1;
+	}
+	file_stdin_set(data, (uint32_t)got);
+	rc = exec_output(copy);
+	file_stdin_clear();
+	kfree(data);
 	return rc;
 }
 
