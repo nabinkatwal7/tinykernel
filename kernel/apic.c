@@ -2,7 +2,11 @@
 
 #include "acpi.h"
 #include "cpu.h"
+#include "idt.h"
+#include "io.h"
 #include "klog.h"
+#include "pic.h"
+#include "timer.h"
 #include "paging.h"
 
 #define MSR_APIC_BASE 0x1B
@@ -52,6 +56,64 @@ int apic_init(void)
 	present = 1;
 	klog(LOG_INFO, "apic: local APIC at %x id %u version %x, %d I/O APIC(s)", lapic, apic_id(),
 	     apic_version() & 0xFF, m->nioapics);
+	return 0;
+}
+
+#define LAPIC_EOI       0x0B0
+#define LAPIC_SPURIOUS  0x0F0
+#define LAPIC_LVT_TIMER 0x320
+#define LAPIC_TIMER_INIT 0x380
+#define LAPIC_TIMER_CUR  0x390
+#define LAPIC_TIMER_DIV  0x3E0
+#define TIMER_VECTOR    0x20  /* the vector IRQ0 used, so the existing timer handler keeps working */
+#define SPURIOUS_VECTOR 0xFF
+
+static int timer_on;
+static uint32_t counts_per_ms;
+
+void apic_eoi(void)
+{
+	apic_write(LAPIC_EOI, 0);
+}
+
+int apic_timer_active(void) { return timer_on; }
+uint32_t apic_timer_ticks_per_ms(void) { return counts_per_ms; }
+
+int apic_timer_start(uint32_t hz)
+{
+	uint32_t start, counted;
+
+	if (!present || !hz || timer_on)
+		return -1;
+	apic_write(LAPIC_SPURIOUS, 0x100 | SPURIOUS_VECTOR); /* software-enable the local APIC */
+	apic_write(LAPIC_TIMER_DIV, 0x3);                    /* divide the bus clock by 16 */
+
+	/* calibrate: let it count down freely while 10 PIT ticks (100 ms at 100 Hz) go by */
+	apic_write(LAPIC_LVT_TIMER, 1u << 16 | TIMER_VECTOR); /* masked one-shot: counts without interrupting */
+	start = timer_ticks();
+	while (timer_ticks() == start)
+		;
+	start = timer_ticks();
+	apic_write(LAPIC_TIMER_INIT, 0xFFFFFFFFu);
+	while (timer_ticks() - start < 10)
+		;
+	counted = 0xFFFFFFFFu - apic_read(LAPIC_TIMER_CUR);
+	counts_per_ms = counted / (10u * 1000u / timer_hz());
+	if (!counts_per_ms) {
+		klog(LOG_WARN, "apic: timer calibration failed");
+		return -1;
+	}
+
+	{
+		uint32_t flags = irq_save();
+
+		pic_mask(0);                                   /* the PIT stops ticking us ... */
+		apic_write(LAPIC_LVT_TIMER, (1u << 17) | TIMER_VECTOR); /* ... the LAPIC takes over: periodic */
+		apic_write(LAPIC_TIMER_INIT, counts_per_ms * (1000u / hz));
+		timer_on = 1;
+		irq_restore(flags);
+	}
+	klog(LOG_INFO, "apic: timer %u counts/ms, ticking at %u Hz (PIT masked)", counts_per_ms, hz);
 	return 0;
 }
 

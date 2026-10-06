@@ -3,6 +3,7 @@
 #include "console.h"
 #include "debug.h"
 #include "gdt.h"
+#include "apic.h"
 #include "klog.h"
 #include "paging.h"
 #include "sched.h"
@@ -25,6 +26,7 @@ struct idt_ptr {
 
 extern uint32_t isr_stub_table[48];
 extern void isr128(void);
+extern void isr255(void);
 
 static struct idt_entry idt[256];
 static struct idt_ptr ip;
@@ -60,6 +62,7 @@ void idt_init(void)
 	idt[8].zero = 0;
 	idt[8].flags = 0x85;
 	idt[8].base_hi = 0;
+	set_gate(0xFF, (uint32_t)isr255, 0x8E);       /* local APIC spurious interrupt: just return */
 	set_gate(0x80, (uint32_t)isr128, 0xEE);       /* same, but callable from ring 3 */
 
 	ip.limit = sizeof idt - 1;
@@ -124,7 +127,10 @@ void interrupt_dispatch(struct regs *r)
 	irq = (int)r->int_no - 32;
 	if (pic_is_spurious(irq))
 		return;
-	pic_eoi(irq); /* before the handler: it may context-switch away */
+	if (irq == 0 && apic_timer_active())
+		apic_eoi();
+	else
+		pic_eoi(irq); /* before the handler: it may context-switch away */
 	if (handlers[irq])
 		handlers[irq](r);
 }

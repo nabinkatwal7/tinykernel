@@ -77,6 +77,8 @@ void kernel_main(void)
 	cpu_init();
 	acpi_init();
 	apic_init();
+	if (apic_present() && !cmdline_has("nopic") && !cmdline_has("safe"))
+		apic_timer_start(100);
 	pci_scan();
 	vfs_init();
 	if (ata_init() == 0) {

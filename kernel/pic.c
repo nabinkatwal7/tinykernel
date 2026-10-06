@@ -30,6 +30,14 @@ void pic_unmask(int irq)
 	}
 }
 
+void pic_mask(int irq)
+{
+	if (irq < 8)
+		outb(PIC1_DATA, inb(PIC1_DATA) | (uint8_t)(1 << irq));
+	else
+		outb(PIC2_DATA, inb(PIC2_DATA) | (uint8_t)(1 << (irq - 8)));
+}
+
 void pic_eoi(int irq)
 {
 	if (irq >= 8)

@@ -62,6 +62,10 @@ ISR_NOERR 45
 ISR_NOERR 46
 ISR_NOERR 47
 
+.globl _isr255
+_isr255:
+	iret                    /* a spurious APIC interrupt needs no EOI */
+
 .globl _isr128
 _isr128:
 	pushl $0

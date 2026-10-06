@@ -2266,7 +2266,8 @@ static int cmd_apic(int argc, char **argv)
 		console_write("no local APIC\n");
 		return 1;
 	}
-	console_printf("local APIC at %08x, id %u, version %02x\n", apic_base(), apic_id(), apic_version() & 0xFF);
+	console_printf("local APIC at %08x, id %u, version %02x, timer %s (%u counts/ms)\n", apic_base(), apic_id(),
+		       apic_version() & 0xFF, apic_timer_active() ? "driving the scheduler" : "idle", apic_timer_ticks_per_ms());
 	for (i = 0; i < m->ncpus; i++)
 		console_printf("  cpu %d: apic id %u %s\n", i, m->cpu_apic_id[i], m->cpu_enabled[i] ? "enabled" : "disabled");
 	for (i = 0; i < ioapic_count(); i++)
