@@ -14,6 +14,7 @@
 #include "kmalloc.h"
 #include "kstring.h"
 #include "paging.h"
+#include "pcache.h"
 #include "pmm.h"
 #include "sched.h"
 
@@ -106,7 +107,7 @@ static int load_image(const char *name, uint8_t *dst, uint32_t *size, uint32_t *
 		heap_copy = kmalloc((size_t)n);
 		if (!heap_copy)
 			return -2;
-		if (vfs_read(name, heap_copy, (uint32_t)n) < 0) {
+		if (pcache_read(name, heap_copy, (uint32_t)n) < 0) {
 			kfree(heap_copy);
 			return -2;
 		}

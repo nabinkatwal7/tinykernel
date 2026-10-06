@@ -1,4 +1,3 @@
-Add swap-free page cache,
 Add out-of-memory killer,
 Add kernel symbol table,
 Print stack traces on panic,

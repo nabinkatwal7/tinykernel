@@ -4,6 +4,7 @@
 #include "kprintf.h"
 #include "fat12.h"
 #include "kmalloc.h"
+#include "pcache.h"
 #include "kstring.h"
 
 struct mount {
@@ -374,6 +375,7 @@ int vfs_write(const char *path, const void *data, uint32_t size)
 
 	if (!m)
 		return FS_ENOENT;
+	pcache_invalidate(full);
 	return m->ops->write ? m->ops->write(m->ctx, rest, data, size) : FS_EROFS;
 }
 
@@ -396,6 +398,7 @@ int vfs_unlink(const char *path)
 
 	if (!m)
 		return FS_ENOENT;
+	pcache_invalidate(full);
 	return m->ops->unlink ? m->ops->unlink(m->ctx, rest) : FS_EROFS;
 }
 
@@ -408,6 +411,8 @@ int vfs_rename(const char *from, const char *to)
 
 	if (!m1 || m1 != m2)
 		return FS_EINVAL; /* across mounts: not supported */
+	pcache_invalidate(f1);
+	pcache_invalidate(f2);
 	if (!m1->ops->rename)
 		return FS_EROFS;
 	return m1->ops->rename(m1->ctx, r1, r2);

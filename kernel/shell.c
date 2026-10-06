@@ -30,6 +30,7 @@
 #include "mouse.h"
 #include "net.h"
 #include "paging.h"
+#include "pcache.h"
 #include "percpu.h"
 #include "pci.h"
 #include "pmm.h"
@@ -1223,7 +1224,7 @@ static int cmd_cat(int argc, char **argv)
 		console_write("out of memory\n");
 		return 1;
 	}
-	n = vfs_read(argv[1], buf, (uint32_t)n);
+	n = pcache_read(argv[1], buf, (uint32_t)n);
 	if (n < 0) {
 		kfree(buf);
 		return fs_fail(argv[1], n);
@@ -2832,6 +2833,42 @@ static int cmd_shm(int argc, char **argv)
 	return 0;
 }
 
+/* pcache [drop|test] */
+static int cmd_pcache(int argc, char **argv)
+{
+	struct pcache_stats s;
+	int fails = 0;
+
+	if (argc > 1 && !kstrcmp(argv[1], "drop"))
+		pcache_drop_all();
+	if (argc > 1 && !kstrcmp(argv[1], "test")) {
+		static char big[6000], back[6000];
+		uint32_t i;
+		struct pcache_stats a, b;
+
+		for (i = 0; i < sizeof big; i++)
+			big[i] = (char)(i * 13 + 1);
+		CHECK(vfs_write("/__pc.dat", big, sizeof big) == 0, "write a 6000-byte file");
+		pcache_stats(&a);
+		CHECK(pcache_read("/__pc.dat", back, sizeof back) == (int)sizeof back && !memcmp(big, back, sizeof big), "first read");
+		CHECK(pcache_read("__pc.dat", back, sizeof back) == (int)sizeof back && !memcmp(big, back, sizeof big), "second read, other spelling of the path");
+		pcache_stats(&b);
+		CHECK(b.misses - a.misses == 1 && b.hits - a.hits == 1, "one miss then one hit");
+		CHECK(b.pages - a.pages == 2, "two cache pages hold the file");
+		big[100] = 'Z';
+		CHECK(vfs_write("/__pc.dat", big, sizeof big) == 0, "rewrite the file");
+		CHECK(pcache_read("/__pc.dat", back, sizeof back) == (int)sizeof back && back[100] == 'Z', "a write invalidates the cached copy");
+		CHECK(pcache_shrink(100) >= 2, "memory pressure can drop every cached page");
+		vfs_unlink("/__pc.dat");
+		console_write(fails ? "pcache test: FAILED\n" : "pcache test: ok\n");
+		return fails != 0;
+	}
+	pcache_stats(&s);
+	console_printf("page cache: %u/%u pages, %u hits, %u misses, %u invalidations, %u reclaimed under pressure\n", s.pages,
+		       PCACHE_PAGES, s.hits, s.misses, s.invalidations, s.shrunk);
+	return 0;
+}
+
 static int cmd_slabinfo(int argc, char **argv)
 {
 	(void)argc;
@@ -3197,6 +3234,7 @@ static const struct command commands[] = {
 	{ "fstest",  "fstest",                "self-test the filesystem", cmd_fstest },
 	{ "pgtest",  "pgtest",                "self-test address spaces", cmd_pgtest },
 	{ "shm",     "shm [rm <key>]",        "shared memory segments", cmd_shm },
+	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
 	{ "slabinfo", "slabinfo",             "show slab caches", cmd_slabinfo },
 	{ "slabtest", "slabtest",             "self-test the slab allocator", cmd_slabtest },
 	{ "cowtest", "cowtest",               "copy-on-write self-test", cmd_cowtest },
