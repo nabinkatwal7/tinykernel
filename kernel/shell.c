@@ -2438,6 +2438,81 @@ static int cmd_load(int argc, char **argv)
 	return 0;
 }
 
+/* top [seconds]: live view, refreshed every second; any key (or Ctrl+C) quits. */
+static int cmd_top(int argc, char **argv)
+{
+	static struct task_snapshot now[24], before[24];
+	static const char *const state_names[] = { "ready", "run", "sleep", "dead", "block", "zombie" };
+	uint32_t limit = 0, frames = 0, ticks_before = timer_ticks();
+	int nbefore = 0;
+
+	if (argc > 1 && kstrtoul(argv[1], &limit))
+		return 1;
+	nbefore = sched_snapshot(before, 24);
+	for (;;) {
+		int n, i, j;
+		uint32_t dt, order[24], busy;
+		struct mouse_state unused;
+
+		task_sleep(1000);
+		dt = timer_ticks() - ticks_before;
+		ticks_before = timer_ticks();
+		n = sched_snapshot(now, 24);
+		for (i = 0; i < n; i++)
+			order[i] = (uint32_t)i;
+		for (i = 0; i < n; i++) { /* per-task ticks since the previous refresh, then sort descending */
+			uint32_t prev = 0;
+
+			for (j = 0; j < nbefore; j++)
+				if (before[j].id == now[i].id)
+					prev = before[j].cpu_ticks;
+			now[i].cpu_ticks -= prev;
+			now[i].cpu_ticks = now[i].cpu_ticks > 100000 ? 0 : now[i].cpu_ticks; /* a recycled slot */
+		}
+		for (i = 0; i < n; i++)
+			for (j = i + 1; j < n; j++)
+				if (now[order[j]].cpu_ticks > now[order[i]].cpu_ticks) {
+					uint32_t t = order[i];
+
+					order[i] = order[j];
+					order[j] = t;
+				}
+		console_clear();
+		{
+			uint32_t s = timer_ms() / 1000;
+
+			console_printf("top - up %u:%02u:%02u  %u tasks  load:", s / 3600, s / 60 % 60, s % 60, task_count());
+		}
+		for (i = 0; i < percpu_count(); i++)
+			console_printf(" cpu%d %u%%", i, cpustat_busy_percent(i, 1));
+		console_printf("\nmem: %u KiB free of %u KiB\n\n", pmm_free_frames() * 4, pmm_ram_kib());
+		console_write("  ID PPID  PRIO STATE   %CPU  HEAP  NAME\n");
+		(void)unused;
+		for (i = 0; i < n && i < 15; i++) {
+			struct task_snapshot *t = &now[order[i]];
+
+			busy = dt ? t->cpu_ticks * 100 / dt : 0;
+			console_printf("%4u %4u %5u %-6s %3u%%  %5u  %s\n", t->id, t->ppid, t->priority, state_names[t->state], busy,
+				       t->heap_bytes, t->name);
+		}
+		console_write("\n(press any key to quit)\n");
+		for (i = 0; i < n; i++)
+			before[i] = now[i];
+		{
+			struct task_snapshot raw[24];
+			int m = sched_snapshot(raw, 24);
+
+			for (i = 0; i < m; i++)
+				before[i] = raw[i]; /* the cumulative counters, not the deltas, for the next round */
+			nbefore = m;
+		}
+		frames++;
+		if (keyboard_trygetkey() >= 0 || shell_interrupted() || (limit && frames >= limit))
+			break;
+	}
+	return 0;
+}
+
 static int cmd_cpus(int argc, char **argv)
 {
 	int i;
@@ -3000,6 +3075,7 @@ static const struct command commands[] = {
 	{ "nsleeptest", "nsleeptest",           "nanosecond sleep self-test", cmd_nsleeptest },
 	{ "cpus",    "cpus",                  "per-CPU table", cmd_cpus },
 	{ "load",    "load",                  "CPU busy percentages", cmd_load },
+	{ "top",     "top [seconds]",         "live task and CPU view", cmd_top },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },

@@ -553,6 +553,29 @@ uint32_t sched_idle_ticks(void)
 	return idle ? idle->cpu_ticks : 0;
 }
 
+int sched_snapshot(struct task_snapshot *out, int max)
+{
+	uint32_t f = irq_save();
+	task_t *t = task_head;
+	int n = 0;
+
+	do {
+		if (t->state != TASK_DEAD && n < max) {
+			out[n].id = t->id;
+			out[n].ppid = t->ppid;
+			out[n].priority = t->priority;
+			out[n].cpu_ticks = t->cpu_ticks;
+			out[n].heap_bytes = t->heap_bytes;
+			out[n].state = t->state;
+			kstrlcpy(out[n].name, t->name, sizeof out[n].name);
+			n++;
+		}
+		t = t->next;
+	} while (t != task_head);
+	irq_restore(f);
+	return n;
+}
+
 task_t *task_current(void)
 {
 	return current;
