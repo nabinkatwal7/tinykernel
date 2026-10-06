@@ -1,4 +1,3 @@
-Compile C programs for user mode,
 Add more syscalls: open and close,
 Add syscalls: read and write files,
 Add syscall: getpid,

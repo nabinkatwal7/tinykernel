@@ -38,7 +38,7 @@ Tokens: plain text is typed followed by Enter; `raw:text` types without Enter; `
 ## Adding things
 
 - **Shell command:** write `static int cmd_x(int argc, char **argv)` in `shell.c` and add a row to `commands[]`.
-- **Built-in user program:** add `user/foo.asm` (`bits 32`, `org 0x800000`), add it to `USER_BINS`, `builtin.S` and the table in `user.c`.
+- **Built-in user program:** drop `user/foo.asm` (`bits 32`, `org 0x800000`) or `user/c/foo.c` in place; the Makefile embeds and registers it.
 - **IRQ driver:** `irq_install_handler(n, fn)` then `pic_unmask(n)`. The EOI is sent before your handler runs.
 
 ## Conventions
@@ -47,4 +47,4 @@ Tabs, kernel-style braces, `k`-prefixed helpers, comments only for the non-obvio
 
 ## User-space C programs
 
-`user/c/NAME.c` is compiled with `UCFLAGS`, linked with `user/lib/crt0.S` (entry `_start`, calls `main(argc, argv, envp)` and `exit`) and `user/lib/ulib.c`, linked at `0x800000` and converted to an ELF (`build/c_NAME.elf`). Embed it by adding the `.elf` to `USER_BINS`, `kernel/builtin.S` and the table in `kernel/user.c`. System calls are inline wrappers in `user/lib/usys.h`.
+`user/c/NAME.c` is compiled with `UCFLAGS`, linked with `user/lib/crt0.S` (entry `_start`, calls `main(argc, argv, envp)` and `exit`) and `user/lib/ulib.c`, linked at `0x800000` and converted to an ELF (`build/c_NAME.elf`). It is picked up automatically: the Makefile discovers programs by file name (`user/NAME.asm` flat binary, `user/NAME.elf.asm` assembly ELF, `user/c/NAME.c` C ELF) and `tools/genprogs.sh` generates `build/progs_gen.c`, which embeds every image in the kernel and registers it by name. Just add the file and `make`; `install` lists it and `run NAME` starts it. System calls are inline wrappers in `user/lib/usys.h`.

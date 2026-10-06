@@ -20,6 +20,14 @@ int  user_abort_requested(void);
 void user_list_builtin(void);
 int  user_install_builtin(const char *name); /* copy a built-in program onto the disk */
 
+/* Programs embedded in the kernel image; generated into build/progs_gen.c from user/. */
+struct builtin_prog {
+	const char *name;
+	const uint8_t *start, *end;
+};
+extern const struct builtin_prog builtin_progs[];
+extern const unsigned builtin_nprogs;
+
 /* asm */
 int  enter_user(uint32_t entry, uint32_t user_esp);
 void user_return(int code) __attribute__((noreturn));

@@ -11,7 +11,7 @@ CFLAGS  := -m32 -ffreestanding -fno-builtin -fno-stack-protector \
 LDFLAGS := -m i386pe -T kernel/linker.ld -nostdlib
 
 BUILD          := build
-KERNEL_SECTORS := 256
+KERNEL_SECTORS := 512
 KERNEL_ELF     := $(BUILD)/kernel.elf
 KERNEL_BIN     := $(BUILD)/kernel.bin
 BOOT_BIN       := $(BUILD)/boot.bin
@@ -22,10 +22,19 @@ DISK_SECTORS   := 2048
 C_SRCS  := $(wildcard kernel/*.c)
 S_SRCS  := $(wildcard kernel/*.S)
 OBJS    := $(patsubst kernel/%.c,$(BUILD)/%.o,$(C_SRCS)) \
-           $(patsubst kernel/%.S,$(BUILD)/%.o,$(S_SRCS))
+           $(patsubst kernel/%.S,$(BUILD)/%.o,$(S_SRCS)) $(BUILD)/progs_gen.o
 HEADERS := $(wildcard include/*.h)
-USER_BINS := $(BUILD)/hello.bin $(BUILD)/counter.bin $(BUILD)/fault.bin $(BUILD)/evil.bin $(BUILD)/spin.bin $(BUILD)/args.bin $(BUILD)/envdump.bin $(BUILD)/helloelf.elf \
-		$(BUILD)/c_crtdemo.elf $(BUILD)/c_strtest.elf $(BUILD)/c_printftest.elf
+# User programs are discovered by file name:
+#   user/NAME.asm      flat binary (nasm -f bin), linked at 0x800000
+#   user/NAME.elf.asm  ELF built from assembly
+#   user/c/NAME.c      ELF built from C with the runtime in user/lib
+FLAT_PROGS := $(patsubst user/%.asm,%,$(filter-out %.elf.asm,$(wildcard user/*.asm)))
+ELF_PROGS  := $(patsubst user/%.elf.asm,%,$(wildcard user/*.elf.asm))
+C_PROGS    := $(patsubst user/c/%.c,%,$(wildcard user/c/*.c))
+PROG_IMAGES := $(foreach p,$(FLAT_PROGS),$(p):$(BUILD)/$(p).bin) \
+               $(foreach p,$(ELF_PROGS),$(p):$(BUILD)/$(p).elf) \
+               $(foreach p,$(C_PROGS),$(p):$(BUILD)/c_$(p).elf)
+USER_BINS := $(FLAT_PROGS:%=$(BUILD)/%.bin) $(ELF_PROGS:%=$(BUILD)/%.elf) $(C_PROGS:%=$(BUILD)/c_%.elf)
 
 # Headless run: serial log to build/serial.log, no window.
 QEMU_DISKS := -drive format=raw,file=$(IMAGE),if=floppy \
@@ -41,13 +50,17 @@ $(BUILD)/%.o: kernel/%.c $(HEADERS) | $(BUILD)
 $(BUILD)/%.o: kernel/%.S | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/builtin.o: $(USER_BINS)
+$(BUILD)/progs_gen.c: tools/genprogs.sh Makefile $(USER_BINS) | $(BUILD)
+	sh tools/genprogs.sh $@ $(PROG_IMAGES)
+
+$(BUILD)/progs_gen.o: $(BUILD)/progs_gen.c $(HEADERS) $(USER_BINS)
+	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/%.bin: user/%.asm | $(BUILD)
 	$(NASM) -f bin $< -o $@
 
 # ELF user programs: assemble to COFF, link at the user address as PE, convert to ELF.
-$(BUILD)/%.elf: user/%.asm user/user.ld | $(BUILD)
+$(BUILD)/%.elf: user/%.elf.asm user/user.ld | $(BUILD)
 	$(NASM) -f win32 $< -o $(BUILD)/$*.uo
 	$(LD) -m i386pe -T user/user.ld -nostdlib -o $(BUILD)/$*.upe $(BUILD)/$*.uo
 	$(OBJCOPY) -O elf32-i386 $(BUILD)/$*.upe $@

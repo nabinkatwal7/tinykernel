@@ -14,38 +14,8 @@
 #include "pmm.h"
 #include "sched.h"
 
-/* Embedded by builtin.S */
-extern const uint8_t builtin_hello_start[], builtin_hello_end[];
-extern const uint8_t builtin_counter_start[], builtin_counter_end[];
-extern const uint8_t builtin_fault_start[], builtin_fault_end[];
-extern const uint8_t builtin_evil_start[], builtin_evil_end[];
-extern const uint8_t builtin_spin_start[], builtin_spin_end[];
-extern const uint8_t builtin_args_start[], builtin_args_end[];
-extern const uint8_t builtin_envdump_start[], builtin_envdump_end[];
-extern const uint8_t builtin_crtdemo_start[], builtin_crtdemo_end[];
-extern const uint8_t builtin_strtest_start[], builtin_strtest_end[];
-extern const uint8_t builtin_printftest_start[], builtin_printftest_end[];
-extern const uint8_t builtin_helloelf_start[], builtin_helloelf_end[];
-
-struct builtin {
-	const char *name;
-	const uint8_t *start, *end;
-};
-
-static const struct builtin builtins[] = {
-	{ "hello",   builtin_hello_start,   builtin_hello_end },
-	{ "counter", builtin_counter_start, builtin_counter_end },
-	{ "fault",   builtin_fault_start,   builtin_fault_end },
-	{ "evil",    builtin_evil_start,    builtin_evil_end },
-	{ "spin",    builtin_spin_start,    builtin_spin_end },
-	{ "args",    builtin_args_start,    builtin_args_end },
-	{ "envdump", builtin_envdump_start, builtin_envdump_end },
-	{ "crtdemo", builtin_crtdemo_start, builtin_crtdemo_end },
-	{ "strtest", builtin_strtest_start, builtin_strtest_end },
-	{ "printftest", builtin_printftest_start, builtin_printftest_end },
-	{ "helloelf", builtin_helloelf_start, builtin_helloelf_end },
-};
-#define NBUILTIN (sizeof builtins / sizeof builtins[0])
+#define builtins builtin_progs
+#define NBUILTIN builtin_nprogs
 
 static int active;
 static volatile int abort_requested;
