@@ -14,6 +14,7 @@
 #include "crashdump.h"
 #include "cred.h"
 #include "debug.h"
+#include "telnetd.h"
 #include "dns.h"
 #include "usbhid.h"
 #include "usb.h"
@@ -4128,6 +4129,7 @@ static const struct command commands[] = {
 	{ "tcpstat", "tcpstat [drop O I]", "TCP counters, timers, loss simulation", cmd_tcpstat },
 	{ "tcpsend", "tcpsend IP PORT BYTES", "send a test pattern over TCP", cmd_tcpsend },
 	{ "tcpget", "tcpget IP PORT [MS]", "receive a test pattern over TCP", cmd_tcpget },
+	{ "telnetd", "telnetd [PORT [N]]", "tiny remote shell over TCP", cmd_telnetd },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
