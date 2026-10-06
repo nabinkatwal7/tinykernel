@@ -74,6 +74,15 @@ void     sched_dump(void);
 int      sched_format(char *buf, uint32_t cap); /* the same table as text (for /proc/tasks) */
 void     sched_tree(void);        /* pstree: tasks indented under their parents */        /* ps */
 uint32_t task_count(void);
+
+/* A copy of the interesting task fields, for top-style listings. */
+struct task_snapshot {
+	uint32_t id, ppid, priority, cpu_ticks, heap_bytes;
+	int state;
+	char name[16];
+};
+int      sched_snapshot(struct task_snapshot *out, int max);   /* number of live tasks copied */
+uint32_t sched_idle_ticks(void);         /* ticks the boot core spent in the idle task */
 uint32_t sched_newest_job(void); /* id of the most recently created user-visible task, 0 if none */
 uint32_t sched_current_id(void);
 void     sched_account(uint32_t id, int32_t delta); /* adjust a task's heap_bytes */

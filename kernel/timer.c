@@ -3,6 +3,7 @@
 #include "idt.h"
 #include "io.h"
 #include "percpu.h"
+#include "smpsched.h"
 #include "pic.h"
 #include "console.h"
 #include "sched.h"
@@ -43,6 +44,10 @@ static void run_ktimers(void)
 static void timer_irq(struct regs *r)
 {
 	(void)r;
+	if (percpu_count() && !this_cpu()->is_bsp) { /* an application processor: its own scheduler, no global bookkeeping */
+		smpsched_tick();
+		return;
+	}
 	ticks++;
 	this_cpu()->timer_irqs++;
 	run_ktimers();

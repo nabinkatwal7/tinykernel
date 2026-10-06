@@ -17,6 +17,7 @@ int      apic_timer_start(uint32_t hz);         /* 0 on success; the PIT's IRQ0 
 int      apic_timer_active(void);
 uint32_t apic_timer_ticks_per_ms(void);        /* calibration result (timer counts per millisecond at divide 16) */
 void     apic_eoi(void);
+void     apic_timer_start_local(void);       /* an AP starts its own periodic timer with the calibrated rate */
 
 int      ioapic_count(void);
 uint32_t ioapic_address(int index);

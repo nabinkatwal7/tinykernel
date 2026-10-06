@@ -8,6 +8,7 @@
 #include "cmdline.h"
 #include "clock.h"
 #include "console.h"
+#include "cpustat.h"
 #include "cpu.h"
 #include "debug.h"
 #include "dhcp.h"
@@ -37,6 +38,7 @@
 #include "selftest.h"
 #include "slab.h"
 #include "smp.h"
+#include "smpsched.h"
 #include "speaker.h"
 #include "sync.h"
 #include "timer.h"
@@ -1026,6 +1028,124 @@ static int cmd_priotest(int argc, char **argv)
 	ok = busy_cpu[0] > busy_cpu[1] && busy_cpu[1] > busy_cpu[2] && busy_cpu[2] > 0;
 	console_write(ok ? "priotest: ok (ordered by priority, nobody starved)\n" : "priotest: FAILED\n");
 	return !ok;
+}
+
+static ticketlock_t smp_lock = TICKETLOCK_INIT;
+static volatile uint32_t smp_counter, smp_counter_unsafe;
+
+static void smp_hammer(void *arg)
+{
+	int i;
+
+	(void)arg;
+	for (i = 0; i < 20000; i++) {
+		ticket_lock(&smp_lock);
+		smp_counter++;
+		ticket_unlock(&smp_lock);
+		smp_counter_unsafe++; /* the same increment with no lock: two cores can lose updates */
+	}
+}
+
+/* spinsmp: both cores hammer one counter, with and without a ticket lock. */
+static int cmd_spinsmp(int argc, char **argv)
+{
+	int fails = 0;
+
+	(void)argc;
+	(void)argv;
+	if (percpu_online_count() < 2) {
+		console_write("needs a second core: run 'cpus start' first\n");
+		return 1;
+	}
+	smp_counter = smp_counter_unsafe = 0;
+	CHECK(smp_post(1, smp_hammer, 0) == 0, "job handed to cpu 1");
+	smp_hammer(0);                     /* this core does the same work at the same time */
+	CHECK(smp_wait(1) == 0, "cpu 1 finished");
+	console_printf("with ticket lock: counter = %u (expected 40000)\n", smp_counter);
+	console_printf("without a lock:   counter = %u (anything below 40000 = lost updates)\n", smp_counter_unsafe);
+	CHECK(smp_counter == 40000, "ticket lock keeps the count exact");
+	console_write(fails ? "spinsmp: FAILED\n" : "spinsmp: ok\n");
+	return fails != 0;
+}
+
+static volatile uint32_t prime_result[4];
+static const uint32_t prime_limit[4] = { 2000, 3000, 5000, 10000 };
+
+/* runs on an application processor: counts the primes below the limit by trial division */
+static void prime_thread(void *arg)
+{
+	uint32_t slot = (uint32_t)arg, n, d, count = 0;
+
+	for (n = 2; n < prime_limit[slot]; n++) {
+		for (d = 2; d * d <= n && n % d; d++)
+			;
+		if (d * d > n)
+			count++;
+	}
+	prime_result[slot] = count;
+}
+
+/* smptest: four compute threads share one application processor, preempted by its own scheduler. */
+static int cmd_smptest(int argc, char **argv)
+{
+	static const uint32_t expect[4] = { 303, 430, 669, 1229 };
+	uint32_t busy0, idle0, sw0, busy1, idle1, sw1;
+	int id[4], i, fails = 0;
+
+	(void)argc;
+	(void)argv;
+	if (percpu_online_count() < 2) {
+		console_write("needs a second core: run 'cpus start' first\n");
+		return 1;
+	}
+	smpsched_stats(1, &busy0, &idle0, &sw0);
+	for (i = 0; i < 4; i++) {
+		prime_result[i] = 0;
+		id[i] = smpt_create(1, "primes", prime_thread, (void *)i);
+		CHECK(id[i] > 0, "thread created on cpu 1");
+	}
+	for (i = 0; i < 4; i++)
+		CHECK(id[i] > 0 && smpt_join(id[i], 20000) == 0, "thread finished");
+	for (i = 0; i < 4; i++) {
+		console_printf("  primes below %5u: %u\n", prime_limit[i], prime_result[i]);
+		CHECK(prime_result[i] == expect[i], "correct prime count");
+	}
+	smpsched_stats(1, &busy1, &idle1, &sw1);
+	console_printf("cpu 1 ran %u busy ticks, %u context switches among the threads\n", busy1 - busy0, sw1 - sw0);
+	CHECK(sw1 - sw0 > 4, "the core preempted between threads");
+	smpt_reap();
+	console_write(fails ? "smptest: FAILED\n" : "smptest: ok\n");
+	return fails != 0;
+}
+
+static volatile int where_ran[4];
+
+static void where_thread(void *arg)
+{
+	where_ran[(uint32_t)arg] = this_cpu()->id; /* which core did the scheduler really use? */
+}
+
+/* smpaffinity <mask>: place a thread with a CPU affinity mask and report where it ran. */
+static int cmd_smpaffinity(int argc, char **argv)
+{
+	uint32_t mask;
+	int id, cpu;
+
+	if (argc != 2 || kstrtoul(argv[1], &mask)) {
+		console_write("usage: smpaffinity <mask>   (bit n = cpu n; thread cores are the application processors)\n");
+		return 1;
+	}
+	where_ran[0] = -1;
+	id = smpt_create_affinity(mask, "where", where_thread, (void *)0);
+	if (id < 0) {
+		console_printf("mask %x allows no online application processor\n", mask);
+		return 1;
+	}
+	cpu = smpt_cpu_of(id);
+	smpt_join(id, 2000);
+	console_printf("thread %d placed on cpu %d, ran on cpu %d\n", id, cpu, where_ran[0]);
+	smpt_reap();
+	return where_ran[0] != cpu;
 }
 
 static int cmd_kill(int argc, char **argv)
@@ -2334,6 +2454,95 @@ static int cmd_nsleeptest(int argc, char **argv)
 	return fails != 0;
 }
 
+static int cmd_load(int argc, char **argv)
+{
+	int i;
+
+	(void)argc;
+	(void)argv;
+	console_printf("CPU load (busy %%) after %u s of sampling\n", cpustat_samples());
+	console_write("CPU   1s    5s    15s   60s\n");
+	for (i = 0; i < percpu_count(); i++)
+		console_printf("%-5d %3u%%  %3u%%  %3u%%  %3u%%\n", i, cpustat_busy_percent(i, 1), cpustat_busy_percent(i, 5),
+			       cpustat_busy_percent(i, 15), cpustat_busy_percent(i, 60));
+	return 0;
+}
+
+/* top [seconds]: live view, refreshed every second; any key (or Ctrl+C) quits. */
+static int cmd_top(int argc, char **argv)
+{
+	static struct task_snapshot now[24], before[24];
+	static const char *const state_names[] = { "ready", "run", "sleep", "dead", "block", "zombie" };
+	uint32_t limit = 0, frames = 0, ticks_before = timer_ticks();
+	int nbefore = 0;
+
+	if (argc > 1 && kstrtoul(argv[1], &limit))
+		return 1;
+	nbefore = sched_snapshot(before, 24);
+	for (;;) {
+		int n, i, j;
+		uint32_t dt, order[24], busy;
+		struct mouse_state unused;
+
+		task_sleep(1000);
+		dt = timer_ticks() - ticks_before;
+		ticks_before = timer_ticks();
+		n = sched_snapshot(now, 24);
+		for (i = 0; i < n; i++)
+			order[i] = (uint32_t)i;
+		for (i = 0; i < n; i++) { /* per-task ticks since the previous refresh, then sort descending */
+			uint32_t prev = 0;
+
+			for (j = 0; j < nbefore; j++)
+				if (before[j].id == now[i].id)
+					prev = before[j].cpu_ticks;
+			now[i].cpu_ticks -= prev;
+			now[i].cpu_ticks = now[i].cpu_ticks > 100000 ? 0 : now[i].cpu_ticks; /* a recycled slot */
+		}
+		for (i = 0; i < n; i++)
+			for (j = i + 1; j < n; j++)
+				if (now[order[j]].cpu_ticks > now[order[i]].cpu_ticks) {
+					uint32_t t = order[i];
+
+					order[i] = order[j];
+					order[j] = t;
+				}
+		console_clear();
+		{
+			uint32_t s = timer_ms() / 1000;
+
+			console_printf("top - up %u:%02u:%02u  %u tasks  load:", s / 3600, s / 60 % 60, s % 60, task_count());
+		}
+		for (i = 0; i < percpu_count(); i++)
+			console_printf(" cpu%d %u%%", i, cpustat_busy_percent(i, 1));
+		console_printf("\nmem: %u KiB free of %u KiB\n\n", pmm_free_frames() * 4, pmm_ram_kib());
+		console_write("  ID PPID  PRIO STATE   %CPU  HEAP  NAME\n");
+		(void)unused;
+		for (i = 0; i < n && i < 15; i++) {
+			struct task_snapshot *t = &now[order[i]];
+
+			busy = dt ? t->cpu_ticks * 100 / dt : 0;
+			console_printf("%4u %4u %5u %-6s %3u%%  %5u  %s\n", t->id, t->ppid, t->priority, state_names[t->state], busy,
+				       t->heap_bytes, t->name);
+		}
+		console_write("\n(press any key to quit)\n");
+		for (i = 0; i < n; i++)
+			before[i] = now[i];
+		{
+			struct task_snapshot raw[24];
+			int m = sched_snapshot(raw, 24);
+
+			for (i = 0; i < m; i++)
+				before[i] = raw[i]; /* the cumulative counters, not the deltas, for the next round */
+			nbefore = m;
+		}
+		frames++;
+		if (keyboard_trygetkey() >= 0 || shell_interrupted() || (limit && frames >= limit))
+			break;
+	}
+	return 0;
+}
+
 static int cmd_cpus(int argc, char **argv)
 {
 	int i;
@@ -2846,6 +3055,9 @@ static const struct command commands[] = {
 	{ "unset",   "unset <NAME>",          "remove an environment variable", cmd_unset },
 	{ "nice",    "nice <id> <prio>",      "set a task priority", cmd_nice },
 	{ "priotest", "priotest",             "priority + aging scheduler test", cmd_priotest },
+	{ "spinsmp", "spinsmp",               "two-core spinlock test", cmd_spinsmp },
+	{ "smptest", "smptest",               "threads on the second core", cmd_smptest },
+	{ "smpaffinity", "smpaffinity <mask>",   "place a thread by CPU mask", cmd_smpaffinity },
 	{ "kill",  "kill <id>",             "stop a task", cmd_kill },
 	{ "ls",      "ls",                    "list files", cmd_ls },
 	{ "mount",   "mount",                 "list mounted filesystems", cmd_mount },
@@ -2893,6 +3105,8 @@ static const struct command commands[] = {
 	{ "hrtime",  "hrtime",                "high-resolution clock self-test", cmd_hrtime },
 	{ "nsleeptest", "nsleeptest",           "nanosecond sleep self-test", cmd_nsleeptest },
 	{ "cpus",    "cpus",                  "per-CPU table", cmd_cpus },
+	{ "load",    "load",                  "CPU busy percentages", cmd_load },
+	{ "top",     "top [seconds]",         "live task and CPU view", cmd_top },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },
