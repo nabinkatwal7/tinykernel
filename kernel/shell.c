@@ -36,6 +36,7 @@
 #include "sched.h"
 #include "selftest.h"
 #include "slab.h"
+#include "smp.h"
 #include "speaker.h"
 #include "sync.h"
 #include "timer.h"
@@ -2337,16 +2338,19 @@ static int cmd_cpus(int argc, char **argv)
 {
 	int i;
 
-	(void)argc;
-	(void)argv;
+	if (argc > 1 && !kstrcmp(argv[1], "start")) {
+		console_printf("%d core(s) started\n", smp_start_all());
+		return 0;
+	}
 	console_printf("%d core(s) listed by ACPI, %d online; this is cpu %d\n", percpu_count(), percpu_online_count(),
 		       this_cpu()->id);
-	console_write("CPU  APIC  STATE    TIMER-IRQS  INTERRUPTS\n");
+	console_write("CPU  APIC  STATE    TIMER-IRQS  INTERRUPTS  HEARTBEAT\n");
 	for (i = 0; i < percpu_count(); i++) {
 		struct percpu *c = percpu_get(i);
 
-		console_printf("%-4d %-5u %-8s %-11u %u\n", c->id, c->apic_id, c->online ? (c->is_bsp ? "boot" : "online") : "offline",
-			       c->timer_irqs, c->interrupts);
+		console_printf("%-4d %-5u %-8s %-11u %-11u %u\n", c->id, c->apic_id,
+			       c->online ? (c->is_bsp ? "boot" : "online") : "offline", c->timer_irqs, c->interrupts,
+			       smp_heartbeat(c->id));
 	}
 	return 0;
 }

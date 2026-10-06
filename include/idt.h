@@ -14,6 +14,7 @@ struct regs {
 typedef void (*irq_handler_t)(struct regs *r);
 
 void idt_init(void);
+void idt_load(void);              /* lidt on the calling core */
 void double_fault_task(void) __attribute__((noreturn)); /* runs on its own stack and TSS */
 void irq_install_handler(int irq, irq_handler_t h);
 

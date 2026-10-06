@@ -43,6 +43,21 @@ void gdt_set_df_cr3(uint32_t cr3)
 	df_tss.cr3 = cr3;
 }
 
+void gdt_load_current(void)
+{
+	__asm__ volatile (
+		"lgdt %0\n\t"
+		"movw $0x10, %%ax\n\t"
+		"movw %%ax, %%ds\n\t"
+		"movw %%ax, %%es\n\t"
+		"movw %%ax, %%fs\n\t"
+		"movw %%ax, %%gs\n\t"
+		"movw %%ax, %%ss\n\t"
+		"ljmp $0x08, $1f\n"
+		"1:"
+		: : "m"(gp) : "ax", "memory");
+}
+
 void gdt_set_kernel_stack(uint32_t esp0)
 {
 	tss.esp0 = esp0;
