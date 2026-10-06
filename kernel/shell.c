@@ -3521,6 +3521,90 @@ static char *find_pipe(char *s)
 
 #define PIPELINE_CAP 16384
 
+/* ---------------- background jobs ---------------- */
+
+#define MAX_JOBS 8
+
+struct job {
+	int used, id;
+	uint32_t tid;
+	volatile int done, status;
+	char cmd[80];
+};
+
+static struct job jobs[MAX_JOBS];
+static int next_job_id = 1;
+
+static void job_entry(void *arg)
+{
+	struct job *j = arg;
+
+	j->status = shell_exec(j->cmd);
+	j->done = 1;
+}
+
+/* 1 (and the command without its '&') if the line ends in an unquoted single '&'. */
+static int strip_ampersand(char *line)
+{
+	char quote = 0;
+	char *s, *end = line + kstrlen(line);
+
+	for (s = line; *s; s++) {
+		if (quote) {
+			if (*s == quote)
+				quote = 0;
+		} else if (*s == '"' || *s == '\'') {
+			quote = *s;
+		} else if (*s == '\\' && s[1]) {
+			s++;
+		}
+	}
+	while (end > line && (end[-1] == ' ' || end[-1] == '\t'))
+		end--;
+	if (quote || end == line || end[-1] != '&' || (end - 1 > line && end[-2] == '&'))
+		return 0;
+	end[-1] = '\0';
+	return 1;
+}
+
+static int start_job(const char *cmd)
+{
+	struct job *j = 0;
+	int i;
+
+	for (i = 0; i < MAX_JOBS && !j; i++)
+		if (!jobs[i].used)
+			j = &jobs[i];
+	if (!j) {
+		console_write("too many background jobs\n");
+		return 1;
+	}
+	if (!kstrncmp(cmd, "run ", 4)) {
+		console_write("user programs cannot run in the background yet\n");
+		return 1;
+	}
+	memset(j, 0, sizeof *j);
+	kstrlcpy(j->cmd, cmd, sizeof j->cmd);
+	j->used = 1;
+	j->id = next_job_id++;
+	j->tid = task_create("job", job_entry, j, PRIO_DEFAULT)->id;
+	console_printf("[%d] %u\n", j->id, j->tid);
+	return 0;
+}
+
+/* Called before each prompt: report jobs that finished meanwhile. */
+static void report_jobs(void)
+{
+	int i;
+
+	for (i = 0; i < MAX_JOBS; i++) {
+		if (jobs[i].used && jobs[i].done) {
+			console_printf("[%d]+ Done (%d)  %s\n", jobs[i].id, jobs[i].status, jobs[i].cmd);
+			jobs[i].used = 0;
+		}
+	}
+}
+
 static int exec_command(const char *line);
 
 /*
@@ -3535,6 +3619,8 @@ int shell_exec(const char *line)
 	int rc, len;
 
 	kstrlcpy(copy, line, sizeof copy);
+	if (strip_ampersand(copy))
+		return start_job(copy);
 	bar = find_pipe(copy);
 	if (!bar)
 		return exec_command(line);
@@ -3729,6 +3815,7 @@ void shell_run(void)
 	env_set("TERM", "vga80x25");
 	for (;;) {
 		interrupted = 0;
+		report_jobs();
 		prompt();
 		readline(line, sizeof line);
 		hist_add(line);
