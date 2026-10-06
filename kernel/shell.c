@@ -3514,7 +3514,97 @@ int shell_exec(const char *line)
 	return rc;
 }
 
+#define REDIR_CAP 32768
+
+/*
+ * Cuts one redirection ("> file", ">> file", "< file") out of a command line, blanking its text so the rest
+ * parses normally. 'op' is '>' or '<'; returns 1 and fills file (expanded) / append, or 0 if there is none.
+ */
+static int take_redirect(char *line, char op, char *file, int size, int *append)
+{
+	char quote = 0, *s, *start, *end;
+	char raw[LINE_MAX];
+	int n = 0;
+
+	for (s = line; *s; s++) {
+		if (quote) {
+			if (*s == quote)
+				quote = 0;
+			continue;
+		}
+		if (*s == '"' || *s == '\'') {
+			quote = *s;
+		} else if (*s == '\\' && s[1]) {
+			s++;
+		} else if (*s == op) {
+			break;
+		}
+	}
+	if (!*s)
+		return 0;
+	start = s++;
+	*append = 0;
+	if (op == '>' && *s == '>') {
+		*append = 1;
+		s++;
+	}
+	while (*s == ' ' || *s == '\t')
+		s++;
+	end = s;
+	while (*end && *end != ' ' && *end != '\t' && *end != '<' && *end != '>' && n < (int)sizeof raw - 1)
+		raw[n++] = *end++;
+	raw[n] = '\0';
+	memset(start, ' ', (size_t)(end - start));
+	if (!n)
+		return -1; /* operator without a file name */
+	expand(raw, file, size);
+	return 1;
+}
+
+static int exec_plain(const char *line);
+
+/* A command with optional "> file" / ">> file" output redirection; the output is captured, then stored. */
 static int exec_command(const char *line)
+{
+	char copy[LINE_MAX], file[FILE_PATH_MAX];
+	char *buf;
+	int append, rc, len, got;
+
+	kstrlcpy(copy, line, sizeof copy);
+	got = take_redirect(copy, '>', file, sizeof file, &append);
+	if (!got)
+		return exec_plain(line);
+	if (got < 0) {
+		console_write("syntax error: missing file name after '>'\n");
+		return 2;
+	}
+	buf = kmalloc(REDIR_CAP);
+	if (!buf) {
+		console_write("redirect: out of memory\n");
+		return 1;
+	}
+	len = 0;
+	if (append && vfs_size(file) > 0) { /* keep what is already there */
+		int old = vfs_size(file);
+
+		if (old < REDIR_CAP / 2)
+			len = vfs_read(file, buf, (uint32_t)old);
+		if (len < 0)
+			len = 0;
+	}
+	console_capture_begin(buf + len, (unsigned)(REDIR_CAP - len));
+	rc = exec_plain(copy);
+	len += console_capture_end();
+	got = vfs_write(file, buf, (uint32_t)len);
+	kfree(buf);
+	if (got) {
+		fs_fail(file, got);
+		return 1;
+	}
+	return rc;
+}
+
+static int exec_plain(const char *line)
 {
 	char copy[LINE_MAX];
 	char *argv[ARGV_MAX];

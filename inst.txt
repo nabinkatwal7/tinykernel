@@ -1,4 +1,3 @@
-Add output redirection operators,
 Add input redirection operator,
 Add background jobs with ampersand,
 Add job control commands,
