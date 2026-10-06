@@ -1,4 +1,3 @@
-Learn VGA graphics modes,
 Switch to graphics mode 13h,
 Draw pixels and lines,
 Draw rectangles and filled shapes,
