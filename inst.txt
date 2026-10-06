@@ -1,4 +1,3 @@
-Learn ext2 layout,
 Add ext2 read support,
 Add DMA for ATA transfers,
 Learn AHCI basics,

@@ -137,11 +137,19 @@ $(BUILD):
 $(BUILD)/mkfat12.exe: tools/mkfat12.c | $(BUILD)
 	gcc -O1 -o $@ $<
 
-$(FATIMG): $(BUILD)/mkfat12.exe $(wildcard fatroot/* fatroot/*/*) $(FAT_BINS)
+# An ext2 test image (a partition table, then ext2) built from ext2root/; it rides on the FAT disk as EXT2.IMG.
+$(BUILD)/mkext2.exe: tools/mkext2.c | $(BUILD)
+	gcc -O1 -o $@ $<
+
+$(BUILD)/ext2.img: $(BUILD)/mkext2.exe $(wildcard ext2root/* ext2root/*/*)
+	$(BUILD)/mkext2.exe $@ ext2root mbr
+
+$(FATIMG): $(BUILD)/mkfat12.exe $(wildcard fatroot/* fatroot/*/*) $(FAT_BINS) $(BUILD)/ext2.img
 	rm -rf $(BUILD)/fatroot
 	mkdir -p $(BUILD)/fatroot/bin
 	cp -r fatroot/. $(BUILD)/fatroot/
 	for p in $(FAT_PROGS); do cp $(BUILD)/c_$$p.elf $(BUILD)/fatroot/bin/$$p; done
+	cp $(BUILD)/ext2.img $(BUILD)/fatroot/EXT2.IMG
 	$(BUILD)/mkfat12.exe $@ $(BUILD)/fatroot
 
 # A FAT16 test volume (10 MB, 4-sector clusters, a 100 KB file spanning many clusters); try it by passing FATIMG=build/fat16.img

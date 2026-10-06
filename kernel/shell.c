@@ -14,6 +14,7 @@
 #include "crashdump.h"
 #include "cred.h"
 #include "debug.h"
+#include "ext2.h"
 #include "blk.h"
 #include "sha256.h"
 #include "users.h"
@@ -4103,6 +4104,7 @@ static const struct command commands[] = {
 	{ "ramdisk", "ramdisk create|destroy|test", "RAM disk block devices", cmd_ramdisk },
 	{ "losetup", "losetup NAME FILE", "present a file as a block device", cmd_losetup },
 	{ "fdisk", "fdisk DEVICE", "show and register MBR partitions", cmd_fdisk },
+	{ "ext2info", "ext2info DEVICE", "describe an ext2 volume", cmd_ext2info },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
