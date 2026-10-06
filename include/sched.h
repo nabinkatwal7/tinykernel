@@ -25,6 +25,11 @@ typedef struct task {
 	uint32_t esp0;         /* kernel stack the CPU switches to on ring3 -> ring0 */
 	uint32_t guard;        /* physical/virtual address of the unmapped stack guard page */
 	uint32_t ubrk, ubrk_min; /* user program break (heap) */
+	struct mmap_rec {      /* memory-mapped files of this process */
+		uint32_t addr, pages, file_size;
+		int shared;
+		char path[40];
+	} maps[4];
 	int is_uproc;          /* a forked user process: it exits through the scheduler, not enter_user() */
 	uint32_t heap_bytes;   /* live kmalloc bytes owned by this task */
 	uint32_t pgdir;        /* physical address of this task's page directory */

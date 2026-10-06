@@ -33,6 +33,9 @@
 #define SYS_SHMGET  28 /* ebx = key, ecx = size: segment id or -1 */
 #define SYS_SHMAT   29 /* ebx = id: address or 0 */
 #define SYS_SHMDT   30 /* ebx = address */
+#define SYS_MMAP    31 /* ebx = path, ecx = length (0 = whole file), edx = flags (1 = shared); returns an address or 0 */
+#define SYS_MUNMAP  32 /* ebx = address */
+#define SYS_MSYNC   33 /* ebx = address */
 #define SYS_FWRITE  10 /* ebx = fd, ecx = buffer, edx = count; fd 1 and 2 are the console */
 
 void syscall_dispatch(struct regs *r);

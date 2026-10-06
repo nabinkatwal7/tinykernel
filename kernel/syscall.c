@@ -6,6 +6,7 @@
 #include "keyboard.h"
 #include "klog.h"
 #include "sched.h"
+#include "mmapf.h"
 #include "shell.h"
 #include "shm.h"
 #include "timer.h"
@@ -198,6 +199,15 @@ void syscall_dispatch(struct regs *r)
 		break;
 	case SYS_SHMDT:
 		r->eax = (uint32_t)shm_detach(r->ebx);
+		break;
+	case SYS_MMAP:
+		r->eax = user_str_ok(r->ebx) ? mmap_file((const char *)r->ebx, r->ecx, (int)r->edx) : 0;
+		break;
+	case SYS_MUNMAP:
+		r->eax = (uint32_t)mmap_unmap(r->ebx);
+		break;
+	case SYS_MSYNC:
+		r->eax = (uint32_t)mmap_sync(r->ebx);
 		break;
 	case SYS_SBRK:
 		r->eax = user_sbrk((int32_t)r->ebx);

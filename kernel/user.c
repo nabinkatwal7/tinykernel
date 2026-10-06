@@ -481,6 +481,7 @@ extern void jump_to_regs(struct regs *r) __attribute__((noreturn)); /* switch.S:
 struct fork_start {
 	struct regs regs;
 	uint32_t dir, brk, brk_min;
+	struct mmap_rec maps[4];   /* the parent's mappings carry over (the pages are copy-on-write) */
 };
 
 /* First code of a forked process: adopt the copied address space and "return from the fork syscall". */
@@ -494,6 +495,7 @@ static void fork_child_main(void *arg)
 	t->ubrk = fs->brk;
 	t->ubrk_min = fs->brk_min;
 	t->is_uproc = 1;
+	memcpy(t->maps, fs->maps, sizeof t->maps);
 	paging_switch(fs->dir);
 	kfree(fs);
 	jump_to_regs(&regs); /* eax is already 0: this is the child */
@@ -521,6 +523,7 @@ int user_fork(struct regs *r)
 	fs->dir = dir;
 	fs->brk = me->ubrk;
 	fs->brk_min = me->ubrk_min;
+	memcpy(fs->maps, me->maps, sizeof fs->maps);
 	child = task_spawn("uproc", fork_child_main, fs, me->priority, TASKF_WAITABLE);
 	if (!child) {
 		paging_destroy_user(dir);

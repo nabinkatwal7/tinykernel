@@ -13,6 +13,9 @@
 #define SYS_CLOSE    8
 #define SYS_READ     9
 #define SYS_FWRITE  10
+#define SYS_MMAP    31
+#define SYS_MUNMAP  32
+#define SYS_MSYNC   33
 #define SYS_SHMGET  28
 #define SYS_SHMAT   29
 #define SYS_SHMDT   30
@@ -91,6 +94,12 @@ static inline int  waitpid(int pid, int *status)   { return syscall3(SYS_WAITPID
 static inline int   shmget(int key, unsigned size) { return syscall3(SYS_SHMGET, key, (int)size, 0); }
 static inline void *shmat(int id)                  { return (void *)syscall3(SYS_SHMAT, id, 0, 0); }
 static inline int   shmdt(void *addr)              { return syscall3(SYS_SHMDT, (int)addr, 0, 0); }
+#define MAP_PRIVATE 0
+#define MAP_SHARED  1
+/* Map a file (length 0 = all of it). Shared mappings are written back by msync/munmap. 0 on failure. */
+static inline void *mmap(const char *path, unsigned length, int flags) { return (void *)syscall3(SYS_MMAP, (int)path, (int)length, flags); }
+static inline int   munmap(void *addr)             { return syscall3(SYS_MUNMAP, (int)addr, 0, 0); }
+static inline int   msync(void *addr)              { return syscall3(SYS_MSYNC, (int)addr, 0, 0); }
 static inline int  getpid(void)                    { return syscall3(SYS_GETPID, 0, 0, 0); }
 static inline int  getppid(void)                   { return syscall3(SYS_GETPPID, 0, 0, 0); }
 static inline void sleep_ms(int ms)                 { syscall3(SYS_SLEEP, ms, 0, 0); }
