@@ -50,6 +50,7 @@ void     sched_init(void);   /* adopts the running code as task 0 and creates th
 task_t  *task_create(const char *name, void (*entry)(void *), void *arg, uint32_t priority);
 void     task_exit(void) __attribute__((noreturn));
 void     task_yield(void);
+int      task_fork(void);          /* experimental: child gets 0, parent gets the child id, -1 on error */
 void     task_sleep(uint32_t ms);
 int      task_kill(uint32_t id);  /* 0 on success */
 int      task_set_priority(uint32_t id, uint32_t prio); /* 0 on success */
@@ -70,5 +71,6 @@ const char *sched_guard_owner(uint32_t addr); /* task whose guard page contains 
 
 /* switch.S */
 void switch_context(uint32_t *old_esp, uint32_t new_esp);
+int  fork_snapshot(uint32_t *child_esp, uint32_t child_top, uint32_t parent_top);
 
 #endif

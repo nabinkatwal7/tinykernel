@@ -752,6 +752,39 @@ static int cmd_pstree(int argc, char **argv)
 	return 0;
 }
 
+static void fork_demo(void *arg)
+{
+	int local = 41; /* lives on the stack, so the child gets its own copy */
+	int pid;
+
+	(void)arg;
+	pid = task_fork();
+	if (pid < 0) {
+		console_write("fork failed\n");
+		return;
+	}
+	if (pid == 0) {
+		local += 100;
+		console_printf("[child  %u] forked, local=%d (parent unaffected)\n", task_current()->id,
+			       local);
+		task_sleep(200);
+		console_printf("[child  %u] done, local=%d\n", task_current()->id, local);
+		return;
+	}
+	local += 1;
+	console_printf("[parent %u] forked child %d, local=%d\n", task_current()->id, pid, local);
+	task_sleep(500);
+	console_printf("[parent %u] done, local=%d\n", task_current()->id, local);
+}
+
+static int cmd_forktest(int argc, char **argv)
+{
+	(void)argc;
+	(void)argv;
+	task_create("forker", fork_demo, 0, PRIO_DEFAULT);
+	return 0;
+}
+
 static int cmd_nice(int argc, char **argv)
 {
 	uint32_t id, prio;
@@ -1255,6 +1288,7 @@ static const struct command commands[] = {
 	{ "spintest", "spintest",             "spinlock IRQ-safety self-test", cmd_spintest },
 	{ "prodcons", "prodcons",             "producer/consumer demo", cmd_prodcons },
 	{ "pstree",  "pstree [demo]",         "task tree by parent", cmd_pstree },
+	{ "forktest", "forktest",             "fork-style task cloning", cmd_forktest },
 	{ "nice",    "nice <id> <prio>",      "set a task priority", cmd_nice },
 	{ "priotest", "priotest",             "priority + aging scheduler test", cmd_priotest },
 	{ "kill",  "kill <id>",             "stop a task", cmd_kill },

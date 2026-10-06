@@ -95,11 +95,10 @@ void sched_init(void)
 	klog(LOG_INFO, "sched: round-robin, %u tick quantum, %u Hz", BASE_SLICE, timer_hz());
 }
 
-task_t *task_create(const char *name, void (*entry)(void *), void *arg, uint32_t priority)
+/* Allocate a TCB plus a guarded stack; the caller fills in the initial frame and links it. */
+static task_t *task_alloc(const char *name, uint32_t priority)
 {
 	task_t *t = slab_alloc(&task_cache);
-	uint32_t *sp;
-	uint32_t flags;
 
 	if (!t)
 		return 0;
@@ -111,6 +110,31 @@ task_t *task_create(const char *name, void (*entry)(void *), void *arg, uint32_t
 		return 0;
 	}
 	paging_unmap(paging_kernel_dir(), t->guard);
+	kstrlcpy(t->name, name, sizeof t->name);
+	t->esp0 = (uint32_t)t->stack + TASK_STACK_SIZE;
+	t->ppid = current ? current->id : 0;
+	t->pgdir = paging_kernel_dir();
+	t->priority = priority < PRIO_MIN ? PRIO_MIN : priority > PRIO_MAX ? PRIO_MAX : priority;
+	return t;
+}
+
+static void task_publish(task_t *t)
+{
+	uint32_t flags = irq_save();
+
+	t->id = next_id++;
+	t->state = TASK_READY;
+	list_append(t);
+	irq_restore(flags);
+}
+
+task_t *task_create(const char *name, void (*entry)(void *), void *arg, uint32_t priority)
+{
+	task_t *t = task_alloc(name, priority);
+	uint32_t *sp;
+
+	if (!t)
+		return 0;
 	sp = (uint32_t *)((uint8_t *)t->stack + TASK_STACK_SIZE);
 	*--sp = 0;                          /* fake return address for task_trampoline */
 	*--sp = (uint32_t)task_trampoline;  /* popped by the ret in switch_context */
@@ -118,22 +142,52 @@ task_t *task_create(const char *name, void (*entry)(void *), void *arg, uint32_t
 	*--sp = 0;                          /* ebx */
 	*--sp = 0;                          /* esi */
 	*--sp = 0;                          /* edi */
-
-	kstrlcpy(t->name, name, sizeof t->name);
 	t->esp = (uint32_t)sp;
-	t->esp0 = (uint32_t)t->stack + TASK_STACK_SIZE;
-	t->ppid = current ? current->id : 0;
-	t->pgdir = paging_kernel_dir();
 	t->entry = entry;
 	t->arg = arg;
-	t->priority = priority < PRIO_MIN ? PRIO_MIN : priority > PRIO_MAX ? PRIO_MAX : priority;
-	t->state = TASK_READY;
-
-	flags = irq_save();
-	t->id = next_id++;
-	list_append(t);
-	irq_restore(flags);
+	task_publish(t);
 	return t;
+}
+
+/*
+ * Fork experiment: duplicate the calling task's kernel stack so the child resumes right after
+ * this call with return value 0 (the parent gets the child's id). The copy is only correct
+ * if pointers into the old stack are fixed up, which we do conservatively: any word in the
+ * copy that falls inside the parent's stack range is shifted into the child's stack. That
+ * covers saved frame pointers and addresses of locals but can mis-relocate an integer that
+ * happens to look like a stack address.
+ */
+int task_fork(void)
+{
+	uint32_t f = irq_save();
+	task_t *p = current, *c;
+	uint32_t ptop, ctop, delta, *w;
+
+	if (!p->stack) { /* the boot task's stack has no safe bottom to return to */
+		irq_restore(f);
+		return -1;
+	}
+	c = task_alloc(p->name, p->priority);
+	if (!c) {
+		irq_restore(f);
+		return -1;
+	}
+	ptop = (uint32_t)p->stack + TASK_STACK_SIZE;
+	ctop = (uint32_t)c->stack + TASK_STACK_SIZE;
+
+	if (fork_snapshot(&c->esp, ctop, ptop)) {
+		delta = ctop - ptop;
+		for (w = (uint32_t *)c->esp; w < (uint32_t *)ctop; w++)
+			if (*w >= (uint32_t)p->stack && *w <= ptop)
+				*w += delta;
+		c->entry = p->entry;
+		c->arg = p->arg;
+		task_publish(c);
+		irq_restore(f);
+		return (int)c->id;
+	}
+	irq_restore(f); /* child: 'f' is the copy of the parent's saved flags */
+	return 0;
 }
 
 static int runnable(task_t *t)

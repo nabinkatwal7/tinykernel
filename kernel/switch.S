@@ -60,3 +60,43 @@ _user_return:
 .globl _user_saved_esp
 _user_saved_esp:
 	.long 0
+
+/* int fork_snapshot(uint32_t *child_esp, uint32_t child_top, uint32_t parent_top)
+   Copies the live part of the caller's stack (saved registers included) to the top of the child
+   stack, planting a stub below the return address so the child "returns" 0 from this call.
+   The parent gets 1. The child frame matches what switch_context expects to pop. */
+.globl _fork_snapshot
+_fork_snapshot:
+	pushl %ebp
+	pushl %ebx
+	pushl %esi
+	pushl %edi
+	movl 20(%esp), %eax        /* child_esp out */
+	movl 24(%esp), %edx        /* child_top */
+	movl 28(%esp), %ecx        /* parent_top */
+	movl %ecx, %ebx
+	subl %esp, %ebx            /* ebx = bytes in use: regs + return address + everything above */
+	movl %edx, %edi
+	subl %ebx, %edi
+	subl $4, %edi              /* room for the stub address */
+	movl %edi, (%eax)
+	movl %esp, %esi
+	movl $4, %ecx
+	cld
+	rep movsl                  /* the four saved registers */
+	movl $fork_child_stub, (%edi)
+	addl $4, %edi
+	movl %ebx, %ecx
+	subl $16, %ecx
+	shrl $2, %ecx
+	rep movsl                  /* return address and the rest of the stack */
+	popl %edi
+	popl %esi
+	popl %ebx
+	popl %ebp
+	movl $1, %eax
+	ret
+
+fork_child_stub:
+	xorl %eax, %eax
+	ret
