@@ -4125,6 +4125,7 @@ static const struct command commands[] = {
 	{ "txtest", "txtest", "transmit queue test", cmd_txtest },
 	{ "nslookup", "nslookup NAME [SERVER]", "look up a host name", cmd_nslookup },
 	{ "tcpserve", "tcpserve PORT [N]", "TCP echo server (for testing)", cmd_tcpserve },
+	{ "tcpstat", "tcpstat [drop O I]", "TCP counters, timers, loss simulation", cmd_tcpstat },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
