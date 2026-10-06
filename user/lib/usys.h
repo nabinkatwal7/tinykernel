@@ -35,7 +35,8 @@ void exit(int code) __attribute__((noreturn));
 /* write(fd, buf, n): fd 1 and 2 print on the console, others are files from open() */
 static inline int  write(int fd, const void *buf, int len) { return syscall3(SYS_FWRITE, fd, (int)buf, len); }
 static inline int  read(int fd, void *buf, int len)        { return syscall3(SYS_READ, fd, (int)buf, len); }
-static inline int  putchar(int c)                   { return syscall3(SYS_PUTCHAR, c, 0, 0); }
+/* Goes through descriptor 1, so redirections apply (SYS_PUTCHAR bypasses the fd table). */
+static inline int  putchar(int c)                   { char ch = (char)c; return write(1, &ch, 1); }
 static inline int  ticks(void)                      { return syscall3(SYS_TICKS, 0, 0, 0); }
 static inline int  getkey(void)                     { return syscall3(SYS_GETKEY, 0, 0, 0); }
 /* open() flags and error codes match the kernel's file.h / fs.h */

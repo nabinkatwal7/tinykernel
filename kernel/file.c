@@ -245,21 +245,25 @@ static void read_console_line(void)
 	}
 }
 
+int console_stdin_read(void *buf, uint32_t n)
+{
+	uint32_t got = 0;
+
+	if (line_pos >= line_len)
+		read_console_line();
+	while (got < n && line_pos < line_len)
+		((char *)buf)[got++] = linebuf[line_pos++];
+	return (int)got;
+}
+
 int file_read(int fd, void *buf, uint32_t n)
 {
 	struct ofile *o = get(fd);
 
 	if (!o)
 		return FS_EINVAL;
-	if (o->kind == OBJ_CONSOLE_IN) {
-		uint32_t got = 0;
-
-		if (line_pos >= line_len)
-			read_console_line();
-		while (got < n && line_pos < line_len)
-			((char *)buf)[got++] = linebuf[line_pos++];
-		return (int)got;
-	}
+	if (o->kind == OBJ_CONSOLE_IN)
+		return console_stdin_read(buf, n);
 	if (o->kind == OBJ_DEV) {
 		if ((o->flags & O_WRONLY) || !o->dev->read)
 			return FS_EINVAL;

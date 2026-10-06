@@ -24,6 +24,7 @@
 int file_open(const char *path, int flags);   /* lowest free descriptor */
 int file_dup(int fd);                          /* new descriptor sharing the same open file */
 int file_dup2(int fd, int target);             /* make target refer to fd's open file (closing target) */
+int  console_stdin_read(void *buf, uint32_t n); /* cooked, line-buffered keyboard input with echo */
 void file_reset(void);                         /* fresh table: only 0, 1, 2 open */
 int file_close(int fd);
 int file_read(int fd, void *buf, uint32_t n);

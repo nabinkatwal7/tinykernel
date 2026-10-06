@@ -1,4 +1,5 @@
 #include "console.h"
+#include "file.h"
 #include "kstring.h"
 #include "timer.h"
 #include "vfs.h"
@@ -106,6 +107,29 @@ static int random_read(void *buf, uint32_t n)
 	return (int)n;
 }
 
+static int null_read(void *buf, uint32_t n)
+{
+	(void)buf;
+	(void)n;
+	return 0; /* always at end of input */
+}
+
+static int console_read(void *buf, uint32_t n)
+{
+	return console_stdin_read(buf, n);
+}
+
+static int console_write_dev(const void *buf, uint32_t n)
+{
+	uint32_t i;
+
+	for (i = 0; i < n; i++)
+		console_putchar(((const char *)buf)[i]);
+	return (int)n;
+}
+
+static const struct vfs_device dev_null = { "null", null_read, sink_write };
+static const struct vfs_device dev_console = { "console", console_read, console_write_dev };
 static const struct vfs_device dev_zero = { "zero", zero_read, sink_write };
 static const struct vfs_device dev_random = { "random", random_read, sink_write };
 
@@ -113,6 +137,8 @@ void devfs_init(void)
 {
 	memset(devices, 0, sizeof devices);
 	vfs_mount("/dev", &devfs_ops, 0);
+	devfs_register(&dev_null);
+	devfs_register(&dev_console);
 	devfs_register(&dev_zero);
 	devfs_register(&dev_random);
 }

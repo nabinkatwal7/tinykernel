@@ -40,6 +40,26 @@ int main(void)
 	check(distinct > 20, "bytes within a read vary");
 	close(fd);
 
+	fd = open("/dev/null", O_RDWR);
+	check(fd >= 3, "open /dev/null");
+	check(write(fd, "discarded", 9) == 9, "writes to /dev/null succeed");
+	check(read(fd, a, sizeof a) == 0, "reads from /dev/null hit EOF at once");
+	close(fd);
+
+	fd = open("/dev/console", O_WRONLY);
+	check(fd >= 3, "open /dev/console");
+	check(write(fd, "written through /dev/console\n", 29) == 29, "console device writes");
+	close(fd);
+
+	/* redirect stdout to /dev/null: nothing should appear */
+	fd = open("/dev/null", O_WRONLY);
+	i = dup(1);
+	dup2(fd, 1);
+	close(fd);
+	puts("THIS MUST NOT BE VISIBLE");
+	dup2(i, 1);
+	close(i);
+
 	check(open("/dev/nosuchdevice", O_RDONLY) < 0, "unknown device fails");
 	if (!fails)
 		puts("devtest: all checks passed");
