@@ -1,4 +1,3 @@
-Run script from /etc/rc at boot,
 Add 'grep' command,
 Add 'wc' command,
 Add 'head' and 'tail' commands,

@@ -4561,6 +4561,12 @@ void shell_run(void)
 	env_set("USER", "root");
 	env_set("SHELL", "tinysh");
 	env_set("TERM", "vga80x25");
+	if (is_file("/etc/rc")) { /* startup script */
+		char *rc_argv[] = { "/etc/rc", 0 };
+
+		console_write("running /etc/rc\n");
+		script_run("/etc/rc", 1, rc_argv);
+	}
 	for (;;) {
 		interrupted = 0;
 		report_jobs();
