@@ -17,6 +17,7 @@
 #include "editor.h"
 #include "env.h"
 #include "fat12.h"
+#include "file.h"
 #include "fs.h"
 #include "gfx.h"
 #include "gui.h"
@@ -1214,9 +1215,18 @@ static int cmd_mount(int argc, char **argv)
 
 static int cmd_cat(int argc, char **argv)
 {
-	char *buf;
+	char *buf, rdbuf[128];
 	int n;
 
+	if (argc < 2 && file_stdin_active()) { /* cat as a filter: copy standard input to the output */
+		while ((n = console_stdin_read(rdbuf, sizeof rdbuf)) > 0) {
+			int i;
+
+			for (i = 0; i < n; i++)
+				console_putchar(rdbuf[i]);
+		}
+		return 0;
+	}
 	if (argc < 2) {
 		console_write("usage: cat <file>\n");
 		return 1;
@@ -3445,7 +3455,66 @@ static const struct command commands[] = {
 
 /* ---------------- dispatch ---------------- */
 
+/* The first '|' outside quotes (and not escaped, and not part of '||'), or NULL. */
+static char *find_pipe(char *s)
+{
+	char quote = 0;
+
+	for (; *s; s++) {
+		if (quote) {
+			if (*s == quote)
+				quote = 0;
+		} else if (*s == '"' || *s == '\'') {
+			quote = *s;
+		} else if (*s == '\\' && s[1]) {
+			s++;
+		} else if (*s == '|') {
+			if (s[1] == '|') {
+				s++;
+				continue;
+			}
+			return s;
+		}
+	}
+	return 0;
+}
+
+#define PIPELINE_CAP 16384
+
+static int exec_command(const char *line);
+
+/*
+ * "a | b": a runs to completion with its console output captured; b then runs with that text as its
+ * standard input. Stages are strictly sequential (like a pipe that always has room), which is all
+ * a single-console system needs. The result is b's status.
+ */
 int shell_exec(const char *line)
+{
+	char copy[LINE_MAX];
+	char *bar, *data;
+	int rc, len;
+
+	kstrlcpy(copy, line, sizeof copy);
+	bar = find_pipe(copy);
+	if (!bar)
+		return exec_command(line);
+	*bar = '\0';
+	data = kmalloc(PIPELINE_CAP);
+	if (!data) {
+		console_write("pipe: out of memory\n");
+		return 1;
+	}
+	console_capture_begin(data, PIPELINE_CAP);
+	exec_command(copy);
+	len = console_capture_end();
+	file_stdin_set(data, (uint32_t)len);
+	rc = shell_exec(bar + 1);
+	file_stdin_clear();
+	kfree(data);
+	return rc;
+}
+
+static int exec_command(const char *line)
 {
 	char copy[LINE_MAX];
 	char *argv[ARGV_MAX];

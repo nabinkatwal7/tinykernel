@@ -105,11 +105,19 @@ void console_clear(void)
 
 static char *cap_buf;
 static unsigned cap_size, cap_len;
+static struct { char *buf; unsigned size, len; } cap_stack[4]; /* captures nest: a pipeline inside a captured self-test */
+static int cap_depth;
 
 void console_capture_begin(char *buf, unsigned cap)
 {
 	uint32_t f = irq_save();
 
+	if (cap_buf && cap_depth < 4) {
+		cap_stack[cap_depth].buf = cap_buf;
+		cap_stack[cap_depth].size = cap_size;
+		cap_stack[cap_depth].len = cap_len;
+		cap_depth++;
+	}
 	cap_buf = buf;
 	cap_size = cap;
 	cap_len = 0;
@@ -124,6 +132,12 @@ int console_capture_end(void)
 	int n = (int)cap_len;
 
 	cap_buf = 0;
+	if (cap_depth > 0) { /* resume the enclosing capture */
+		cap_depth--;
+		cap_buf = cap_stack[cap_depth].buf;
+		cap_size = cap_stack[cap_depth].size;
+		cap_len = cap_stack[cap_depth].len;
+	}
 	irq_restore(f);
 	return n;
 }

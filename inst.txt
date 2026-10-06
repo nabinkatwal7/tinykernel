@@ -1,4 +1,3 @@
-Add shell pipelines,
 Add output redirection operators,
 Add input redirection operator,
 Add background jobs with ampersand,

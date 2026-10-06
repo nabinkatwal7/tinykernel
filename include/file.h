@@ -30,6 +30,10 @@ int file_seek(int fd, int32_t off, int whence); /* new position or a negative er
 int file_pipe(int fds[2]);                     /* a pipe: fds[0] reads what is written to fds[1]; 0 or FS_E* */
 int file_dup(int fd);                          /* new descriptor sharing the same open file */
 int file_dup2(int fd, int target);             /* make target refer to fd's open file (closing target) */
+/* While set, descriptor 0 reads from this memory (end of file at its end) instead of the keyboard: pipelines and "<". */
+void file_stdin_set(const char *data, uint32_t len);
+void file_stdin_clear(void);
+int  file_stdin_active(void);
 int  console_stdin_read(void *buf, uint32_t n); /* cooked, line-buffered keyboard input with echo */
 void file_reset(void);                         /* fresh table: only 0, 1, 2 open */
 int file_close(int fd);

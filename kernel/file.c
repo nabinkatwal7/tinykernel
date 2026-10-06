@@ -312,9 +312,37 @@ static void read_console_line(void)
 	}
 }
 
+static const char *in_data;
+static uint32_t in_len, in_pos;
+
+void file_stdin_set(const char *data, uint32_t len)
+{
+	in_data = data;
+	in_len = len;
+	in_pos = 0;
+}
+
+void file_stdin_clear(void)
+{
+	in_data = 0;
+}
+
+int file_stdin_active(void)
+{
+	return in_data != 0;
+}
+
 int console_stdin_read(void *buf, uint32_t n)
 {
 	uint32_t got = 0;
+
+	if (in_data) {
+		if (n > in_len - in_pos)
+			n = in_len - in_pos;
+		memcpy(buf, in_data + in_pos, n);
+		in_pos += n;
+		return (int)n;
+	}
 
 	if (line_pos >= line_len)
 		read_console_line();
