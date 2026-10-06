@@ -7,6 +7,7 @@
 #include "klog.h"
 #include "kmalloc.h"
 #include "kstring.h"
+#include "paging.h"
 #include "pmm.h"
 #include "sched.h"
 
@@ -57,9 +58,8 @@ int user_install_builtin(const char *name)
 }
 
 /* Copy a program image to USER_BASE. Looks on disk first, then in the built-in table. */
-static int load_image(const char *name, uint32_t *size)
+static int load_image(const char *name, uint8_t *dst, uint32_t *size)
 {
-	uint8_t *dst = (uint8_t *)USER_BASE;
 	unsigned i;
 	int n;
 
@@ -90,7 +90,7 @@ static int load_image(const char *name, uint32_t *size)
 
 int user_run(const char *name)
 {
-	uint32_t size, esp0, saved_esp0;
+	uint32_t size, esp0, saved_esp0, frames = 0, udir = 0, saved_dir, i;
 	volatile int marker;
 	task_t *t = task_current();
 	int rc;
@@ -99,14 +99,20 @@ int user_run(const char *name)
 		console_write("a user program is already running\n");
 		return -1;
 	}
-	if (pmm_reserve(USER_BASE, USER_PAGES)) {
-		console_write("cannot reserve user memory (is there 9 MiB of RAM?)\n");
-		return -1;
+	/* Private frames + a private address space: nothing else can see or touch them. */
+	frames = pmm_alloc_contig(USER_PAGES);
+	udir = paging_new_dir();
+	if (!frames || !udir) {
+		console_write("out of memory\n");
+		goto fail;
 	}
-	if (load_image(name, &size)) {
-		pmm_free_range(USER_BASE, USER_PAGES);
+	for (i = 0; i < USER_PAGES; i++)
+		if (paging_map(udir, USER_BASE + i * PAGE_SIZE, frames + i * PAGE_SIZE,
+			       PTE_RW | PTE_US))
+			goto fail;
+	if (load_image(name, (uint8_t *)frames, &size)) { /* kernel writes via the identity map */
 		console_printf("no such program: %s\n", name);
-		return -1;
+		goto fail;
 	}
 
 	klog(LOG_INFO, "user: running '%s' (%u bytes) at %x", name, size, USER_BASE);
@@ -117,15 +123,28 @@ int user_run(const char *name)
 	t->esp0 = esp0;
 	gdt_set_kernel_stack(esp0);
 
+	saved_dir = t->pgdir;
+	t->pgdir = udir;
+	paging_switch(udir);
 	active = 1;
 	rc = enter_user(USER_BASE, USER_END - 16);
 	active = 0;
+	t->pgdir = saved_dir;
+	paging_switch(saved_dir);
 
 	t->esp0 = saved_esp0;
 	gdt_set_kernel_stack(saved_esp0);
-	pmm_free_range(USER_BASE, USER_PAGES);
+	paging_free_dir(udir);
+	pmm_free_range(frames, USER_PAGES);
 	klog(LOG_INFO, "user: '%s' exited with code %d", name, rc);
 	return rc;
+
+fail:
+	if (udir)
+		paging_free_dir(udir);
+	if (frames)
+		pmm_free_range(frames, USER_PAGES);
+	return -1;
 }
 
 void user_exit(int code)

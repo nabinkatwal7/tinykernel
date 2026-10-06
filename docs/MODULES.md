@@ -34,7 +34,7 @@ Everything lives in `kernel/` (code) and `include/` (one header per module).
 | `0x00090000` | kernel boot stack (task 0 / shell) |
 | `0x00100000` | kernel image (physical), then `.bss`, then the heap arena |
 | `0xC0000000` | higher half: the kernel is linked at `0xC0100000`; low RAM is also mapped here (alias of `0x00000000`) |
-| `0x00800000` | user program (128 KiB: image at the bottom, stack at the top) |
+| `0x00800000` | user program window (128 KiB: image at the bottom, stack at the top), backed by private frames in a per-program address space |
 
 ## Syscalls (`int 0x80`, eax = number)
 

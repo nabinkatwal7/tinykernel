@@ -43,8 +43,6 @@ void paging_init(void)
 			uint32_t page = addr + i * PAGE_SIZE;
 			uint32_t flags = PTE_P | PTE_RW;
 
-			if (page >= USER_BASE && page < USER_END)
-				flags |= PTE_US; /* the user program window */
 			t[i] = page | flags;
 		}
 		kdir[addr >> 22] = (uint32_t)t | PTE_P | PTE_RW | PTE_US;
