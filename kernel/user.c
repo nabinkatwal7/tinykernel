@@ -24,10 +24,13 @@ static int active;
 static volatile int abort_requested;
 
 /* Move the break by delta bytes; returns the old break or (uint32_t)-1. */
+static void save_window(uint8_t *buf);
+static void restore_window(const uint8_t *buf);
+
 uint32_t user_sbrk(int32_t delta)
 {
 	task_t *t = task_current();
-	uint32_t old = t->ubrk, top = USER_END - STACK_RESERVE;
+	uint32_t old = t->ubrk, top = USER_BASE + IMAGE_PAGES * PAGE_SIZE;
 
 	if (delta < 0 ? old - t->ubrk_min < (uint32_t)-delta : delta > 0 && top - old < (uint32_t)delta)
 		return (uint32_t)-1;
@@ -82,7 +85,7 @@ static int load_image(const char *name, uint8_t *dst, uint32_t *size, uint32_t *
 {
 	const uint8_t *img = 0;
 	uint8_t *heap_copy = 0;
-	uint32_t len = 0, limit = USER_PAGES * PAGE_SIZE - STACK_RESERVE;
+	uint32_t len = 0, limit = IMAGE_PAGES * PAGE_SIZE;
 	unsigned i;
 	int n, rc = 0;
 
@@ -108,7 +111,7 @@ static int load_image(const char *name, uint8_t *dst, uint32_t *size, uint32_t *
 	if (!img)
 		return -1;
 
-	memset(dst, 0, USER_PAGES * PAGE_SIZE); /* only now: a failed lookup must not wipe the caller */
+	memset(dst, 0, IMAGE_PAGES * PAGE_SIZE); /* only now: a failed lookup must not wipe the caller */
 	if (elf_is_elf(img, len)) {
 		rc = elf_load(img, len, dst, USER_BASE, limit, entry, image_end);
 		if (rc)
@@ -248,14 +251,14 @@ int user_spawn(const char *path, char *const *user_argv)
 	int rc;
 
 	stage_args(path, user_argv);
-	backup = kmalloc(USER_PAGES * PAGE_SIZE);
+	backup = kmalloc((IMAGE_PAGES + STACK_PAGES) * PAGE_SIZE);
 	if (!backup)
 		return -1;
-	memcpy(backup, (void *)USER_BASE, USER_PAGES * PAGE_SIZE);
+	save_window(backup);
 
 	rc = load_image(stage_path, (uint8_t *)USER_BASE, &size, &entry, &image_end);
 	if (rc) {
-		memcpy((void *)USER_BASE, backup, USER_PAGES * PAGE_SIZE);
+		restore_window(backup);
 		kfree(backup);
 		return rc == -1 ? -1 : -2;
 	}
@@ -269,7 +272,7 @@ int user_spawn(const char *path, char *const *user_argv)
 	task_current()->esp0 = saved_esp0;
 	gdt_set_kernel_stack(saved_esp0);
 	user_saved_esp = saved_esp;
-	memcpy((void *)USER_BASE, backup, USER_PAGES * PAGE_SIZE);
+	restore_window(backup);
 	kfree(backup);
 	task_current()->ubrk = saved_brk;
 	task_current()->ubrk_min = saved_brk_min;
@@ -297,16 +300,20 @@ int user_run_args(const char *name, int argc, char **argv)
 		return -1;
 	}
 	/* Private frames + a private address space: nothing else can see or touch them. */
-	frames = pmm_alloc_contig(USER_PAGES);
+	frames = pmm_alloc_contig(IMAGE_PAGES); /* the stack pages are allocated when first touched */
 	udir = paging_new_dir();
 	if (!frames || !udir) {
 		console_write("out of memory\n");
 		goto fail;
 	}
-	for (i = 0; i < USER_PAGES; i++)
+	for (i = 0; i < IMAGE_PAGES; i++)
 		if (paging_map(udir, USER_BASE + i * PAGE_SIZE, frames + i * PAGE_SIZE,
 			       PTE_RW | PTE_US))
 			goto fail;
+	/* the cloned table still holds the kernel's identity entries for these addresses: remove them so
+	   the guard and stack pages really are "not present" (stack pages appear on first touch) */
+	for (i = IMAGE_PAGES; i < USER_PAGES; i++)
+		paging_unmap(udir, USER_BASE + i * PAGE_SIZE);
 	saved_dir = t->pgdir;
 	t->pgdir = udir;
 	paging_switch(udir);             /* from here on the window is addressed through the user mapping */
@@ -354,7 +361,7 @@ fail:
 	if (udir)
 		paging_free_dir(udir);
 	if (frames)
-		pmm_free_range(frames, USER_PAGES);
+		pmm_free_range(frames, IMAGE_PAGES);
 	return -1;
 }
 
@@ -370,6 +377,44 @@ void user_abort(void)
 	if (task_current()->is_uproc)
 		user_proc_exit(-1);
 	user_return(-1);
+}
+
+/*
+ * Demand paging for the stack: the pages at the top of the window are not mapped until the program
+ * (or the kernel on its behalf) first touches them. Anything else unmapped - including the guard page
+ * under the stack - is a real fault.
+ */
+int user_demand_fault(uint32_t addr)
+{
+	task_t *t = task_current();
+	uint32_t page = addr & ~(PAGE_SIZE - 1), frame;
+
+	if (!active && !t->is_uproc)
+		return 0;
+	if (page < USER_END - STACK_RESERVE || page >= USER_END)
+		return 0;
+	frame = pmm_alloc();
+	if (!frame)
+		return 0;
+	memset((void *)frame, 0, PAGE_SIZE);               /* new memory is always zeroed */
+	if (paging_map(0, page, frame, PTE_RW | PTE_US)) {
+		pmm_free(frame);
+		return 0;
+	}
+	return 1;
+}
+
+/* The window is [image+heap][guard][stack]: the guard page is not mapped, so copy the two parts. */
+static void save_window(uint8_t *buf)
+{
+	memcpy(buf, (void *)USER_BASE, IMAGE_PAGES * PAGE_SIZE);
+	memcpy(buf + IMAGE_PAGES * PAGE_SIZE, (void *)(USER_END - STACK_RESERVE), STACK_RESERVE);
+}
+
+static void restore_window(const uint8_t *buf)
+{
+	memcpy((void *)USER_BASE, buf, IMAGE_PAGES * PAGE_SIZE);
+	memcpy((void *)(USER_END - STACK_RESERVE), buf + IMAGE_PAGES * PAGE_SIZE, STACK_RESERVE);
 }
 
 /* ---- fork ---- */

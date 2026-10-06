@@ -73,7 +73,9 @@ void paging_fault(struct regs *r)
 
 	__asm__ volatile ("movl %%cr2, %0" : "=r"(cr2));
 	if (paging_cow_fault(cr2, r->err_code))
-		return; /* a write to a shared page: it now has its own copy and the instruction retries */
+		return;
+	if (!(r->err_code & 1) && user_demand_fault(cr2))
+		return; /* a not-present stack page was just created; the instruction retries */ /* a write to a shared page: it now has its own copy and the instruction retries */
 	const char *kind = !(r->err_code & 1) ? "page not present"
 		: (r->err_code & 2) ? "write to read-only page" : "protection violation";
 
