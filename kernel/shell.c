@@ -14,6 +14,7 @@
 #include "crashdump.h"
 #include "cred.h"
 #include "debug.h"
+#include "netstat.h"
 #include "ntp.h"
 #include "telnetd.h"
 #include "dns.h"
@@ -4132,6 +4133,7 @@ static const struct command commands[] = {
 	{ "tcpget", "tcpget IP PORT [MS]", "receive a test pattern over TCP", cmd_tcpget },
 	{ "telnetd", "telnetd [PORT [N]]", "tiny remote shell over TCP", cmd_telnetd },
 	{ "ntpdate", "ntpdate [-q] [SERVER]", "set the clock from an NTP server", cmd_ntpdate },
+	{ "netstat", "netstat [-s|-c|-a]", "network statistics and connections", cmd_netstat },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
