@@ -11,7 +11,7 @@ CFLAGS  := -m32 -ffreestanding -fno-builtin -fno-stack-protector \
 LDFLAGS := -m i386pe -T kernel/linker.ld -nostdlib
 
 BUILD          := build
-KERNEL_SECTORS := 896
+KERNEL_SECTORS := 1100
 KERNEL_ELF     := $(BUILD)/kernel.elf
 KERNEL_BIN     := $(BUILD)/kernel.bin
 BOOT_BIN       := $(BUILD)/boot.bin

@@ -24,8 +24,15 @@ static int active;
 static volatile int abort_requested;
 
 /* Move the break by delta bytes; returns the old break or (uint32_t)-1. */
-static void save_window(uint8_t *buf);
-static void restore_window(const uint8_t *buf);
+static uint32_t save_window(uint8_t *buf);
+static void restore_window(const uint8_t *buf, uint32_t heap_len);
+static void trim_heap(uint32_t brk);
+static void ensure_image_mapped(void);
+
+static uint32_t page_up(uint32_t a)
+{
+	return (a + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+}
 
 uint32_t user_sbrk(int32_t delta)
 {
@@ -35,6 +42,10 @@ uint32_t user_sbrk(int32_t delta)
 	if (delta < 0 ? old - t->ubrk_min < (uint32_t)-delta : delta > 0 && top - old < (uint32_t)delta)
 		return (uint32_t)-1;
 	t->ubrk += (uint32_t)delta;
+	if (delta < 0)
+		trim_heap(t->ubrk);   /* give whole pages above the new break back */
+	if (delta < 0 && (t->ubrk & (PAGE_SIZE - 1)))
+		memset((void *)t->ubrk, 0, PAGE_SIZE - (t->ubrk & (PAGE_SIZE - 1)));  /* and clear the rest of the last page */
 	return old;
 }
 
@@ -111,6 +122,7 @@ static int load_image(const char *name, uint8_t *dst, uint32_t *size, uint32_t *
 	if (!img)
 		return -1;
 
+	ensure_image_mapped();                    /* the heap pages of an earlier program may be missing */
 	memset(dst, 0, IMAGE_PAGES * PAGE_SIZE); /* only now: a failed lookup must not wipe the caller */
 	if (elf_is_elf(img, len)) {
 		rc = elf_load(img, len, dst, USER_BASE, limit, entry, image_end);
@@ -125,6 +137,8 @@ static int load_image(const char *name, uint8_t *dst, uint32_t *size, uint32_t *
 	}
 	*size = len;
 	kfree(heap_copy);
+	if (!rc)
+		trim_heap(*image_end);               /* the heap starts empty: its pages appear when first touched */
 	return rc ? -2 : 0;
 }
 
@@ -247,6 +261,7 @@ int user_spawn(const char *path, char *const *user_argv)
 	uint32_t saved_esp = user_saved_esp, saved_brk = task_current()->ubrk, saved_brk_min = task_current()->ubrk_min;
 	uint32_t saved_esp0 = task_current()->esp0;
 	uint8_t *backup;
+	uint32_t heap_len;
 	volatile int marker;
 	int rc;
 
@@ -254,11 +269,11 @@ int user_spawn(const char *path, char *const *user_argv)
 	backup = kmalloc((IMAGE_PAGES + STACK_PAGES) * PAGE_SIZE);
 	if (!backup)
 		return -1;
-	save_window(backup);
+	heap_len = save_window(backup);
 
 	rc = load_image(stage_path, (uint8_t *)USER_BASE, &size, &entry, &image_end);
 	if (rc) {
-		restore_window(backup);
+		restore_window(backup, heap_len);
 		kfree(backup);
 		return rc == -1 ? -1 : -2;
 	}
@@ -272,10 +287,11 @@ int user_spawn(const char *path, char *const *user_argv)
 	task_current()->esp0 = saved_esp0;
 	gdt_set_kernel_stack(saved_esp0);
 	user_saved_esp = saved_esp;
-	restore_window(backup);
-	kfree(backup);
+	restore_window(backup, heap_len);
 	task_current()->ubrk = saved_brk;
 	task_current()->ubrk_min = saved_brk_min;
+	trim_heap(saved_brk);              /* pages the child grew into are not ours */
+	kfree(backup);
 	abort_requested = 0;
 	klog(LOG_INFO, "user: spawned '%s' exited with code %d", stage_path, rc);
 	return rc;
@@ -391,7 +407,8 @@ int user_demand_fault(uint32_t addr)
 
 	if (!active && !t->is_uproc)
 		return 0;
-	if (page < USER_END - STACK_RESERVE || page >= USER_END)
+	if (!((page >= USER_END - STACK_RESERVE && page < USER_END)                 /* the stack */
+	      || (page >= USER_BASE && page < page_up(t->ubrk))))                    /* the heap, up to the break */
 		return 0;
 	frame = pmm_alloc();
 	if (!frame)
@@ -405,16 +422,56 @@ int user_demand_fault(uint32_t addr)
 }
 
 /* The window is [image+heap][guard][stack]: the guard page is not mapped, so copy the two parts. */
-static void save_window(uint8_t *buf)
+/* Copy image + heap up to the break (the part that exists), then the stack. Returns the heap length. */
+static uint32_t save_window(uint8_t *buf)
 {
-	memcpy(buf, (void *)USER_BASE, IMAGE_PAGES * PAGE_SIZE);
+	uint32_t len = page_up(task_current()->ubrk) - USER_BASE;
+
+	memcpy(buf, (void *)USER_BASE, len);
 	memcpy(buf + IMAGE_PAGES * PAGE_SIZE, (void *)(USER_END - STACK_RESERVE), STACK_RESERVE);
+	return len;
 }
 
-static void restore_window(const uint8_t *buf)
+static void restore_window(const uint8_t *buf, uint32_t heap_len)
 {
-	memcpy((void *)USER_BASE, buf, IMAGE_PAGES * PAGE_SIZE);
+	ensure_image_mapped();
+	memcpy((void *)USER_BASE, buf, heap_len);
 	memcpy((void *)(USER_END - STACK_RESERVE), buf + IMAGE_PAGES * PAGE_SIZE, STACK_RESERVE);
+}
+
+/* Map every page of the image+heap area that is not present (zeroed). */
+static void ensure_image_mapped(void)
+{
+	uint32_t va;
+
+	for (va = USER_BASE; va < USER_BASE + IMAGE_PAGES * PAGE_SIZE; va += PAGE_SIZE) {
+		uint32_t *pte = paging_pte(0, va), frame;
+
+		if (pte && (*pte & PTE_P))
+			continue;
+		frame = pmm_alloc();
+		if (!frame)
+			break;
+		memset((void *)frame, 0, PAGE_SIZE);
+		paging_map(0, va, frame, PTE_RW | PTE_US);
+	}
+}
+
+/* Unmap and free the whole pages at and above 'brk' (up to the guard page). */
+static void trim_heap(uint32_t brk)
+{
+	uint32_t va;
+
+	for (va = page_up(brk); va < USER_BASE + IMAGE_PAGES * PAGE_SIZE; va += PAGE_SIZE) {
+		uint32_t *pte = paging_pte(0, va);
+
+		if (pte && (*pte & PTE_P)) {
+			uint32_t frame = *pte & ~0xFFFu;
+
+			paging_unmap(0, va);
+			pmm_free(frame);
+		}
+	}
 }
 
 /* ---- fork ---- */
