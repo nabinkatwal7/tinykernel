@@ -1,4 +1,3 @@
-Implement copy-on-write pages,
 Implement real fork for user programs,
 Add demand paging for user stacks,
 Add user heap growth by page fault,

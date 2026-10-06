@@ -2858,6 +2858,66 @@ static int cmd_slabtest(int argc, char **argv)
 	return fails != 0;
 }
 
+/* cowtest: fork an address space copy-on-write and watch the page get copied on the first write. */
+static int cmd_cowtest(int argc, char **argv)
+{
+	const uint32_t va = 0x40000000;
+	uint32_t kdir = paging_kernel_dir(), a, b, frame, free0, flags;
+	volatile uint32_t *p = (volatile uint32_t *)va;
+	uint32_t *pte_a, *pte_b;
+	int fails = 0;
+
+	(void)argc;
+	(void)argv;
+	free0 = pmm_free_frames();
+	a = paging_new_dir();
+	frame = pmm_alloc();
+	CHECK(a && frame, "address space and frame allocated");
+	if (!a || !frame)
+		return 1;
+	CHECK(!paging_map(a, va, frame, PTE_RW | PTE_US), "map a user page");
+	*(volatile uint32_t *)frame = 0x11111111; /* the parent's data, written through the identity map */
+
+	b = paging_fork_dir(a);
+	CHECK(b != 0, "fork the address space");
+	pte_a = paging_pte(a, va);
+	pte_b = paging_pte(b, va);
+	CHECK(pte_a && pte_b && (*pte_a & ~0xFFFu) == frame && (*pte_b & ~0xFFFu) == frame, "both spaces map the same frame");
+	CHECK(!(*pte_a & PTE_RW) && (*pte_a & PTE_COW) && !(*pte_b & PTE_RW) && (*pte_b & PTE_COW),
+	      "both mappings are read-only copy-on-write");
+	CHECK(pmm_refcount(frame) == 2, "the frame has two owners");
+
+	flags = irq_save(); /* keep the scheduler from switching CR3 while we are in the child's space */
+	paging_switch(b);
+	CHECK(*p == 0x11111111, "the child reads the parent's data");
+	*p = 0x22222222;    /* write fault -> the kernel copies the page and retries the store */
+	paging_switch(kdir);
+	irq_restore(flags);
+
+	pte_a = paging_pte(a, va);
+	pte_b = paging_pte(b, va);
+	CHECK((*pte_b & ~0xFFFu) != frame, "the child got its own frame");
+	CHECK(*(volatile uint32_t *)(*pte_b & ~0xFFFu) == 0x22222222, "the child's write landed in its copy");
+	CHECK(*(volatile uint32_t *)frame == 0x11111111, "the parent's page is untouched");
+	CHECK(pmm_refcount(frame) == 1, "the original frame is back to a single owner");
+
+	flags = irq_save();
+	paging_switch(a);
+	*p = 0x33333333;    /* the parent is now the sole owner: its write just re-enables write access */
+	paging_switch(kdir);
+	irq_restore(flags);
+	CHECK(*(volatile uint32_t *)frame == 0x33333333 && (*paging_pte(a, va) & ~0xFFFu) == frame,
+	      "the last owner writes in place, no copy");
+
+	paging_free_dir(b);
+	paging_free_dir(a);
+	pmm_free((*pte_b) & ~0xFFFu);   /* pte_b pointed into b's (now freed) table: still readable, value kept */
+	pmm_free(frame);
+	CHECK(pmm_free_frames() >= free0 - 1, "no frames leaked (page tables are not reclaimed by free_dir for shared slots)");
+	console_write(fails ? "cowtest: FAILED\n" : "cowtest: ok\n");
+	return fails != 0;
+}
+
 static int cmd_disk(int argc, char **argv)
 {
 	uint8_t sec[SECTOR_SIZE];
@@ -3119,6 +3179,7 @@ static const struct command commands[] = {
 	{ "pgtest",  "pgtest",                "self-test address spaces", cmd_pgtest },
 	{ "slabinfo", "slabinfo",             "show slab caches", cmd_slabinfo },
 	{ "slabtest", "slabtest",             "self-test the slab allocator", cmd_slabtest },
+	{ "cowtest", "cowtest",               "copy-on-write self-test", cmd_cowtest },
 	{ "disk",  "disk [lba]",            "disk info / dump a sector", cmd_disk },
 	{ "install", "install [name]",        "list/copy built-in programs to disk", cmd_install },
 	{ "run",     "run <program>",         "run a program in user mode", cmd_run },

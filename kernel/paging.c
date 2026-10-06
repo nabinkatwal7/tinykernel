@@ -4,6 +4,7 @@
 #include "debug.h"
 #include "gdt.h"
 #include "idt.h"
+#include "io.h"
 #include "klog.h"
 #include "kstring.h"
 #include "pmm.h"
@@ -56,7 +57,7 @@ void paging_init(void)
 	__asm__ volatile (
 		"movl %0, %%cr3\n\t"
 		"movl %%cr0, %%eax\n\t"
-		"orl $0x80000000, %%eax\n\t"
+		"orl $0x80010000, %%eax\n\t"   /* PG + WP: the kernel obeys read-only pages too */
 		"movl %%eax, %%cr0"
 		: : "r"(kdir) : "eax", "memory");
 	enabled = 1;
@@ -68,6 +69,11 @@ void paging_init(void)
 void paging_fault(struct regs *r)
 {
 	uint32_t addr;
+	uint32_t cr2;
+
+	__asm__ volatile ("movl %%cr2, %0" : "=r"(cr2));
+	if (paging_cow_fault(cr2, r->err_code))
+		return; /* a write to a shared page: it now has its own copy and the instruction retries */
 	const char *kind = !(r->err_code & 1) ? "page not present"
 		: (r->err_code & 2) ? "write to read-only page" : "protection violation";
 
@@ -221,4 +227,90 @@ void paging_switch(uint32_t dir)
 {
 	if (enabled && dir && dir != current_dir())
 		__asm__ volatile ("movl %0, %%cr3" : : "r"(dir) : "memory");
+}
+
+uint32_t *paging_pte(uint32_t dir, uint32_t virt)
+{
+	uint32_t *pd, *pt;
+
+	if (!dir)
+		dir = current_dir();
+	pd = (uint32_t *)dir;
+	if (!(pd[virt >> 22] & PTE_P))
+		return 0;
+	pt = (uint32_t *)(pd[virt >> 22] & ~0xFFFu);
+	return &pt[(virt >> 12) & 0x3FF];
+}
+
+/*
+ * Copy-on-write clone: kernel tables stay shared, every private table is duplicated, and each user
+ * page in it becomes read-only + PTE_COW in BOTH spaces with its frame's refcount raised.
+ */
+uint32_t paging_fork_dir(uint32_t dir)
+{
+	uint32_t *src = (uint32_t *)(dir ? dir : current_dir());
+	uint32_t *d = alloc_table();
+	uint32_t i, j;
+	uint32_t flags = irq_save();
+
+	if (!d) {
+		irq_restore(flags);
+		return 0;
+	}
+	for (i = 0; i < ENTRIES; i++) {
+		uint32_t *st, *dt;
+
+		if (!(src[i] & PTE_P) || (src[i] & ~0xFFFu) == (kdir[i] & ~0xFFFu)) {
+			d[i] = src[i];          /* absent, or a kernel table shared by everyone */
+			continue;
+		}
+		dt = alloc_table();
+		if (!dt) {
+			irq_restore(flags);
+			return 0;                 /* (the partial directory leaks: out of memory is fatal enough) */
+		}
+		st = (uint32_t *)(src[i] & ~0xFFFu);
+		for (j = 0; j < ENTRIES; j++) {
+			uint32_t e = st[j];
+
+			if ((e & PTE_P) && (e & PTE_US)) {
+				if (e & PTE_RW)
+					e = (e & ~PTE_RW) | PTE_COW;     /* writable pages become copy-on-write */
+				st[j] = e;                           /* the parent loses write access too */
+				pmm_ref(e & ~0xFFFu);
+			}
+			dt[j] = e;
+		}
+		d[i] = (uint32_t)dt | (src[i] & 0xFFFu);
+	}
+	/* the parent's TLB may still hold the writable translations */
+	if ((uint32_t)src == current_dir())
+		__asm__ volatile ("movl %%cr3, %%eax\n\tmovl %%eax, %%cr3" : : : "eax", "memory");
+	irq_restore(flags);
+	return (uint32_t)d;
+}
+
+int paging_cow_fault(uint32_t addr, uint32_t err)
+{
+	uint32_t *pte, e, frame, copy;
+
+	if (!(err & 1) || !(err & 2)) /* only "write to a present page" can be a COW fault */
+		return 0;
+	pte = paging_pte(0, addr);
+	if (!pte || !(*pte & PTE_COW))
+		return 0;
+	e = *pte;
+	frame = e & ~0xFFFu;
+	if (pmm_refcount(frame) <= 1) {          /* last owner: no copy needed, just allow writing again */
+		*pte = (e | PTE_RW) & ~PTE_COW;
+	} else {
+		copy = pmm_alloc();
+		if (!copy)
+			return 0;                    /* out of memory: the fault stays fatal */
+		memcpy((void *)copy, (void *)frame, PAGE_SIZE);
+		*pte = copy | ((e | PTE_RW) & 0xFFFu & ~PTE_COW);
+		pmm_free(frame);                     /* drop our reference to the shared original */
+	}
+	flush_page(addr);
+	return 1;
 }

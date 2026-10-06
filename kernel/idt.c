@@ -102,8 +102,10 @@ static void exception(struct regs *r)
 {
 	const char *name = exc_names[r->int_no];
 
-	if (r->int_no == 14)
-		paging_fault(r);
+	if (r->int_no == 14) {
+		paging_fault(r); /* returns only when it resolved the fault (copy-on-write) */
+		return;
+	}
 
 	if (r->cs & 3) { /* fault in a user program: kill it, keep the kernel alive */
 		console_printf("\n[user fault] %s at eip=%08x (err=%x)\n", name, r->eip, r->err_code);
