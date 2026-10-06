@@ -56,7 +56,7 @@ void pmm_init(void)
 {
 	struct e820_entry *e = (struct e820_entry *)(E820_BASE + 8);
 	uint32_t n = e820_count(), i, f;
-	uint32_t kend = ((uint32_t)kernel_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+	uint32_t kend = (((uint32_t)kernel_end - KERNEL_VMA) + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
 
 	for (f = 0; f < MAX_FRAMES / 32; f++)
 		bitmap[f] = 0xFFFFFFFFu;

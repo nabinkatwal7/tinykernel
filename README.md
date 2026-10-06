@@ -39,7 +39,6 @@ At the `tiny>` prompt try `help`, or just `demo`.
 | `make` / `make all`  | Build `build/os-image.bin`                                      |
 | `make run`           | Boot in QEMU with a data disk; serial log in `build/serial.log` |
 | `make run-headless`  | Same without a window                                           |
-| `make run-multiboot` | Load the Multiboot ELF with `qemu -kernel` (no disk / E820)     |
 | `make clean-disk`    | Delete the data disk (all files)                                |
 | `make clean`         | Remove build artifacts                                          |
 

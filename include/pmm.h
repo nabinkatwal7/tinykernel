@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #define PAGE_SIZE 4096u
+#define KERNEL_VMA 0xC0000000u /* kernel image and the direct map of low RAM live above this */
 
 /* Bitmap physical frame allocator over the usable RAM the bootloader found via E820. */
 void     pmm_init(void);

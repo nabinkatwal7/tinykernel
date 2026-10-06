@@ -30,7 +30,7 @@ USER_BINS := $(BUILD)/hello.bin $(BUILD)/counter.bin $(BUILD)/fault.bin $(BUILD)
 QEMU_DISKS := -drive format=raw,file=$(IMAGE),if=floppy \
               -drive format=raw,file=$(DISK),if=ide,index=0 -boot a
 
-.PHONY: all clean clean-disk run run-multiboot run-headless
+.PHONY: all clean clean-disk run run-headless
 
 all: $(IMAGE)
 
@@ -48,12 +48,9 @@ $(BUILD)/%.bin: user/%.asm | $(BUILD)
 $(BUILD)/kernel.pe: $(OBJS) kernel/linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)
 
-$(KERNEL_ELF): $(BUILD)/kernel.pe
-	$(OBJCOPY) -O elf32-i386 $< $@
-
 # Include .bss so zero-initialised state lands in the image.
 $(KERNEL_BIN): $(BUILD)/kernel.pe
-	$(OBJCOPY) -O binary -j .mbhdr -j .text -j .rodata -j .data \
+	$(OBJCOPY) -O binary -j .mbhdr -j .text -j .rodata -j .data -j .bootpd \
 		--set-section-flags .bss=alloc,load,contents -j .bss $< $@
 	@test $$(stat -c%s $@) -le $$(($(KERNEL_SECTORS) * 512)) || \
 		{ echo "kernel.bin exceeds $(KERNEL_SECTORS) sectors: raise KERNEL_SECTORS"; rm -f $@; exit 1; }
@@ -79,9 +76,6 @@ run: $(IMAGE) $(DISK)
 
 run-headless: $(IMAGE) $(DISK)
 	$(QEMU) $(QEMU_DISKS) -display none -serial file:$(BUILD)/serial.log
-
-run-multiboot: $(KERNEL_ELF)
-	$(QEMU) -kernel $(KERNEL_ELF)
 
 clean-disk:
 	rm -f $(DISK)

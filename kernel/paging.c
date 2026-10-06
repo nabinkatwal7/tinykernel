@@ -48,6 +48,8 @@ void paging_init(void)
 			t[i] = page | flags;
 		}
 		kdir[addr >> 22] = (uint32_t)t | PTE_P | PTE_RW | PTE_US;
+		/* Same table again at KERNEL_VMA: the kernel image and a direct map of RAM. */
+		kdir[(KERNEL_VMA + addr) >> 22] = (uint32_t)t | PTE_P | PTE_RW | PTE_US;
 		tables++;
 	}
 
@@ -58,7 +60,7 @@ void paging_init(void)
 		"movl %%eax, %%cr0"
 		: : "r"(kdir) : "eax", "memory");
 	enabled = 1;
-	klog(LOG_INFO, "paging: on, %u tables identity-map %u MiB, cr3=%x", tables, MAP_BYTES >> 20,
+	klog(LOG_INFO, "paging: on, %u tables map %u MiB at 0 and at 0xC0000000, cr3=%x", tables, MAP_BYTES >> 20,
 	     (uint32_t)kdir);
 }
 

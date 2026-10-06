@@ -1,4 +1,3 @@
-Give kernel higher-half layout,
 Add per-task page directories,
 Isolate user programs with paging,
 Implement slab allocator,

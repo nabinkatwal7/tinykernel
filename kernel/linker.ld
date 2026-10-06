@@ -1,16 +1,18 @@
-/* Link the kernel at 1 MiB — above the low memory BIOS/bootloader use. */
+/*
+ * Higher-half kernel: virtual 0xC0100000, physical 0x100000 (1 MiB). See entry.S for how the
+ * jump from the low-memory bootloader into the higher half works.
+ */
 ENTRY(_kernel_start)
 
 SECTIONS
 {
-	. = 0x100000;
+	. = 0xC0100000;
 
-	/* Multiboot header must sit in the first 8 KiB of the image. */
+	/* The bootloader jumps to physical 0x10000C, the first byte after this header. */
 	.mbhdr : {
 		KEEP(*(.mbhdr))
 	}
 
-	/* The bootloader jumps to the first byte after the header: keep the entry stub first. */
 	.text : {
 		*(.text.entry)
 		*(.text .text.*)
@@ -23,6 +25,11 @@ SECTIONS
 
 	.data : {
 		*(.data .data.*)
+	}
+
+	/* Boot page directory: must be 4 KiB aligned. */
+	.bootpd ALIGN(4096) : {
+		*(.bootpd)
 	}
 
 	.bss : {
