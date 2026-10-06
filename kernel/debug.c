@@ -87,3 +87,14 @@ void panic(const char *fmt, ...)
 	for (;;)
 		hlt();
 }
+
+void assert_fail_msg(const char *expr, const char *file, int line, const char *func, const char *fmt, ...)
+{
+	char why[96];
+	va_list ap;
+
+	va_start(ap, fmt);
+	kvsnprintf(why, sizeof why, fmt, ap);
+	va_end(ap);
+	panic("assertion failed: %s (%s:%d in %s): %s", expr, file, line, func, why);
+}

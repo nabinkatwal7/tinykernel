@@ -2844,6 +2844,14 @@ static int cmd_backtrace(int argc, char **argv)
 	return 0;
 }
 
+/* assert [msg] : trip a failing assertion to show the message format */
+static int cmd_assert(int argc, char **argv)
+{
+	(void)argv;
+	ASSERT_MSG(argc > 5, "needs 5 arguments, got %d", argc - 1);
+	return 0;
+}
+
 /* panic [message] : test the panic path and its stack trace */
 static int cmd_panic(int argc, char **argv)
 {
@@ -3341,6 +3349,7 @@ static const struct command commands[] = {
 	{ "pgtest",  "pgtest",                "self-test address spaces", cmd_pgtest },
 	{ "shm",     "shm [rm <key>]",        "shared memory segments", cmd_shm },
 	{ "backtrace", "backtrace",          "print the current kernel call chain", cmd_backtrace },
+	{ "assert",  "assert",                "trip a failing assertion (tests the panic message)", cmd_assert },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
