@@ -19,8 +19,11 @@ struct netif {
 
 extern struct netif netif;
 
+int  net_send_frame(const void *frame, uint16_t len);   /* a complete Ethernet frame (no FCS); 0 on success */
 int  rtl8139_init(void);                            /* 0 if a card was found and started */
 int  rtl8139_link_up(void);
+/* Build and send an Ethernet II frame: dst MAC, our MAC, ethertype, payload. */
+int  eth_send(const uint8_t dst[ETH_ALEN], uint16_t ethertype, const void *payload, uint16_t len);
 const char *mac_str(const uint8_t mac[ETH_ALEN], char out[18]);
 
 #endif

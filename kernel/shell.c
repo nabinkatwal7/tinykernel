@@ -1812,6 +1812,23 @@ static int cmd_ifconfig(int argc, char **argv)
 	return 0;
 }
 
+/* netsend <text>: broadcast a raw Ethernet frame (experimental ethertype 0x88B5). */
+static int cmd_netsend(int argc, char **argv)
+{
+	static const uint8_t bcast[ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+	const char *text = argc > 1 ? argv[1] : "hello from tinyos";
+	int rc;
+
+	if (!netif.up) {
+		console_write("no network interface\n");
+		return 1;
+	}
+	rc = eth_send(bcast, 0x88B5, text, (uint16_t)kstrlen(text));
+	console_printf(rc ? "send failed\n" : "sent %u payload bytes (broadcast, ethertype 0x88B5)\n",
+		       (uint32_t)kstrlen(text));
+	return rc != 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -2331,6 +2348,7 @@ static const struct command commands[] = {
 	{ "guidemo", "guidemo",              "button widget demo (mouse)", cmd_guidemo },
 	{ "beep",    "beep [hz] [ms]",        "PC speaker: tone, tune, off, status", cmd_beep },
 	{ "ifconfig", "ifconfig",              "network interface status", cmd_ifconfig },
+	{ "netsend", "netsend [text]",         "send a raw Ethernet frame", cmd_netsend },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },
