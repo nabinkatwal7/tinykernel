@@ -15,6 +15,7 @@
 #include "kprintf.h"
 #include "kstring.h"
 #include "paging.h"
+#include "pci.h"
 #include "pmm.h"
 #include "rtc.h"
 #include "sched.h"
@@ -1408,6 +1409,29 @@ static int cmd_fat(int argc, char **argv)
 	return 1;
 }
 
+static int cmd_lspci(int argc, char **argv)
+{
+	int i, b, verbose = argc > 1 && !kstrcmp(argv[1], "-v");
+
+	for (i = 0; i < pci_count(); i++) {
+		const struct pci_dev *d = pci_get(i);
+
+		console_printf("%02x:%02x.%u %s: %s [%04x:%04x] (rev %02x)\n", d->bus, d->slot, d->func,
+			       pci_class_name(d->class_code, d->subclass), pci_vendor_name(d->vendor), d->vendor,
+			       d->device, d->revision);
+		if (!verbose)
+			continue;
+		console_printf("        class %02x%02x prog-if %02x, header type %02x, irq line %u\n", d->class_code,
+			       d->subclass, d->prog_if, d->header_type & 0x7F, d->irq_line);
+		for (b = 0; b < 6; b++)
+			if (d->bar[b])
+				console_printf("        BAR%d: %s at %08x\n", b, d->bar[b] & 1 ? "I/O ports" : "memory",
+					       d->bar[b] & 1 ? d->bar[b] & ~3u : d->bar[b] & ~15u);
+	}
+	console_printf("%d PCI device(s)\n", pci_count());
+	return 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -1915,6 +1939,7 @@ static const struct command commands[] = {
 	{ "fsck",    "fsck [-r]",             "check (and repair) the filesystem", cmd_fsck },
 	{ "fscorrupt", "fscorrupt <0-3>",     "damage the fs for testing fsck", cmd_fscorrupt },
 	{ "fat",     "fat info|ls|cat",       "read the FAT12 image on the IDE slave", cmd_fat },
+	{ "lspci",   "lspci [-v]",            "list PCI devices", cmd_lspci },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },
