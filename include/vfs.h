@@ -17,6 +17,9 @@ struct vfs_dirent {
 	char name[VFS_NAME_MAX];
 	uint32_t size;
 	int is_dir;
+	int has_meta;            /* the filesystem supplied owner/mode/time (else defaults are filled in) */
+	uint16_t mode, uid, gid;
+	uint32_t mtime;
 };
 
 /* A character device: a stream with no size, read/written in whatever amounts the caller asks. */
@@ -30,6 +33,9 @@ struct vfs_stat {
 	uint32_t size;
 	int is_dir;
 	const struct vfs_device *dev;              /* non-NULL for device files */
+	int has_meta;
+	uint16_t mode, uid, gid;                   /* permissions (0777 style) and owner; defaults on filesystems without them */
+	uint32_t mtime;
 };
 
 struct vfs_ops {
@@ -43,6 +49,9 @@ struct vfs_ops {
 	int (*mkdir)(void *ctx, const char *path);
 	int (*rmdir)(void *ctx, const char *path);
 	int (*rename)(void *ctx, const char *from, const char *to);
+	int (*chmod)(void *ctx, const char *path, uint16_t mode);
+	int (*chown)(void *ctx, const char *path, uint16_t uid, uint16_t gid);
+	int (*touch)(void *ctx, const char *path, uint32_t mtime);
 };
 
 #define VFS_MAX_MOUNTS 8
@@ -67,6 +76,15 @@ int  vfs_mkdir(const char *path);
 int  vfs_rmdir(const char *path);
 int  vfs_rename(const char *from, const char *to); /* both paths must be on the same mount */
 int  vfs_list(const char *path, struct vfs_dirent *out, int max);
+
+/* Permissions. want is a mix of VFS_R, VFS_W, VFS_X; root passes everything. Returns 0 or FS_EACCES (or a lookup error). */
+#define VFS_R 4
+#define VFS_W 2
+#define VFS_X 1
+int  vfs_access(const char *path, int want);
+int  vfs_chmod(const char *path, uint16_t mode);   /* owner or root only */
+int  vfs_chown(const char *path, uint16_t uid, uint16_t gid); /* root only */
+int  vfs_touch(const char *path, uint32_t mtime);  /* 0 = now */
 /* Canonical absolute form of 'path' (relative paths start at 'base'): duplicate slashes collapse,
    '.' disappears, '..' removes the previous component (the root is its own parent), no trailing
    slash. Returns 0, or FS_EINVAL if the result would not fit in 'size' bytes. */

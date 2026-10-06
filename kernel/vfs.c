@@ -6,6 +6,7 @@
 #include "kmalloc.h"
 #include "pcache.h"
 #include "kstring.h"
+#include "cred.h"
 
 struct mount {
 	char prefix[VFS_NAME_MAX]; /* "/" or "/dev": no trailing slash except for the root */
@@ -40,9 +41,13 @@ static int tfs_stat(void *ctx, const char *path, struct vfs_stat *st)
 	(void)ctx;
 	ensure_mounted();
 	st->dev = 0;
+	st->has_meta = 1;
 	if (!*tfs_name(path)) { /* the root always exists, even on an unformatted disk */
 		st->size = 0;
 		st->is_dir = 1;
+		st->mode = 0755;
+		st->uid = st->gid = 0;
+		st->mtime = 0;
 		return FS_OK;
 	}
 	rc = fs_stat(tfs_name(path), &fst);
@@ -50,6 +55,10 @@ static int tfs_stat(void *ctx, const char *path, struct vfs_stat *st)
 		return rc;
 	st->size = fst.size;
 	st->is_dir = fst.is_dir;
+	st->mode = fst.meta.mode;
+	st->uid = fst.meta.uid;
+	st->gid = fst.meta.gid;
+	st->mtime = fst.meta.mtime;
 	return FS_OK;
 }
 
@@ -91,6 +100,11 @@ static int tfs_list(void *ctx, const char *path, struct vfs_dirent *out, int max
 		kstrlcpy(out[i].name, st[i].name, sizeof out[i].name);
 		out[i].size = st[i].size;
 		out[i].is_dir = st[i].is_dir;
+		out[i].has_meta = 1;
+		out[i].mode = st[i].meta.mode;
+		out[i].uid = st[i].meta.uid;
+		out[i].gid = st[i].meta.gid;
+		out[i].mtime = st[i].meta.mtime;
 	}
 	kfree(st);
 	return n < 0 ? n : i;
@@ -108,6 +122,27 @@ static int tfs_rmdir(void *ctx, const char *path)
 	(void)ctx;
 	ensure_mounted();
 	return fs_rmdir(tfs_name(path));
+}
+
+static int tfs_chmod(void *ctx, const char *path, uint16_t mode)
+{
+	(void)ctx;
+	ensure_mounted();
+	return fs_chmod(tfs_name(path), mode);
+}
+
+static int tfs_chown(void *ctx, const char *path, uint16_t uid, uint16_t gid)
+{
+	(void)ctx;
+	ensure_mounted();
+	return fs_chown(tfs_name(path), uid, gid);
+}
+
+static int tfs_touch(void *ctx, const char *path, uint32_t mtime)
+{
+	(void)ctx;
+	ensure_mounted();
+	return fs_touch(tfs_name(path), mtime);
 }
 
 static int tfs_rename(void *ctx, const char *from, const char *to)
@@ -169,11 +204,12 @@ static int fatv_list(void *ctx, const char *path, struct vfs_dirent *out, int ma
 }
 
 static const struct vfs_ops fat_ops = {
-	"fat12", fatv_stat, fatv_read, 0, 0, 0, fatv_list, 0, 0, 0,
+	"fat12", fatv_stat, fatv_read, 0, 0, 0, fatv_list, 0, 0, 0, 0, 0, 0,
 };
 
 static const struct vfs_ops tinyfs_ops = {
 	"tinyfs", tfs_stat, tfs_read, tfs_write, tfs_create, tfs_unlink, tfs_list, tfs_mkdir, tfs_rmdir, tfs_rename,
+	tfs_chmod, tfs_chown, tfs_touch,
 };
 
 /* ---- mount table ---- */
@@ -344,8 +380,97 @@ int vfs_stat(const char *path, struct vfs_stat *st)
 	char full[VFS_PATH_MAX];
 	const char *rest;
 	struct mount *m = lookup(path, full, sizeof full, &rest);
+	int rc;
 
-	return m && m->ops->stat ? m->ops->stat(m->ctx, rest, st) : FS_ENOENT;
+	if (!m || !m->ops->stat)
+		return FS_ENOENT;
+	memset(st, 0, sizeof *st);
+	rc = m->ops->stat(m->ctx, rest, st);
+	if (rc >= 0 && !st->has_meta) { /* devfs, procfs, FAT: root-owned, world-readable */
+		st->mode = st->dev ? 0666 : st->is_dir ? 0755 : 0644;
+		st->uid = st->gid = 0;
+	}
+	return rc;
+}
+
+/* rwx bits of 'st' that apply to the current user. */
+static int perm_bits(const struct vfs_stat *st)
+{
+	if (cred_uid() == st->uid)
+		return (st->mode >> 6) & 7;
+	if (cred_gid() == st->gid)
+		return (st->mode >> 3) & 7;
+	return st->mode & 7;
+}
+
+int vfs_access(const char *path, int want)
+{
+	struct vfs_stat st;
+	int rc;
+
+	if (!cred_uid())
+		return FS_OK;
+	rc = vfs_stat(path, &st);
+	if (rc < 0)
+		return rc;
+	return (perm_bits(&st) & want) == want ? FS_OK : FS_EACCES;
+}
+
+/* Write permission on the directory that holds 'path' (needed to create, delete or rename entries). */
+static int access_parent(const char *path, int want)
+{
+	char full[VFS_PATH_MAX];
+	char *slash;
+
+	if (!cred_uid())
+		return FS_OK;
+	if (vfs_normalize(vfs_getcwd(), path, full, sizeof full))
+		return FS_EINVAL;
+	slash = full + kstrlen(full);
+	while (slash > full && *slash != '/')
+		slash--;
+	if (slash == full)
+		return vfs_access("/", want);
+	*slash = '\0';
+	return vfs_access(full, want);
+}
+
+int vfs_chmod(const char *path, uint16_t mode)
+{
+	char full[VFS_PATH_MAX];
+	const char *rest;
+	struct mount *m = lookup(path, full, sizeof full, &rest);
+	struct vfs_stat st;
+	int rc = vfs_stat(path, &st);
+
+	if (rc < 0)
+		return rc;
+	if (cred_uid() && cred_uid() != st.uid)
+		return FS_EACCES;
+	return m && m->ops->chmod ? m->ops->chmod(m->ctx, rest, mode) : FS_EROFS;
+}
+
+int vfs_chown(const char *path, uint16_t uid, uint16_t gid)
+{
+	char full[VFS_PATH_MAX];
+	const char *rest;
+	struct mount *m = lookup(path, full, sizeof full, &rest);
+
+	if (cred_uid())
+		return FS_EACCES;
+	return m && m->ops->chown ? m->ops->chown(m->ctx, rest, uid, gid) : FS_EROFS;
+}
+
+int vfs_touch(const char *path, uint32_t mtime)
+{
+	char full[VFS_PATH_MAX];
+	const char *rest;
+	struct mount *m = lookup(path, full, sizeof full, &rest);
+	int rc = vfs_access(path, VFS_W);
+
+	if (rc)
+		return rc;
+	return m && m->ops->touch ? m->ops->touch(m->ctx, rest, mtime) : FS_EROFS;
 }
 
 int vfs_size(const char *path)
@@ -363,7 +488,10 @@ int vfs_read(const char *path, void *buf, uint32_t cap)
 	char full[VFS_PATH_MAX];
 	const char *rest;
 	struct mount *m = lookup(path, full, sizeof full, &rest);
+	int rc = vfs_access(path, VFS_R);
 
+	if (rc)
+		return rc;
 	return m && m->ops->read ? m->ops->read(m->ctx, rest, buf, cap) : FS_ENOENT;
 }
 
@@ -373,8 +501,14 @@ int vfs_write(const char *path, const void *data, uint32_t size)
 	const char *rest;
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 
+	struct vfs_stat st;
+	int rc;
+
 	if (!m)
 		return FS_ENOENT;
+	rc = vfs_stat(path, &st) >= 0 ? vfs_access(path, VFS_W) : access_parent(path, VFS_W);
+	if (rc)
+		return rc;
 	pcache_invalidate(full);
 	return m->ops->write ? m->ops->write(m->ctx, rest, data, size) : FS_EROFS;
 }
@@ -385,8 +519,12 @@ int vfs_create(const char *path)
 	const char *rest;
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 
+	int rc = access_parent(path, VFS_W);
+
 	if (!m)
 		return FS_ENOENT;
+	if (rc)
+		return rc;
 	return m->ops->create ? m->ops->create(m->ctx, rest) : FS_EROFS;
 }
 
@@ -396,8 +534,12 @@ int vfs_unlink(const char *path)
 	const char *rest;
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 
+	int rc = access_parent(path, VFS_W);
+
 	if (!m)
 		return FS_ENOENT;
+	if (rc)
+		return rc;
 	pcache_invalidate(full);
 	return m->ops->unlink ? m->ops->unlink(m->ctx, rest) : FS_EROFS;
 }
@@ -409,8 +551,12 @@ int vfs_rename(const char *from, const char *to)
 	struct mount *m1 = lookup(from, f1, sizeof f1, &r1);
 	struct mount *m2 = lookup(to, f2, sizeof f2, &r2);
 
+	int rc = access_parent(from, VFS_W) ? FS_EACCES : access_parent(to, VFS_W);
+
 	if (!m1 || m1 != m2)
 		return FS_EINVAL; /* across mounts: not supported */
+	if (rc)
+		return rc;
 	pcache_invalidate(f1);
 	pcache_invalidate(f2);
 	if (!m1->ops->rename)
@@ -434,8 +580,12 @@ int vfs_mkdir(const char *path)
 	const char *rest;
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 
+	int rc = access_parent(path, VFS_W);
+
 	if (!m)
 		return FS_ENOENT;
+	if (rc)
+		return rc;
 	return m->ops->mkdir ? m->ops->mkdir(m->ctx, rest) : FS_EROFS;
 }
 
@@ -445,8 +595,12 @@ int vfs_rmdir(const char *path)
 	const char *rest;
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 
+	int rc = access_parent(path, VFS_W);
+
 	if (!m)
 		return FS_ENOENT;
+	if (rc)
+		return rc;
 	return m->ops->rmdir ? m->ops->rmdir(m->ctx, rest) : FS_EROFS;
 }
 
@@ -456,7 +610,21 @@ int vfs_list(const char *path, struct vfs_dirent *out, int max)
 	const char *rest;
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 
-	return m && m->ops->list ? m->ops->list(m->ctx, rest, out, max) : FS_ENOENT;
+	int rc = vfs_access(path, VFS_R), n, i;
+
+	if (rc)
+		return rc;
+	if (!m || !m->ops->list)
+		return FS_ENOENT;
+	memset(out, 0, (size_t)max * sizeof *out);
+	n = m->ops->list(m->ctx, rest, out, max);
+	for (i = 0; i < n; i++) {
+		if (!out[i].has_meta) {
+			out[i].mode = out[i].is_dir ? 0755 : 0644;
+			out[i].uid = out[i].gid = 0;
+		}
+	}
+	return n;
 }
 
 /* Mount table as text, for /proc/mounts. */

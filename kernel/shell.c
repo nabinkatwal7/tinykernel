@@ -1448,18 +1448,58 @@ static int fs_fail(const char *what, int rc)
 	return 1;
 }
 
+/* "drwxr-xr-x" */
+static void mode_string(int is_dir, unsigned mode, char out[11])
+{
+	static const char rwx[] = "rwxrwxrwx";
+	int i;
+
+	out[0] = is_dir ? 'd' : '-';
+	for (i = 0; i < 9; i++)
+		out[1 + i] = mode & (0400u >> i) ? rwx[i] : '-';
+	out[10] = '\0';
+}
+
+/* "2026-10-06 15:04", or dashes when the filesystem keeps no times */
+static void time_string(uint32_t secs, char out[17])
+{
+	struct rtc_time t;
+
+	if (!secs) {
+		kstrlcpy(out, "-               ", 17);
+		return;
+	}
+	rtc_from_unix(secs, &t);
+	ksnprintf(out, 17, "%04d-%02d-%02d %02d:%02d", t.year, t.month, t.day, t.hour, t.minute);
+}
+
+/* ls [-l] [path] */
 static int cmd_ls(int argc, char **argv)
 {
 	struct vfs_dirent ent[FS_MAX_FILES];
-	const char *path = argc > 1 ? argv[1] : vfs_getcwd();
-	int n, i;
+	int a = 1, longfmt = 0, n, i;
+	const char *path;
 
+	if (a < argc && !kstrcmp(argv[a], "-l")) {
+		longfmt = 1;
+		a++;
+	}
+	path = a < argc ? argv[a] : vfs_getcwd();
 	n = vfs_list(path, ent, FS_MAX_FILES);
 	if (n < 0)
 		return fs_fail(path, n);
-	for (i = 0; i < n; i++)
-		console_printf("  %-19s %6u bytes%s\n", ent[i].name, ent[i].size,
-			       ent[i].is_dir ? "  <dir>" : "");
+	for (i = 0; i < n; i++) {
+		char ms[11], ts[17];
+
+		if (!longfmt) {
+			console_printf("  %-19s %6u bytes%s\n", ent[i].name, ent[i].size,
+				       ent[i].is_dir ? "  <dir>" : "");
+			continue;
+		}
+		mode_string(ent[i].is_dir, ent[i].mode, ms);
+		time_string(ent[i].mtime, ts);
+		console_printf("%s %3u %3u %7u %s %s\n", ms, ent[i].uid, ent[i].gid, ent[i].size, ts, ent[i].name);
+	}
 	console_printf("%d entr%s", n, n == 1 ? "y" : "ies");
 	if (fs_mounted() && !kstrcmp(path, "/"))
 		console_printf(", %u KiB free", fs_free_sectors() / 2);

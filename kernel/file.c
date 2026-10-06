@@ -148,6 +148,12 @@ int file_open(const char *path, int flags)
 	}
 	if (rc == FS_OK && st.is_dir)
 		return FS_EINVAL;
+	if (rc == FS_OK) { /* an existing file: may this user read / write it? */
+		int denied = vfs_access(path, (writable(flags) ? VFS_W : 0) | ((flags & O_WRONLY) ? 0 : VFS_R));
+
+		if (denied)
+			return denied;
+	}
 	if (writable(flags) && !vfs_can_write(path))
 		return FS_EROFS; /* read-only mount (FAT12, /proc) */
 	size = rc == FS_OK ? (int)st.size : rc;

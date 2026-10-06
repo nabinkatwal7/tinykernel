@@ -79,3 +79,22 @@ uint32_t rtc_unix(const struct rtc_time *t)
 		days++;
 	return days * 86400 + t->hour * 3600u + t->minute * 60u + t->second;
 }
+
+void rtc_from_unix(uint32_t secs, struct rtc_time *t)
+{
+	int z = (int)(secs / 86400) + 719468;
+	int era = z / 146097;
+	int doe = z - era * 146097;
+	int yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+	int doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+	int mp = (5 * doy + 2) / 153;
+	int d = doy - (153 * mp + 2) / 5 + 1;
+	int m = mp < 10 ? mp + 3 : mp - 9;
+
+	t->year = (uint16_t)(yoe + era * 400 + (m <= 2));
+	t->month = (uint8_t)m;
+	t->day = (uint8_t)d;
+	t->hour = (uint8_t)(secs % 86400 / 3600);
+	t->minute = (uint8_t)(secs % 3600 / 60);
+	t->second = (uint8_t)(secs % 60);
+}

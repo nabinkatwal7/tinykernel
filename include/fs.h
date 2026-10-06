@@ -27,6 +27,15 @@
 #define FS_ENOTEMPTY -10 /* rmdir on a directory that still has entries */
 #define FS_EROFS    -11 /* read-only filesystem */
 #define FS_EPIPE    -12 /* write to a pipe with no reader */
+#define FS_EACCES   -13 /* permission denied */
+
+/* Per-entry metadata (TinyFS keeps one 16-byte record per directory entry). */
+struct fs_meta {
+	uint16_t mode;          /* permission bits, 0777 style: owner, group, other; each r=4 w=2 x=1 */
+	uint16_t uid, gid;
+	uint16_t flags;         /* reserved */
+	uint32_t mtime, ctime;  /* seconds since 1970: last write, creation */
+};
 
 struct fs_stat {
 	char name[FS_NAME_MAX];
@@ -34,6 +43,7 @@ struct fs_stat {
 	uint32_t start_lba;
 	uint32_t sectors;
 	int is_dir;
+	struct fs_meta meta;
 };
 
 int         fs_mount(void);              /* reads the table; FS_ENOMOUNT if unusable */
@@ -44,6 +54,9 @@ int         fs_write(const char *path, const void *data, uint32_t size); /* crea
 int         fs_read(const char *path, void *buf, uint32_t cap);          /* bytes read or error */
 int         fs_size(const char *path);   /* bytes (FS_EISDIR for a directory) or error */
 int         fs_stat(const char *path, struct fs_stat *st);
+int         fs_chmod(const char *path, uint16_t mode);
+int         fs_chown(const char *path, uint16_t uid, uint16_t gid);
+int         fs_touch(const char *path, uint32_t mtime); /* set the modification time */
 int         fs_delete(const char *path); /* files only */
 int         fs_mkdir(const char *path);
 int         fs_rmdir(const char *path);  /* must be empty */

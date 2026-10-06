@@ -2,20 +2,23 @@
 
 #include "ata.h"
 #include "bcache.h"
+#include "clock.h"
+#include "cred.h"
 #include "klog.h"
 #include "kprintf.h"
 #include "kmalloc.h"
 #include "kstring.h"
 
 #define FS_MAGIC     0x31534654u /* "TFS1" */
-#define FS_VERSION   3
+#define FS_VERSION   4
 #define DIR_SECTORS  8     /* 8 * 512 / 32 = 128 entries */
+#define META_SECTORS 4     /* 4 * 512 / 16 = one fs_meta per entry */
 #define FLAG_USED    1u
 #define FLAG_DIR     2u
 #define ROOT         0xFFu /* parent value meaning "the root directory" */
 
 /* Disk layout, fixed at format time and stored in the superblock:
- *   0 superblock | bm_lba.. free-space bitmap (1 bit per sector) | dir_lba.. entry table | data */
+ *   0 superblock | bm_lba.. free-space bitmap (1 bit per sector) | dir_lba.. entry table | metadata | data */
 static uint32_t total_sectors, bm_lba, bm_sectors, dir_lba, data_start;
 static uint8_t *bitmap;   /* bit set = sector in use */
 
@@ -27,6 +30,7 @@ struct dirent {
 };
 
 static struct dirent dir[FS_MAX_FILES]; /* exactly DIR_SECTORS sectors */
+static struct fs_meta meta[FS_MAX_FILES]; /* exactly META_SECTORS sectors, same index as dir[] */
 static int mounted;
 
 const char *fs_strerror(int err)
@@ -41,6 +45,7 @@ const char *fs_strerror(int err)
 	case FS_ENOMOUNT:  return "no formatted disk (try 'format')";
 	case FS_ETOOBIG:   return "buffer too small";
 	case FS_EISDIR:    return "is a directory";
+	case FS_EACCES:    return "permission denied";
 	case FS_ENOTDIR:   return "not a directory";
 	case FS_ENOTEMPTY: return "directory not empty";
 	case FS_EROFS:     return "read-only filesystem";
@@ -59,7 +64,26 @@ static uint32_t parent(int i) { return (dir[i].flags >> 8) & 0xFF; }
 
 static int flush_dir(void)
 {
-	return bc_write(dir_lba, DIR_SECTORS, dir) ? FS_EIO : FS_OK;
+	if (bc_write(dir_lba, DIR_SECTORS, dir) || bc_write(dir_lba + DIR_SECTORS, META_SECTORS, meta))
+		return FS_EIO;
+	return FS_OK;
+}
+
+static uint32_t now_secs(void)
+{
+	struct timespec ts;
+
+	return clock_gettime(CLOCK_REALTIME, &ts) ? 0 : ts.tv_sec;
+}
+
+/* Owner, group, permissions and times of a brand-new entry: created by the current user. */
+static void meta_new(int i, int dir_flag)
+{
+	meta[i].mode = dir_flag ? 0755 : 0644;
+	meta[i].uid = cred_uid();
+	meta[i].gid = cred_gid();
+	meta[i].flags = 0;
+	meta[i].mtime = meta[i].ctime = now_secs();
 }
 
 static int flush_bitmap(void)
@@ -229,7 +253,8 @@ int fs_mount(void)
 	bitmap = kmalloc(bm_sectors * SECTOR_SIZE);
 	if (!bitmap)
 		return FS_ENOSPC;
-	if (bc_read(bm_lba, bm_sectors, bitmap) || bc_read(dir_lba, DIR_SECTORS, dir))
+	if (bc_read(bm_lba, bm_sectors, bitmap) || bc_read(dir_lba, DIR_SECTORS, dir)
+	    || bc_read(dir_lba + DIR_SECTORS, META_SECTORS, meta))
 		return FS_EIO;
 	mounted = 1;
 	return FS_OK;
@@ -246,7 +271,7 @@ int fs_format(void)
 	bm_lba = 1;
 	bm_sectors = (total_sectors + SECTOR_SIZE * 8 - 1) / (SECTOR_SIZE * 8);
 	dir_lba = bm_lba + bm_sectors;
-	data_start = dir_lba + DIR_SECTORS;
+	data_start = dir_lba + DIR_SECTORS + META_SECTORS;
 	if (data_start >= total_sectors)
 		return FS_ENOSPC; /* disk too small to hold the metadata */
 	bitmap = kcalloc(bm_sectors, SECTOR_SIZE);
@@ -263,6 +288,7 @@ int fs_format(void)
 	sb[5] = dir_lba;
 	sb[6] = data_start;
 	memset(dir, 0, sizeof dir);
+	memset(meta, 0, sizeof meta);
 	if (bc_write(0, 1, sb) || flush_bitmap() || flush_dir())
 		return FS_EIO;
 	mounted = 1;
@@ -286,6 +312,7 @@ int fs_write(const char *path, const void *data, uint32_t size)
 	const uint8_t *src = data;
 	char leaf[FS_NAME_MAX];
 	struct dirent saved;
+	struct fs_meta saved_meta;
 	uint32_t n = sectors_for(size), start, i;
 	int par, idx;
 
@@ -302,6 +329,7 @@ int fs_write(const char *path, const void *data, uint32_t size)
 		if (is_dir(idx))
 			return FS_EISDIR;
 		saved = dir[idx];
+		saved_meta = meta[idx];
 		mark_entry(idx, 0); /* free the old extent while we look for space */
 		dir[idx].flags = 0;
 	} else {
@@ -309,11 +337,13 @@ int fs_write(const char *path, const void *data, uint32_t size)
 		if (idx < 0)
 			return FS_ENOSPC;
 		memset(&saved, 0, sizeof saved);
+		memset(&saved_meta, 0, sizeof saved_meta);
 	}
 
 	start = alloc_extent(n);
 	if (!start) {
 		dir[idx] = saved;
+		meta[idx] = saved_meta;
 		if (saved.flags)
 			mark_entry(idx, 1);
 		return FS_ENOSPC;
@@ -338,6 +368,12 @@ int fs_write(const char *path, const void *data, uint32_t size)
 	dir[idx].start = start;
 	dir[idx].size = size;
 	dir[idx].flags = FLAG_USED | ((uint32_t)par << 8);
+	if (saved.flags) { /* replacing a file keeps its owner and mode */
+		meta[idx] = saved_meta;
+		meta[idx].mtime = now_secs();
+	} else {
+		meta_new(idx, 0);
+	}
 	mark(start, n, 1);
 	if (flush_bitmap())
 		return FS_EIO;
@@ -345,6 +381,7 @@ int fs_write(const char *path, const void *data, uint32_t size)
 
 io_error:
 	dir[idx] = saved;
+	meta[idx] = saved_meta;
 	if (saved.flags)
 		mark_entry(idx, 1);
 	return FS_EIO;
@@ -380,14 +417,53 @@ int fs_stat(const char *path, struct fs_stat *st)
 	memset(st, 0, sizeof *st);
 	if (idx == (int)ROOT) {
 		st->is_dir = 1;
+		st->meta.mode = 0755;
 		return FS_OK;
 	}
+	st->meta = meta[idx];
 	kstrlcpy(st->name, dir[idx].name, FS_NAME_MAX);
 	st->size = dir[idx].size;
 	st->start_lba = dir[idx].start;
 	st->sectors = sectors_for(dir[idx].size);
 	st->is_dir = is_dir(idx) ? 1 : 0;
 	return FS_OK;
+}
+
+int fs_chmod(const char *path, uint16_t mode)
+{
+	int idx = fs_entry(path);
+
+	if (idx < 0)
+		return idx;
+	if (idx == (int)ROOT)
+		return FS_EINVAL;
+	meta[idx].mode = mode & 0777;
+	return flush_dir();
+}
+
+int fs_chown(const char *path, uint16_t uid, uint16_t gid)
+{
+	int idx = fs_entry(path);
+
+	if (idx < 0)
+		return idx;
+	if (idx == (int)ROOT)
+		return FS_EINVAL;
+	meta[idx].uid = uid;
+	meta[idx].gid = gid;
+	return flush_dir();
+}
+
+int fs_touch(const char *path, uint32_t mtime)
+{
+	int idx = fs_entry(path);
+
+	if (idx < 0)
+		return idx;
+	if (idx == (int)ROOT)
+		return FS_EINVAL;
+	meta[idx].mtime = mtime ? mtime : now_secs();
+	return flush_dir();
 }
 
 int fs_read(const char *path, void *buf, uint32_t cap)
@@ -431,6 +507,7 @@ int fs_delete(const char *path)
 		return FS_EISDIR;
 	mark_entry(idx, 0);
 	memset(&dir[idx], 0, sizeof dir[idx]);
+	memset(&meta[idx], 0, sizeof meta[idx]);
 	if (flush_bitmap())
 		return FS_EIO;
 	return flush_dir();
@@ -456,6 +533,7 @@ int fs_mkdir(const char *path)
 	memset(&dir[idx], 0, sizeof dir[idx]);
 	kstrlcpy(dir[idx].name, leaf, FS_NAME_MAX);
 	dir[idx].flags = FLAG_USED | FLAG_DIR | ((uint32_t)par << 8);
+	meta_new(idx, 1);
 	return flush_dir();
 }
 
@@ -473,6 +551,7 @@ int fs_rmdir(const char *path)
 		if (used(i) && parent(i) == (uint32_t)idx)
 			return FS_ENOTEMPTY;
 	memset(&dir[idx], 0, sizeof dir[idx]);
+	memset(&meta[idx], 0, sizeof meta[idx]);
 	return flush_dir();
 }
 
@@ -502,6 +581,7 @@ int fs_rename(const char *from, const char *to)
 			return FS_EEXIST;
 		mark_entry(victim, 0);
 		memset(&dir[victim], 0, sizeof dir[victim]); /* replace the old file */
+		memset(&meta[victim], 0, sizeof meta[victim]);
 		if (flush_bitmap())
 			return FS_EIO;
 	}
@@ -526,6 +606,7 @@ int fs_list(const char *path, struct fs_stat *out, int max)
 		out[n].start_lba = dir[i].start;
 		out[n].sectors = sectors_for(dir[i].size);
 		out[n].is_dir = is_dir(i) ? 1 : 0;
+		out[n].meta = meta[i];
 		n++;
 	}
 	return n;
