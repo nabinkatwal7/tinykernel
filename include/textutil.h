@@ -7,4 +7,6 @@
  */
 int tu_grep(int argc, char **argv);   /* grep [-ivnc] pattern [file...]  ('^' and '$' anchor the pattern) */
 
+int tu_wc(int argc, char **argv);     /* wc [-lwc] [file...]: lines, words and bytes */
+
 #endif

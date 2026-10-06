@@ -3945,6 +3945,7 @@ static const struct command commands[] = {
 	{ "unalias", "unalias name",          "remove an alias", cmd_unalias },
 	{ "functions", "functions",           "list shell functions", cmd_functions },
 	{ "grep",    "grep [-ivnc] pat [file]", "print lines that contain pat", tu_grep },
+	{ "wc",      "wc [-lwc] [file...]",   "count lines, words and bytes", tu_wc },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },

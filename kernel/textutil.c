@@ -179,3 +179,74 @@ int tu_grep(int argc, char **argv)
 	}
 	return rc == 2 ? 2 : !matched;
 }
+
+int tu_wc(int argc, char **argv)
+{
+	int a = 1, want_l = 0, want_w = 0, want_c = 0, nfiles, f, rc = 0;
+	uint32_t tl = 0, tw = 0, tc = 0;
+
+	while (a < argc && argv[a][0] == '-' && argv[a][1]) {
+		const char *o;
+
+		for (o = argv[a] + 1; *o; o++) {
+			switch (*o) {
+			case 'l': want_l = 1; break;
+			case 'w': want_w = 1; break;
+			case 'c': want_c = 1; break;
+			default:
+				console_printf("wc: unknown option -%c\n", *o);
+				return 2;
+			}
+		}
+		a++;
+	}
+	if (!want_l && !want_w && !want_c)
+		want_l = want_w = want_c = 1;
+	nfiles = argc - a;
+	for (f = 0; f < (nfiles ? nfiles : 1); f++) {
+		const char *name = nfiles ? argv[a + f] : 0;
+		struct text t;
+		uint32_t i, lines = 0, words = 0;
+		int in_word = 0;
+
+		if (load_text(name, &t)) {
+			rc = 1;
+			continue;
+		}
+		for (i = 0; i < t.len; i++) {
+			char c = t.data[i];
+
+			if (c == '\n')
+				lines++;
+			if (c == ' ' || c == '\n' || c == '\t' || c == '\r') {
+				in_word = 0;
+			} else if (!in_word) {
+				in_word = 1;
+				words++;
+			}
+		}
+		if (want_l)
+			console_printf("%7u", lines);
+		if (want_w)
+			console_printf("%7u", words);
+		if (want_c)
+			console_printf("%7u", t.len);
+		if (name)
+			console_printf(" %s", name);
+		console_putchar('\n');
+		tl += lines;
+		tw += words;
+		tc += t.len;
+		kfree(t.data);
+	}
+	if (nfiles > 1) {
+		if (want_l)
+			console_printf("%7u", tl);
+		if (want_w)
+			console_printf("%7u", tw);
+		if (want_c)
+			console_printf("%7u", tc);
+		console_write(" total\n");
+	}
+	return rc;
+}
