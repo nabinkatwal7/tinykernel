@@ -1,4 +1,3 @@
-Implement UDP send and receive,
 Add tiny DHCP or static IP config,
 Implement basic TCP handshake,
 Add power management: ACPI shutdown,

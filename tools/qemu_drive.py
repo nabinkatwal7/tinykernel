@@ -40,7 +40,7 @@ def main():
         "-drive", f"format=raw,file={os.path.join(BUILD,'os-image.bin')},if=floppy",
         "-drive", f"format=raw,file={disk},if=ide,index=0",
         "-drive", f"format=raw,file={os.path.join(BUILD,'fat.img')},if=ide,index=1", "-boot", "a",
-        "-netdev", "user,id=n0", "-object", f"filter-dump,id=f0,netdev=n0,file={os.path.join(BUILD, 'net-test.pcap')}", "-device", "rtl8139,netdev=n0",
+        "-netdev", "user,id=n0,hostfwd=udp::5601-:7777,hostfwd=tcp::5602-:8080", "-object", f"filter-dump,id=f0,netdev=n0,file={os.path.join(BUILD, 'net-test.pcap')}", "-device", "rtl8139,netdev=n0",
         "-display", "none",
         "-chardev", f"socket,id=s0,host=127.0.0.1,port={port + 1},server=on,wait=off,logfile={serial}",
         "-serial", "chardev:s0",
@@ -51,9 +51,14 @@ def main():
     def mon(cmd):
         s.sendall((cmd + "\n").encode()); time.sleep(0.05)
     time.sleep(1.0)
+    host_udp = None
     for line in args:
         if line.startswith("ser:"):  # text typed on the serial port; the two characters backslash-r mean Enter
             ser.sendall(line[4:].replace(chr(92) + "r", chr(13)).encode()); time.sleep(0.6); continue
+        if line.startswith("hostudp:"):   # hostudp:<text> -> datagram to guest port 7777 (forwarded 5601)
+            u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); u.sendto(line[8:].encode(), ("127.0.0.1", 5601)); time.sleep(0.6); continue
+        if line.startswith("hostlisten:"):   # hostlisten:<udp port> -> collect datagrams the guest sends to 10.0.2.2:<port>
+            host_udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); host_udp.bind(("0.0.0.0", int(line[11:]))); host_udp.settimeout(0.2); continue
         if line.startswith("mon:"):
             mon(line[4:]); time.sleep(0.4); continue
         if line.startswith("key:"):
@@ -70,6 +75,13 @@ def main():
     time.sleep(1.0)
     if shot:
         mon("screendump " + shot); time.sleep(0.5)
+    if host_udp:
+        try:
+            while True:
+                data, addr = host_udp.recvfrom(2048)
+                print("HOST RECEIVED UDP from %s:%d: %r" % (addr[0], addr[1], data))
+        except socket.timeout:
+            pass
     mon("quit")
     q.wait(timeout=10)
     print(open(serial, errors="replace").read())

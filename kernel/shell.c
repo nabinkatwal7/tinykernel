@@ -31,6 +31,7 @@
 #include "speaker.h"
 #include "sync.h"
 #include "timer.h"
+#include "udp.h"
 #include "user.h"
 #include "vga.h"
 #include "wm.h"
@@ -2035,6 +2036,65 @@ static int cmd_ping(int argc, char **argv)
 	return got == 0;
 }
 
+/* udp send <ip> <port> <text> | udp listen <port> [seconds] | udp test */
+static int cmd_udp(int argc, char **argv)
+{
+	uint8_t buf[UDP_MAX_PAYLOAD + 1];
+	uint32_t ip, port, secs = 5, from;
+	uint16_t sport;
+	char s[16];
+	int sock, n;
+
+	if (!netif.up) {
+		console_write("no network interface\n");
+		return 1;
+	}
+	if (argc >= 5 && !kstrcmp(argv[1], "send") && !ip_parse(argv[2], &ip) && !kstrtoul(argv[3], &port) && port < 65536) {
+		sock = udp_open(0);
+		if (sock < 0)
+			return 1;
+		n = udp_sendto(sock, ip, (uint16_t)port, argv[4], (uint16_t)kstrlen(argv[4]));
+		console_printf("sent %u byte(s) from port %u: %s\n", (uint32_t)kstrlen(argv[4]), udp_local_port(sock),
+			       n ? "FAILED" : "ok");
+		udp_close(sock);
+		return n != 0;
+	}
+	if (argc >= 3 && !kstrcmp(argv[1], "listen") && !kstrtoul(argv[2], &port) && port > 0 && port < 65536) {
+		if (argc > 3 && kstrtoul(argv[3], &secs))
+			return 1;
+		sock = udp_open((uint16_t)port);
+		if (sock < 0) {
+			console_write("port already in use\n");
+			return 1;
+		}
+		console_printf("listening on UDP port %u for %u s (Ctrl+C stops)\n", port, secs);
+		while (!shell_interrupted()) {
+			n = udp_recvfrom(sock, buf, UDP_MAX_PAYLOAD, &from, &sport, secs * 1000);
+			if (n < 0)
+				break;
+			buf[n] = '\0';
+			console_printf("from %s:%u (%d bytes): %s\n", ip_str(from, s), sport, n, (char *)buf);
+			secs = 2; /* after the first datagram wait only briefly for more */
+		}
+		udp_close(sock);
+		return 0;
+	}
+	if (argc >= 2 && !kstrcmp(argv[1], "test")) { /* loopback: two sockets on 127.0.0.1 */
+		int a = udp_open(4000), b = udp_open(4001), ok = 0;
+
+		if (a >= 0 && b >= 0 && !udp_sendto(a, IP4(127, 0, 0, 1), 4001, "ping over udp", 13)
+		    && (n = udp_recvfrom(b, buf, UDP_MAX_PAYLOAD, &from, &sport, 500)) == 13
+		    && !memcmp(buf, "ping over udp", 13) && sport == 4000 && from == IP4(127, 0, 0, 1))
+			ok = 1;
+		udp_close(a);
+		udp_close(b);
+		console_printf("udp loopback test: %s\n", ok ? "ok" : "FAILED");
+		return !ok;
+	}
+	console_write("usage: udp send <ip> <port> <text> | udp listen <port> [secs] | udp test\n");
+	return 1;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -2561,6 +2621,7 @@ static const struct command commands[] = {
 	{ "iptest",  "iptest",                "IPv4 checksum / parsing self-test", cmd_iptest },
 	{ "icmptest", "icmptest",             "ICMP echo self-test (loopback)", cmd_icmptest },
 	{ "ping",    "ping <ip> [count]",     "send ICMP echo requests", cmd_ping },
+	{ "udp",     "udp send|listen|test",  "UDP datagrams", cmd_udp },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },

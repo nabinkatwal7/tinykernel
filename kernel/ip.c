@@ -18,7 +18,7 @@ struct ip_header {
 	uint8_t src[4], dst[4];
 } __attribute__((packed));
 
-#define MAX_PROTOS 4
+#define MAX_PROTOS 6
 static struct { uint8_t proto; ip_handler_t fn; } protos[MAX_PROTOS];
 static struct ip_stats stats;
 static uint16_t next_id = 1;
