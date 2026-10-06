@@ -229,8 +229,51 @@ static int fatv_list(void *ctx, const char *path, struct vfs_dirent *out, int ma
 	return n < 0 ? n : i;
 }
 
+static int fatv_write(void *ctx, const char *path, const void *data, uint32_t size)
+{
+	(void)ctx;
+	return fat_ready() ? FS_ENOMOUNT : fat12_write(path, data, size);
+}
+
+static int fatv_create(void *ctx, const char *path)
+{
+	struct fat12_entry e;
+
+	(void)ctx;
+	if (fat_ready())
+		return FS_ENOMOUNT;
+	if (fat12_stat(path, &e) == FS_OK)
+		return FS_EEXIST;
+	return fat12_write(path, "", 0);
+}
+
+static int fatv_unlink(void *ctx, const char *path)
+{
+	(void)ctx;
+	return fat_ready() ? FS_ENOMOUNT : fat12_delete(path);
+}
+
+static int fatv_mkdir(void *ctx, const char *path)
+{
+	(void)ctx;
+	return fat_ready() ? FS_ENOMOUNT : fat12_mkdir(path);
+}
+
+static int fatv_rmdir(void *ctx, const char *path)
+{
+	(void)ctx;
+	return fat_ready() ? FS_ENOMOUNT : fat12_rmdir(path);
+}
+
+static int fatv_rename(void *ctx, const char *from, const char *to)
+{
+	(void)ctx;
+	return fat_ready() ? FS_ENOMOUNT : fat12_rename(from, to);
+}
+
 static const struct vfs_ops fat_ops = {
-	"fat12", fatv_stat, fatv_read, 0, 0, 0, fatv_list, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	"fat12", fatv_stat, fatv_read, fatv_write, fatv_create, fatv_unlink, fatv_list, fatv_mkdir, fatv_rmdir, fatv_rename,
+	0, 0, 0, 0, 0, 0,
 };
 
 static const struct vfs_ops tinyfs_ops = {
