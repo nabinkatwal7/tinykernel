@@ -24,6 +24,7 @@ typedef struct task {
 	void *arg;
 	int is_idle;
 	struct task *next;     /* circular list of all tasks */
+	struct task *sleep_next; /* wake list, ordered by wake_tick */
 } task_t;
 
 void     sched_init(void);   /* adopts the running code as task 0 and creates the idle task */

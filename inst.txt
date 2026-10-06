@@ -1,4 +1,3 @@
-Implement sleep queue with wake list,
 Add kernel timers and callbacks,
 Implement mutex primitive,
 Implement semaphore primitive,

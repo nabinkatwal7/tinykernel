@@ -18,6 +18,29 @@ static task_t *task_head;   /* circular list */
 static task_t *current;
 static task_t *idle;
 static uint32_t next_id;
+static task_t *sleep_head; /* sleeping tasks, earliest wake_tick first */
+
+/* Insert keeping the list sorted; equal wake times keep FIFO order. */
+static void sleep_insert(task_t *t)
+{
+	task_t **pp = &sleep_head;
+
+	while (*pp && (int32_t)((*pp)->wake_tick - t->wake_tick) <= 0)
+		pp = &(*pp)->sleep_next;
+	t->sleep_next = *pp;
+	*pp = t;
+}
+
+static void sleep_remove(task_t *t)
+{
+	task_t **pp = &sleep_head;
+
+	while (*pp && *pp != t)
+		pp = &(*pp)->sleep_next;
+	if (*pp)
+		*pp = t->sleep_next;
+	t->sleep_next = 0;
+}
 static struct slab_cache task_cache;
 
 static void idle_main(void *arg)
@@ -187,6 +210,7 @@ void task_sleep(uint32_t ms)
 		ticks = 1;
 	current->wake_tick = timer_ticks() + ticks;
 	current->state = TASK_SLEEPING;
+	sleep_insert(current);
 	schedule_locked();
 	irq_restore(f);
 }
@@ -212,6 +236,8 @@ int task_kill(uint32_t id)
 				irq_restore(f);
 				task_exit();
 			}
+			if (t->state == TASK_SLEEPING)
+				sleep_remove(t);
 			t->state = TASK_DEAD;
 			rc = 0;
 			break;
@@ -278,16 +304,17 @@ uint32_t task_count(void)
 /* Called from the timer IRQ with interrupts off. */
 void sched_tick(void)
 {
-	task_t *t = task_head;
 	uint32_t now = timer_ticks();
 
 	if (!current)
 		return;
-	do {
-		if (t->state == TASK_SLEEPING && (int32_t)(now - t->wake_tick) >= 0)
-			t->state = TASK_READY;
-		t = t->next;
-	} while (t != task_head);
+	while (sleep_head && (int32_t)(now - sleep_head->wake_tick) >= 0) {
+		task_t *t = sleep_head;
+
+		sleep_head = t->sleep_next;
+		t->sleep_next = 0;
+		t->state = TASK_READY;
+	}
 
 	current->cpu_ticks++;
 	if (current->is_idle || current->slice_left == 0 || --current->slice_left == 0)
