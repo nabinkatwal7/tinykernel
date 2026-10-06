@@ -14,6 +14,7 @@ struct netif {
 	uint8_t  mac[ETH_ALEN];
 	uint16_t io_base;
 	uint8_t  irq;
+	uint32_t dns;                        /* resolver address (from DHCP), 0 if unknown */
 	uint32_t ip, netmask, gateway;       /* IPv4, host byte order; 0 = not configured */
 	uint32_t tx_frames, tx_errors, rx_frames, rx_errors, rx_dropped;
 };

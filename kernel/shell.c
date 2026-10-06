@@ -6,6 +6,7 @@
 #include "console.h"
 #include "cpu.h"
 #include "debug.h"
+#include "dhcp.h"
 #include "editor.h"
 #include "env.h"
 #include "fat12.h"
@@ -2095,6 +2096,45 @@ static int cmd_udp(int argc, char **argv)
 	return 1;
 }
 
+/* dhcp: ask the network (QEMU's built-in server) for an address. */
+static int cmd_dhcp(int argc, char **argv)
+{
+	char a[16], b[16], c[16], d[16];
+	int rc;
+
+	(void)argc;
+	(void)argv;
+	if (!netif.up) {
+		console_write("no network interface\n");
+		return 1;
+	}
+	console_write("requesting a lease... ");
+	rc = dhcp_acquire(3000);
+	if (rc) {
+		console_printf("failed (%s)\n", rc == -2 ? "no offer" : rc == -3 ? "no ACK" : "no socket");
+		return 1;
+	}
+	console_printf("bound\n  inet %s  mask %s  gateway %s  dns %s  lease %us\n", ip_str(netif.ip, a),
+		       ip_str(netif.netmask, b), ip_str(netif.gateway, c), ip_str(netif.dns, d), dhcp_lease_seconds());
+	return 0;
+}
+
+/* ipconfig <ip> <mask> [gateway]: static configuration. */
+static int cmd_ipconfig(int argc, char **argv)
+{
+	uint32_t ip, mask, gw = 0;
+
+	if (argc < 3 || argc > 4 || ip_parse(argv[1], &ip) || ip_parse(argv[2], &mask) || (argc == 4 && ip_parse(argv[3], &gw))) {
+		console_write("usage: ipconfig <ip> <netmask> [gateway]\n");
+		return 1;
+	}
+	netif.ip = ip;
+	netif.netmask = mask;
+	netif.gateway = gw;
+	arp_cache_clear();
+	return 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -2622,6 +2662,8 @@ static const struct command commands[] = {
 	{ "icmptest", "icmptest",             "ICMP echo self-test (loopback)", cmd_icmptest },
 	{ "ping",    "ping <ip> [count]",     "send ICMP echo requests", cmd_ping },
 	{ "udp",     "udp send|listen|test",  "UDP datagrams", cmd_udp },
+	{ "dhcp",    "dhcp",                  "get an address via DHCP", cmd_dhcp },
+	{ "ipconfig", "ipconfig <ip> <mask> [gw]", "set a static address", cmd_ipconfig },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },

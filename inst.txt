@@ -1,4 +1,3 @@
-Add tiny DHCP or static IP config,
 Implement basic TCP handshake,
 Add power management: ACPI shutdown,
 Add boot menu and kernel parameters,
