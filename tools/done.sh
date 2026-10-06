@@ -3,7 +3,7 @@
 # Removes the finished item from inst.txt, commits everything, pushes.
 set -e
 cd "$(dirname "$0")/.."
-grep -vxF "$1," inst.txt > inst.tmp || true
+tr -d "" < inst.txt | grep -vxF "$1," > inst.tmp || true
 mv inst.tmp inst.txt
 git add -A
 git commit -q -m "$2
