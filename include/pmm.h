@@ -15,6 +15,9 @@ void     pmm_free(uint32_t addr);
 void     pmm_free_range(uint32_t addr, uint32_t n);
 uint32_t pmm_total_frames(void);
 uint32_t pmm_free_frames(void);
+uint32_t pmm_ram_kib(void);       /* installed RAM from the E820 map (top of the highest usable region, KiB) */
+uint32_t pmm_usable_kib(void);    /* sum of all E820 usable regions, KiB */
+uint32_t pmm_cmos_ram_kib(void);  /* second opinion from the CMOS memory registers, KiB */
 void     pmm_print_map(void);                      /* E820 table + allocator summary */
 
 #endif

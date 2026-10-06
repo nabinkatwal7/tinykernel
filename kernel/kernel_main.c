@@ -49,6 +49,8 @@ void kernel_main(void)
 	idt_init();
 	pic_init();
 	pmm_init();
+	klog(LOG_INFO, "ram: %u MiB (E820), %u MiB usable, CMOS says %u MiB", (pmm_ram_kib() + 512) / 1024,
+	     pmm_usable_kib() / 1024, (pmm_cmos_ram_kib() + 512) / 1024);
 	heap_init();
 	paging_init();
 	keyboard_init();

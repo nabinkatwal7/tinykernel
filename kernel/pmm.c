@@ -183,6 +183,58 @@ uint32_t pmm_free_frames(void)
 	return free_count;
 }
 
+/* Highest end address (clipped to 4 GiB) and total size of E820 usable regions, in KiB. */
+static void e820_totals(uint32_t *top_kib, uint32_t *sum_kib)
+{
+	struct e820_entry *e = (struct e820_entry *)(E820_BASE + 8);
+	uint32_t n = e820_count(), i;
+
+	*top_kib = *sum_kib = 0;
+	for (i = 0; i < n; i++) {
+		uint32_t start, len, end;
+
+		if (e[i].type != E820_USABLE || e[i].base_hi)
+			continue;
+		start = e[i].base_lo;
+		len = e[i].len_hi ? 0xFFFFFFFFu - start : e[i].len_lo;
+		end = start + len < start ? 0xFFFFFFFFu : start + len;
+		*sum_kib += len / 1024;
+		if (end / 1024 > *top_kib)
+			*top_kib = end / 1024;
+	}
+}
+
+uint32_t pmm_ram_kib(void)
+{
+	uint32_t top, sum;
+
+	e820_totals(&top, &sum);
+	return top ? top : pmm_cmos_ram_kib();
+}
+
+uint32_t pmm_usable_kib(void)
+{
+	uint32_t top, sum;
+
+	e820_totals(&top, &sum);
+	return sum;
+}
+
+static uint8_t cmos(uint8_t reg)
+{
+	outb(0x70, reg);
+	return inb(0x71);
+}
+
+/* CMOS 0x30/0x31: KiB between 1 MiB and 16 MiB; 0x34/0x35: 64 KiB units above 16 MiB. */
+uint32_t pmm_cmos_ram_kib(void)
+{
+	uint32_t low = (uint32_t)cmos(0x30) | ((uint32_t)cmos(0x31) << 8);
+	uint32_t high = (uint32_t)cmos(0x34) | ((uint32_t)cmos(0x35) << 8);
+
+	return high ? 16u * 1024 + high * 64 : 1024 + low;
+}
+
 void pmm_print_map(void)
 {
 	struct e820_entry *e = (struct e820_entry *)(E820_BASE + 8);
@@ -201,6 +253,9 @@ void pmm_print_map(void)
 				       e[i].base_lo + e[i].len_lo - 1, types[t]);
 		}
 	}
+	console_printf("RAM: %u MiB installed (E820), %u MiB usable, CMOS reports %u MiB\n",
+		       (pmm_ram_kib() + 512) / 1024, pmm_usable_kib() / 1024,
+		       (pmm_cmos_ram_kib() + 512) / 1024);
 	console_printf("pmm: %u / %u frames free (%u KiB), managing first %u MiB\n", free_count,
 		       MAX_FRAMES, free_count * 4, MAX_FRAMES * 4 / 1024);
 }

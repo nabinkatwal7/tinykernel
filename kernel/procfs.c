@@ -34,9 +34,10 @@ static int gen_meminfo(char *buf, uint32_t cap)
 
 	heap_stats(&h);
 	return ksnprintf(buf, cap,
-			 "FramesTotal: %u\nFramesFree: %u\nMemFreeKB: %u\n"
+			 "MemTotalKB: %u\nMemUsableKB: %u\nFramesTotal: %u\nFramesFree: %u\nMemFreeKB: %u\n"
 			 "HeapTotal: %u\nHeapUsed: %u\nHeapFree: %u\nHeapLargestFree: %u\n",
-			 pmm_total_frames(), pmm_free_frames(), pmm_free_frames() * 4, h.total, h.used, h.free,
+			 pmm_ram_kib(), pmm_usable_kib(), pmm_total_frames(), pmm_free_frames(),
+			 pmm_free_frames() * 4, h.total, h.used, h.free,
 			 h.largest_free);
 }
 
