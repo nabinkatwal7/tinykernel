@@ -10,6 +10,7 @@
 #include "fat12.h"
 #include "fs.h"
 #include "gfx.h"
+#include "gui.h"
 #include "io.h"
 #include "keyboard.h"
 #include "klog.h"
@@ -1690,6 +1691,70 @@ static int cmd_wmdemo(int argc, char **argv)
 	return 0;
 }
 
+static int gui_counter;
+static struct gui_button gui_buttons[3];
+
+static void gui_inc(void *arg) { (void)arg; gui_counter++; }
+static void gui_dec(void *arg) { (void)arg; gui_counter--; }
+static void gui_reset(void *arg) { (void)arg; gui_counter = 0; }
+
+static void gui_paint(struct window *w, int cx, int cy)
+{
+	char text[24];
+	int i;
+
+	(void)w;
+	ksnprintf(text, sizeof text, "Count: %d", gui_counter);
+	gfx_text(cx + 8, cy + 6, text, 0, -1);
+	for (i = 0; i < 3; i++)
+		gui_button_draw(&gui_buttons[i], cx, cy);
+}
+
+/* guidemo: a window with a counter and three push buttons. Any key quits. */
+static int cmd_guidemo(int argc, char **argv)
+{
+	struct window *win;
+	struct mouse_state m;
+	int i;
+
+	(void)argc;
+	(void)argv;
+	if (!mouse_present()) {
+		console_write("guidemo needs the PS/2 mouse\n");
+		return 1;
+	}
+	if (gfx_enter())
+		return 1;
+	gui_counter = 0;
+	gui_buttons[0] = (struct gui_button){ 8, 30, 40, 22, "+", gui_inc, 0, 0 };
+	gui_buttons[1] = (struct gui_button){ 56, 30, 40, 22, "-", gui_dec, 0, 0 };
+	gui_buttons[2] = (struct gui_button){ 104, 30, 56, 22, "Reset", gui_reset, 0, 0 };
+	wm_init(3);
+	win = wm_create(60, 50, 180, 100, "Counter", 7);
+	win->paint = gui_paint;
+	mousecursor_enable(0);
+	mouse_get(&m);
+	wm_mouse(m.x / 2, m.y / 2, m.buttons);
+	wm_render();
+	while (keyboard_trygetkey() < 0) {
+		int redraw;
+
+		mouse_get(&m);
+		redraw = wm_mouse(m.x / 2, m.y / 2, m.buttons);
+		redraw |= gui_buttons_mouse(gui_buttons, 3, win, m.x / 2, m.y / 2, m.buttons);
+		if (redraw)
+			wm_render();
+		task_sleep(20);
+	}
+	for (i = 0; i < 3; i++)
+		gui_buttons[i].down = 0;
+	vga_set_text();
+	console_clear();
+	mousecursor_enable(1);
+	console_printf("final count: %d\n", gui_counter);
+	return 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -2206,6 +2271,7 @@ static const struct command commands[] = {
 	{ "gfxtext", "gfxtext",              "bitmap font demo", cmd_gfxtext },
 	{ "gfxmode", "gfxmode on|off",       "run the console on the graphics screen", cmd_gfxmode },
 	{ "wmdemo",  "wmdemo",                "window manager demo (mouse)", cmd_wmdemo },
+	{ "guidemo", "guidemo",              "button widget demo (mouse)", cmd_guidemo },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },
