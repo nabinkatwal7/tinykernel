@@ -1,4 +1,3 @@
-Detect CPU with CPUID,
 Add 'cpuinfo' shell command,
 Detect installed RAM size,
 Learn PS/2 mouse protocol,

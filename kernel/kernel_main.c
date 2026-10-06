@@ -1,6 +1,7 @@
 #include "ata.h"
 #include "bcache.h"
 #include "console.h"
+#include "cpu.h"
 #include "fat12.h"
 #include "fs.h"
 #include "gdt.h"
@@ -57,6 +58,7 @@ void kernel_main(void)
 	sti();
 	klog(LOG_INFO, "interrupts enabled");
 
+	cpu_init();
 	pci_scan();
 	vfs_init();
 	if (ata_init() == 0) {
