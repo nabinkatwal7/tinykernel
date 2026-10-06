@@ -14,6 +14,7 @@
 #include "crashdump.h"
 #include "cred.h"
 #include "debug.h"
+#include "blk.h"
 #include "sha256.h"
 #include "users.h"
 #include "gdbstub.h"
@@ -4098,6 +4099,10 @@ static const struct command commands[] = {
 	{ "readlink", "readlink LINK",        "print the target of a symbolic link", cmd_readlink },
 	{ "logout",  "logout",                "end the session and show the login prompt", cmd_logout },
 	{ "jtest",   "jtest",                 "journal crash-recovery test", cmd_jtest },
+	{ "blkdev", "blkdev", "list block devices", cmd_blkdev },
+	{ "ramdisk", "ramdisk create|destroy|test", "RAM disk block devices", cmd_ramdisk },
+	{ "losetup", "losetup NAME FILE", "present a file as a block device", cmd_losetup },
+	{ "fdisk", "fdisk DEVICE", "show and register MBR partitions", cmd_fdisk },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },

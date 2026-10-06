@@ -3,6 +3,7 @@
 #include "clock.h"
 #include "hrtime.h"
 #include "ata.h"
+#include "blk.h"
 #include "crashdump.h"
 #include "bcache.h"
 #include "cmdline.h"
@@ -93,6 +94,7 @@ void kernel_main(void)
 	pci_scan();
 	vfs_init();
 	if (ata_init() == 0) {
+		blk_init();
 		if (ata_dev_present(1) && fat12_mount(1) != FS_OK)
 			klog(LOG_INFO, "ata: drive 1 is not FAT12");
 		int rc;
