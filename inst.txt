@@ -1,4 +1,3 @@
-Add 'stat' shell command,
 Add 'df' shell command,
 Add simple text editor,
 Add filesystem free space bitmap,

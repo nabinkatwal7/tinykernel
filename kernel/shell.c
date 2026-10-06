@@ -1230,6 +1230,35 @@ static int cmd_mv(int argc, char **argv)
 	return rc ? fs_fail(argv[1], rc) : 0;
 }
 
+static int cmd_stat(int argc, char **argv)
+{
+	char abs[VFS_PATH_MAX];
+	struct vfs_stat st;
+	struct fs_stat fst;
+	int i, rc = 0;
+
+	if (argc < 2) {
+		console_write("usage: stat <path>...\n");
+		return 1;
+	}
+	for (i = 1; i < argc; i++) {
+		int r = vfs_stat(argv[i], &st);
+
+		if (r) {
+			rc = fs_fail(argv[i], r);
+			continue;
+		}
+		vfs_normalize(vfs_getcwd(), argv[i], abs, sizeof abs);
+		console_printf("  File: %s\n  Type: %s\n  Size: %u bytes\n", abs,
+			       st.dev ? "character device" : st.is_dir ? "directory" : "regular file",
+			       st.size);
+		if (!st.dev && !st.is_dir && kstrncmp(abs, "/dev/", 5) && kstrncmp(abs, "/proc/", 6)
+		    && fs_stat(abs, &fst) == FS_OK)
+			console_printf("  Disk: sector %u, %u sector(s)\n", fst.start_lba, fst.sectors);
+	}
+	return rc;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -1729,6 +1758,7 @@ static const struct command commands[] = {
 	{ "append",  "append <file> <text>",  "append a line to a file", cmd_append },
 	{ "mv",      "mv <src> <dst>",        "move or rename", cmd_mv },
 	{ "cp",      "cp <src> <dst>",        "copy a file", cmd_cp },
+	{ "stat",    "stat <path>",           "show file information", cmd_stat },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },
