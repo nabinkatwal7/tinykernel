@@ -27,6 +27,13 @@ int file_open(const char *path, int flags);   /* lowest free descriptor */
 #define SEEK_CUR 1
 #define SEEK_END 2
 int file_seek(int fd, int32_t off, int whence); /* new position or a negative error; regular files only */
+/* Advisory file locks (flock): shared locks coexist, an exclusive lock excludes everything else on the same file.
+   A lock belongs to the open file and ends with the last close. Without LOCK_NB a conflicting request blocks. */
+#define LOCK_SH 1
+#define LOCK_EX 2
+#define LOCK_NB 4
+#define LOCK_UN 8
+int file_flock(int fd, int op);                /* 0, FS_EBUSY (LOCK_NB only) or FS_EINVAL */
 int file_pipe(int fds[2]);                     /* a pipe: fds[0] reads what is written to fds[1]; 0 or FS_E* */
 int file_dup(int fd);                          /* new descriptor sharing the same open file */
 int file_dup2(int fd, int target);             /* make target refer to fd's open file (closing target) */

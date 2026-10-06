@@ -20,6 +20,11 @@
 #define SYS_TRYKEY  35
 #define SYS_PUTAT   36
 #define SYS_CLS     37
+#define SYS_FLOCK   39
+#define LOCK_SH 1
+#define LOCK_EX 2
+#define LOCK_NB 4
+#define LOCK_UN 8
 #define SYS_GFX     38
 #define GFX_ENTER   0
 #define GFX_LEAVE   1
@@ -117,6 +122,7 @@ static inline int   munmap(void *addr)             { return syscall3(SYS_MUNMAP,
 #define KEY_RIGHT 0x104
 static inline int   trykey(void)                    { return syscall3(SYS_TRYKEY, 0, 0, 0); }
 static inline int   putat(int x, int y, char c, int attr) { return syscall3(SYS_PUTAT, x, y, (attr << 8) | (unsigned char)c); }
+static inline int   flock(int fd, int op)          { return syscall3(SYS_FLOCK, fd, op, 0); }
 static inline int   gfx(int op, const int *args)     { return syscall3(SYS_GFX, op, (int)args, 0); }
 static inline int   gfx_enter(void)                 { int a[6] = { 0 }; return gfx(GFX_ENTER, a); }
 static inline int   gfx_leave(void)                 { int a[6] = { 0 }; return gfx(GFX_LEAVE, a); }

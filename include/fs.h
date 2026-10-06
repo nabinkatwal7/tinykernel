@@ -28,6 +28,7 @@
 #define FS_EROFS    -11 /* read-only filesystem */
 #define FS_EPIPE    -12 /* write to a pipe with no reader */
 #define FS_EACCES   -13 /* permission denied */
+#define FS_EBUSY    -14 /* locked by someone else (non-blocking request) */
 
 /* Per-entry metadata (TinyFS keeps one 16-byte record per directory entry). */
 struct fs_meta {

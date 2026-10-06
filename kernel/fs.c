@@ -47,6 +47,7 @@ const char *fs_strerror(int err)
 	case FS_ETOOBIG:   return "buffer too small";
 	case FS_EISDIR:    return "is a directory";
 	case FS_EACCES:    return "permission denied";
+	case FS_EBUSY:     return "resource busy (locked)";
 	case FS_ENOTDIR:   return "not a directory";
 	case FS_ENOTEMPTY: return "directory not empty";
 	case FS_EROFS:     return "read-only filesystem";
