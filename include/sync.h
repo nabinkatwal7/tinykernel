@@ -32,6 +32,17 @@ uint32_t spin_lock_irqsave(spinlock_t *l);               /* returns the saved EF
 void     spin_unlock_irqrestore(spinlock_t *l, uint32_t flags);
 int      spin_trylock(spinlock_t *l, uint32_t *flags);   /* 0 on success */
 
+/* Ticket lock: first come, first served, so no core can starve. Does not touch the interrupt flag. */
+typedef struct {
+	volatile uint16_t next;    /* next ticket to hand out */
+	volatile uint16_t owner;   /* ticket currently allowed in */
+} ticketlock_t;
+
+#define TICKETLOCK_INIT { 0, 0 }
+
+void ticket_lock(ticketlock_t *l);
+void ticket_unlock(ticketlock_t *l);
+
 /* Counting semaphore. */
 typedef struct {
 	int count;

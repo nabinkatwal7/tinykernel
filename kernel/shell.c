@@ -1028,6 +1028,44 @@ static int cmd_priotest(int argc, char **argv)
 	return !ok;
 }
 
+static ticketlock_t smp_lock = TICKETLOCK_INIT;
+static volatile uint32_t smp_counter, smp_counter_unsafe;
+
+static void smp_hammer(void *arg)
+{
+	int i;
+
+	(void)arg;
+	for (i = 0; i < 20000; i++) {
+		ticket_lock(&smp_lock);
+		smp_counter++;
+		ticket_unlock(&smp_lock);
+		smp_counter_unsafe++; /* the same increment with no lock: two cores can lose updates */
+	}
+}
+
+/* spinsmp: both cores hammer one counter, with and without a ticket lock. */
+static int cmd_spinsmp(int argc, char **argv)
+{
+	int fails = 0;
+
+	(void)argc;
+	(void)argv;
+	if (percpu_online_count() < 2) {
+		console_write("needs a second core: run 'cpus start' first\n");
+		return 1;
+	}
+	smp_counter = smp_counter_unsafe = 0;
+	CHECK(smp_post(1, smp_hammer, 0) == 0, "job handed to cpu 1");
+	smp_hammer(0);                     /* this core does the same work at the same time */
+	CHECK(smp_wait(1) == 0, "cpu 1 finished");
+	console_printf("with ticket lock: counter = %u (expected 40000)\n", smp_counter);
+	console_printf("without a lock:   counter = %u (anything below 40000 = lost updates)\n", smp_counter_unsafe);
+	CHECK(smp_counter == 40000, "ticket lock keeps the count exact");
+	console_write(fails ? "spinsmp: FAILED\n" : "spinsmp: ok\n");
+	return fails != 0;
+}
+
 static int cmd_kill(int argc, char **argv)
 {
 	uint32_t id;
@@ -2846,6 +2884,7 @@ static const struct command commands[] = {
 	{ "unset",   "unset <NAME>",          "remove an environment variable", cmd_unset },
 	{ "nice",    "nice <id> <prio>",      "set a task priority", cmd_nice },
 	{ "priotest", "priotest",             "priority + aging scheduler test", cmd_priotest },
+	{ "spinsmp", "spinsmp",               "two-core spinlock test", cmd_spinsmp },
 	{ "kill",  "kill <id>",             "stop a task", cmd_kill },
 	{ "ls",      "ls",                    "list files", cmd_ls },
 	{ "mount",   "mount",                 "list mounted filesystems", cmd_mount },

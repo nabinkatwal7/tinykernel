@@ -119,6 +119,22 @@ void spin_unlock_irqrestore(spinlock_t *l, uint32_t flags)
 	irq_restore(flags);
 }
 
+void ticket_lock(ticketlock_t *l)
+{
+	uint16_t mine = 1;
+
+	/* xadd adds 'mine' (1) to next and leaves the OLD value of next in 'mine': that is our ticket */
+	__asm__ volatile ("lock xaddw %0, %1" : "+r"(mine), "+m"(l->next) : : "memory", "cc");
+	while (l->owner != mine)
+		__asm__ volatile ("pause");
+}
+
+void ticket_unlock(ticketlock_t *l)
+{
+	__asm__ volatile ("" : : : "memory");
+	l->owner++;
+}
+
 int spin_trylock(spinlock_t *l, uint32_t *flags)
 {
 	uint32_t f = irq_save();

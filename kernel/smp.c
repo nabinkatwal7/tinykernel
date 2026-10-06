@@ -27,6 +27,38 @@ struct handshake {
 };
 
 static volatile uint32_t heartbeat[MAX_CPUS];
+static struct {
+	void (*volatile fn)(void *);
+	void *volatile arg;
+	volatile int done;
+} job[MAX_CPUS];
+
+int smp_post(int id, void (*fn)(void *), void *arg)
+{
+	struct percpu *c = percpu_get(id);
+
+	if (!c || !c->online || c->is_bsp)
+		return -1;
+	job[id].done = 0;
+	job[id].arg = arg;
+	__asm__ volatile ("" : : : "memory");
+	job[id].fn = fn;                /* publishing the function last starts the job */
+	return 0;
+}
+
+int smp_wait(int id)
+{
+	int spin;
+
+	for (spin = 0; !job[id].done && spin < 5000; spin++)
+		task_sleep(1);
+	return job[id].done ? 0 : -1;
+}
+
+int smp_run_on(int id, void (*fn)(void *), void *arg)
+{
+	return smp_post(id, fn, arg) ? -1 : smp_wait(id);
+}
 static volatile int ap_ready;      /* set by the AP once it is fully in the kernel */
 static volatile int booting_cpu;   /* which logical cpu the AP currently starting is */
 
@@ -59,6 +91,13 @@ static void ap_main(void)
 	ap_ready = 1;
 	for (;;) { /* idle with interrupts off: no scheduler on this core yet */
 		heartbeat[booting_cpu]++;
+		if (job[booting_cpu].fn) {
+			void (*fn)(void *) = job[booting_cpu].fn;
+
+			job[booting_cpu].fn = 0;
+			fn(job[booting_cpu].arg);
+			job[booting_cpu].done = 1;
+		}
 		__asm__ volatile ("pause");
 	}
 }
