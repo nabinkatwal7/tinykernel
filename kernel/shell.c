@@ -13,6 +13,7 @@
 #include "gfx.h"
 #include "gui.h"
 #include "io.h"
+#include "ip.h"
 #include "keyboard.h"
 #include "klog.h"
 #include "kmalloc.h"
@@ -1924,6 +1925,42 @@ static int cmd_arp(int argc, char **argv)
 	return 0;
 }
 
+/* iptest: checksum known-answer tests, byte-order helpers, address parsing. */
+static int cmd_iptest(int argc, char **argv)
+{
+	/* the IPv4 header example from RFC 1071-style references: checksum field = 0xb861 */
+	static const uint8_t hdr[20] = { 0x45, 0x00, 0x00, 0x73, 0x00, 0x00, 0x40, 0x00, 0x40, 0x11,
+					 0x00, 0x00, 0xc0, 0xa8, 0x00, 0x01, 0xc0, 0xa8, 0x00, 0xc7 };
+	uint8_t full[20];
+	uint32_t ip;
+	int fails = 0;
+
+	(void)argc;
+	(void)argv;
+	CHECK(ip_checksum(hdr, 20) == 0xB861, "checksum of the reference header is 0xb861");
+	memcpy(full, hdr, 20);
+	full[10] = 0xB8;
+	full[11] = 0x61;
+	CHECK(ip_checksum(full, 20) == 0, "a header carrying its checksum verifies to zero");
+	full[19] ^= 1;
+	CHECK(ip_checksum(full, 20) != 0, "a damaged header no longer verifies");
+	{
+		static const uint8_t odd[3] = { 0x01, 0x02, 0x03 };
+
+		CHECK(ip_checksum(odd, 3) == (uint16_t)~(0x0102 + 0x0300), "odd length: last byte is zero padded");
+	}
+	CHECK(htons(0x1234) == 0x3412 && ntohs(0x3412) == 0x1234, "htons/ntohs swap");
+	CHECK(htonl(0x11223344u) == 0x44332211u, "htonl swaps four bytes");
+	CHECK(!ip_parse("192.168.1.20", &ip) && ip == IP4(192, 168, 1, 20), "parse a dotted quad");
+	CHECK(ip_parse("256.1.1.1", &ip) && ip_parse("1.2.3", &ip) && ip_parse("1.2.3.4.5", &ip)
+	      && ip_parse("a.b.c.d", &ip) && ip_parse("1..2.3", &ip), "malformed addresses are rejected");
+	if (fails)
+		console_printf("iptest: %d check(s) failed\n", fails);
+	else
+		console_write("iptest: all checks passed\n");
+	return fails != 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -2447,6 +2484,7 @@ static const struct command commands[] = {
 	{ "netloop", "netloop",               "self-test the receive path in loopback", cmd_netloop },
 	{ "nettrace", "nettrace on|off",      "show every received frame", cmd_nettrace },
 	{ "arp",     "arp [ip|flush]",        "ARP cache / resolve an address", cmd_arp },
+	{ "iptest",  "iptest",                "IPv4 checksum / parsing self-test", cmd_iptest },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },

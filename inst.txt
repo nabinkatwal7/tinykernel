@@ -1,4 +1,3 @@
-Implement IPv4 basics,
 Implement ICMP ping reply,
 Add 'ping' shell command,
 Implement UDP send and receive,
