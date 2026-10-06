@@ -1,4 +1,3 @@
-Add device files in VFS,
 Add /dev/console and /dev/null,
 Add procfs style info files,
 Add directories to filesystem,

@@ -12,7 +12,7 @@
  * (after dup/dup2) may share one object - and with it the cursor. Objects are either the
  * console (stdin/stdout/stderr) or a buffered regular file.
  */
-enum { OBJ_FREE, OBJ_CONSOLE_IN, OBJ_CONSOLE_OUT, OBJ_FILE };
+enum { OBJ_FREE, OBJ_CONSOLE_IN, OBJ_CONSOLE_OUT, OBJ_FILE, OBJ_DEV };
 
 struct ofile {
 	int kind;
@@ -22,6 +22,7 @@ struct ofile {
 	uint8_t *buf;
 	uint32_t size, cap, pos;
 	int dirty;
+	const struct vfs_device *dev; /* OBJ_DEV */
 };
 
 #define NOBJ (FILE_MAX_OPEN + 3)
@@ -118,10 +119,9 @@ int file_open_count(void)
 int file_open(const char *path, int flags)
 {
 	struct ofile *o;
+	struct vfs_stat st;
 	int oi, fd, size, rc;
 
-	if (!fs_mounted() && fs_mount() != FS_OK)
-		return FS_ENOMOUNT;
 	if (kstrlen(path) >= FS_NAME_MAX)
 		return FS_EINVAL;
 	fd = new_fd();
@@ -129,7 +129,20 @@ int file_open(const char *path, int flags)
 	if (fd < 0 || oi < 0)
 		return FS_ENOSPC;
 
-	size = vfs_size(path);
+	rc = vfs_stat(path, &st);
+	if (rc == FS_OK && st.dev) { /* device file: no buffering, every read/write goes to the driver */
+		o = &objs[oi];
+		memset(o, 0, sizeof *o);
+		o->kind = OBJ_DEV;
+		o->dev = st.dev;
+		o->flags = flags;
+		o->refs = 1;
+		fdtab[fd] = oi;
+		return fd;
+	}
+	if (rc == FS_OK && st.is_dir)
+		return FS_EINVAL;
+	size = rc == FS_OK ? (int)st.size : rc;
 	if (size == FS_ENOENT) {
 		if (!(flags & O_CREAT))
 			return FS_ENOENT;
@@ -247,6 +260,11 @@ int file_read(int fd, void *buf, uint32_t n)
 			((char *)buf)[got++] = linebuf[line_pos++];
 		return (int)got;
 	}
+	if (o->kind == OBJ_DEV) {
+		if ((o->flags & O_WRONLY) || !o->dev->read)
+			return FS_EINVAL;
+		return o->dev->read(buf, n);
+	}
 	if (o->kind != OBJ_FILE || (o->flags & O_WRONLY))
 		return FS_EINVAL;
 	if (o->pos >= o->size)
@@ -270,6 +288,11 @@ int file_write(int fd, const void *buf, uint32_t n)
 		for (i = 0; i < n; i++)
 			console_putchar(((const char *)buf)[i]);
 		return (int)n;
+	}
+	if (o->kind == OBJ_DEV) {
+		if (!writable(o->flags) || !o->dev->write)
+			return FS_EINVAL;
+		return o->dev->write(buf, n);
 	}
 	if (o->kind != OBJ_FILE || !writable(o->flags))
 		return FS_EINVAL;

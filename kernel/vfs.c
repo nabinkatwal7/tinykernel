@@ -21,11 +21,20 @@ static const char *tfs_name(const char *path)
 	return path;
 }
 
+/* Mount the disk on first use so a freshly booted system just works. */
+static void ensure_mounted(void)
+{
+	if (!fs_mounted())
+		fs_mount();
+}
+
 static int tfs_stat(void *ctx, const char *path, struct vfs_stat *st)
 {
 	int size;
 
 	(void)ctx;
+	ensure_mounted();
+	st->dev = 0;
 	path = tfs_name(path);
 	if (!*path) { /* the root directory itself */
 		st->size = 0;
@@ -93,6 +102,7 @@ void vfs_init(void)
 {
 	memset(mounts, 0, sizeof mounts);
 	vfs_mount("/", &tinyfs_ops, 0);
+	devfs_init();
 }
 
 int vfs_mount(const char *prefix, const struct vfs_ops *ops, void *ctx)

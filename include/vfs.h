@@ -18,9 +18,17 @@ struct vfs_dirent {
 	int is_dir;
 };
 
+/* A character device: a stream with no size, read/written in whatever amounts the caller asks. */
+struct vfs_device {
+	const char *name;
+	int (*read)(void *buf, uint32_t n);        /* bytes produced (0 = end of input), or < 0 */
+	int (*write)(const void *buf, uint32_t n); /* bytes consumed, or < 0 */
+};
+
 struct vfs_stat {
 	uint32_t size;
 	int is_dir;
+	const struct vfs_device *dev;              /* non-NULL for device files */
 };
 
 struct vfs_ops {
@@ -37,7 +45,11 @@ struct vfs_ops {
 
 int  vfs_mount(const char *prefix, const struct vfs_ops *ops, void *ctx); /* 0 or FS_E* */
 int  vfs_unmount(const char *prefix);
-void vfs_init(void);                    /* mounts TinyFS on "/" */
+void vfs_init(void);
+
+/* devfs: mounted on /dev by vfs_init(). */
+int  devfs_register(const struct vfs_device *dev);   /* FS_ENOSPC when the table is full */
+void devfs_init(void);                               /* registers the built-in devices */                    /* mounts TinyFS on "/" */
 
 int  vfs_stat(const char *path, struct vfs_stat *st);
 int  vfs_size(const char *path);        /* bytes, or a negative error */
