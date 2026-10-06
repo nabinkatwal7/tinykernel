@@ -249,6 +249,45 @@ static int cmd_time(int argc, char **argv)
 	return rc;
 }
 
+static void timer_say(void *arg)
+{
+	console_printf("[timer] %s\n", (const char *)arg);
+}
+
+/* timer <ms> <text> | timer every <ms> <text> | timer list | timer cancel <id> */
+static int cmd_timer(int argc, char **argv)
+{
+	static char texts[KTIMER_MAX][48];
+	uint32_t ms, id;
+	int periodic = argc > 1 && !kstrcmp(argv[1], "every");
+	int a = periodic ? 2 : 1, slot;
+	uint32_t flags;
+
+	if (argc == 2 && !kstrcmp(argv[1], "list")) {
+		ktimer_list();
+		return 0;
+	}
+	if (argc == 3 && !kstrcmp(argv[1], "cancel") && !kstrtoul(argv[2], &id))
+		return ktimer_cancel((int)id) ? (console_write("no such timer\n"), 1) : 0;
+	if (argc < a + 2 || kstrtoul(argv[a], &ms)) {
+		console_write("usage: timer [every] <ms> <text> | timer list | timer cancel <id>\n");
+		return 1;
+	}
+	flags = irq_save(); /* the text must be in place before the timer can fire */
+	slot = ktimer_add(ms, periodic, timer_say, 0);
+	if (slot >= 0) {
+		kstrlcpy(texts[slot], argv[a + 1], sizeof texts[slot]);
+		ktimer_set_arg(slot, texts[slot]);
+	}
+	irq_restore(flags);
+	if (slot < 0) {
+		console_write("no free timer slots\n");
+		return 1;
+	}
+	console_printf("timer #%d set\n", slot);
+	return 0;
+}
+
 static int cmd_sleep(int argc, char **argv)
 {
 	uint32_t ms;
@@ -913,6 +952,7 @@ static const struct command commands[] = {
 	{ "uptime",  "uptime",                "time since boot", cmd_uptime },
 	{ "date",    "date",                  "show the real-time clock", cmd_date },
 	{ "time",    "time <cmd...>",         "time a command", cmd_time },
+	{ "timer",   "timer [every] <ms> <txt>", "kernel timers: set/list/cancel", cmd_timer },
 	{ "sleep",   "sleep <ms>",            "sleep via the scheduler", cmd_sleep },
 	{ "meminfo", "meminfo",               "memory map, frames and heap", cmd_meminfo },
 	{ "memtest", "memtest",               "stress test the allocator", cmd_memtest },
