@@ -263,6 +263,8 @@ static void reap(void)
 		prev->next = t->next;
 		if (task_head == t)
 			task_head = prev;
+		if (t->is_uproc && t->pgdir != paging_kernel_dir())
+			paging_destroy_user(t->pgdir);   /* killed from outside: its address space is still ours to free */
 		if (t->stack)
 			free_stack(t);
 		slab_free(&task_cache, t);
@@ -574,6 +576,29 @@ int sched_snapshot(struct task_snapshot *out, int max)
 	} while (t != task_head);
 	irq_restore(f);
 	return n;
+}
+
+int sched_largest_uproc(uint32_t *id, uint32_t *pages)
+{
+	uint32_t f = irq_save(), best = 0;
+	task_t *t = task_head;
+	int found = 0;
+
+	do {
+		if (t->is_uproc && t != current && t->state != TASK_DEAD && t->state != TASK_ZOMBIE) {
+			uint32_t n = paging_user_pages(t->pgdir);
+
+			if (n >= best) {
+				best = n;
+				*id = t->id;
+				found = 1;
+			}
+		}
+		t = t->next;
+	} while (t != task_head);
+	*pages = best;
+	irq_restore(f);
+	return found;
 }
 
 task_t *task_current(void)

@@ -337,3 +337,21 @@ void paging_destroy_user(uint32_t dir)
 	}
 	pmm_free(dir);
 }
+
+uint32_t paging_user_pages(uint32_t dir)
+{
+	uint32_t *d = (uint32_t *)dir, n = 0, i, j;
+
+	if (!dir || d == kdir)
+		return 0;
+	for (i = 0; i < ENTRIES; i++) {
+		uint32_t *t;
+
+		if (!(d[i] & PTE_P) || (d[i] & ~0xFFFu) == (kdir[i] & ~0xFFFu))
+			continue;
+		t = (uint32_t *)(d[i] & ~0xFFFu);
+		for (j = 0; j < ENTRIES; j++)
+			n += (t[j] & PTE_P) && (t[j] & PTE_US);
+	}
+	return n;
+}

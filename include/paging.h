@@ -31,6 +31,7 @@ uint32_t paging_fork_dir(uint32_t dir);     /* copy-on-write clone of an address
 int      paging_cow_fault(uint32_t addr, uint32_t err_code); /* 1 if the fault was a COW write and is now resolved */
 uint32_t *paging_pte(uint32_t dir, uint32_t virt);           /* the page table entry mapping virt, or NULL */
 void     paging_destroy_user(uint32_t dir);  /* free a user space: private page tables, the user frames they map (refcounted), the directory */
+uint32_t paging_user_pages(uint32_t dir);      /* user pages (PTE_US) an address space maps */
 uint32_t paging_new_dir(void);              /* 0 on out-of-memory */
 void     paging_free_dir(uint32_t dir);     /* frees the directory and any private tables */
 void     paging_switch(uint32_t dir);       /* load CR3 (no-op if already current) */

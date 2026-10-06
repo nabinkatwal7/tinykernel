@@ -24,6 +24,13 @@ extern char kernel_end[];
 static uint32_t bitmap[MAX_FRAMES / 32]; /* 1 = used */
 static uint8_t refs[MAX_FRAMES];  /* owners per frame: shared pages are freed when the last one lets go */
 static uint32_t hint;
+static uint32_t (*reclaim_fn)(void);
+static int reclaiming;
+
+void pmm_set_reclaim(uint32_t (*fn)(void))
+{
+	reclaim_fn = fn;
+}
 static uint32_t free_count;
 
 static int test(uint32_t f) { return bitmap[f / 32] & (1u << (f % 32)); }
@@ -127,6 +134,15 @@ uint32_t pmm_alloc_contig(uint32_t n)
 	}
 fail:
 	irq_restore(flags);
+	if (n && reclaim_fn && !reclaiming) { /* out of memory: ask the kernel to give something back, once */
+		uint32_t freed;
+
+		reclaiming = 1;
+		freed = reclaim_fn();
+		reclaiming = 0;
+		if (freed)
+			return pmm_alloc_contig(n);
+	}
 	return 0;
 }
 

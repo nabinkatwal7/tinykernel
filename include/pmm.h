@@ -11,6 +11,8 @@ void     pmm_init(void);
 uint32_t pmm_alloc(void);                          /* one frame, 0 on failure */
 uint32_t pmm_alloc_contig(uint32_t n);             /* n adjacent frames, 0 on failure */
 int      pmm_reserve(uint32_t addr, uint32_t n);   /* claim a specific range; 0 on success */
+/* When an allocation fails the allocator calls this once and retries if it reports progress. */
+void     pmm_set_reclaim(uint32_t (*fn)(void));    /* fn returns the number of frames it released */
 void     pmm_free(uint32_t addr);                  /* drops one reference; the frame is released at zero */
 void     pmm_ref(uint32_t addr);                   /* one more owner of this frame (copy-on-write, shared memory) */
 uint32_t pmm_refcount(uint32_t addr);              /* owners of a frame: 0 = free or kernel-owned */

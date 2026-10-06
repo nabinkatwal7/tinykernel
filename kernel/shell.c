@@ -29,6 +29,7 @@
 #include "kstring.h"
 #include "mouse.h"
 #include "net.h"
+#include "oom.h"
 #include "paging.h"
 #include "pcache.h"
 #include "percpu.h"
@@ -2869,6 +2870,62 @@ static int cmd_pcache(int argc, char **argv)
 	return 0;
 }
 
+static void oom_victim(void *arg)
+{
+	(void)arg;
+	for (;;)
+		task_sleep(1000);
+}
+
+/* oomtest: eat all memory; the OOM handler must kill a memory-hungry process instead of failing. */
+static int cmd_oomtest(int argc, char **argv)
+{
+	uint32_t victim_dir, f, hog = 0, kills0 = oom_kills(), v, i, flags;
+	task_t *t;
+	int fails = 0;
+
+	(void)argc;
+	(void)argv;
+	victim_dir = paging_new_dir();
+	t = task_create("victim", oom_victim, 0, PRIO_DEFAULT);
+	CHECK(victim_dir && t, "set up a victim process");
+	if (!victim_dir || !t)
+		return 1;
+	for (i = 0; i < 200; i++) {                       /* it owns 200 user pages */
+		f = pmm_alloc();
+		if (!f || paging_map(victim_dir, 0x40000000u + i * PAGE_SIZE, f, PTE_RW | PTE_US))
+			break;
+	}
+	flags = irq_save();
+	t->pgdir = victim_dir;
+	t->is_uproc = 1;
+	irq_restore(flags);
+	v = t->id;
+	pcache_drop_all();                                /* so only the kill can help */
+
+	while (pmm_free_frames() > 0 && (f = pmm_alloc()) != 0) { /* chain the frames through their first word */
+		*(volatile uint32_t *)f = hog;
+		hog = f;
+	}
+	console_printf("memory exhausted (%u free); allocating again must trigger the OOM killer\n", pmm_free_frames());
+	f = pmm_alloc();
+	CHECK(f != 0, "an allocation succeeds after the OOM handler ran");
+	CHECK(oom_kills() == kills0 + 1, "exactly one process was killed");
+	task_sleep(50);
+	CHECK(task_kill(v) != 0, "the victim is really gone");
+	while (hog) {                                     /* give everything back */
+		uint32_t next = *(volatile uint32_t *)hog;
+
+		pmm_free(hog);
+		hog = next;
+	}
+	if (f)
+		pmm_free(f);
+	console_printf("%u frames free again\n", pmm_free_frames());
+	console_write(fails ? "oomtest: FAILED\n" : "oomtest: ok\n");
+	return fails != 0;
+}
+
 static int cmd_slabinfo(int argc, char **argv)
 {
 	(void)argc;
@@ -3235,6 +3292,7 @@ static const struct command commands[] = {
 	{ "pgtest",  "pgtest",                "self-test address spaces", cmd_pgtest },
 	{ "shm",     "shm [rm <key>]",        "shared memory segments", cmd_shm },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
+	{ "oomtest", "oomtest",               "out-of-memory killer self-test", cmd_oomtest },
 	{ "slabinfo", "slabinfo",             "show slab caches", cmd_slabinfo },
 	{ "slabtest", "slabtest",             "self-test the slab allocator", cmd_slabtest },
 	{ "cowtest", "cowtest",               "copy-on-write self-test", cmd_cowtest },

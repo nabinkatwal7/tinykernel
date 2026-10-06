@@ -17,6 +17,7 @@
 #include "klog.h"
 #include "kmalloc.h"
 #include "mouse.h"
+#include "oom.h"
 #include "net.h"
 #include "kprintf.h"
 #include "paging.h"
@@ -62,6 +63,7 @@ void kernel_main(void)
 	idt_init();
 	pic_init();
 	pmm_init();
+	oom_init();
 	klog(LOG_INFO, "ram: %u MiB (E820), %u MiB usable, CMOS says %u MiB", (pmm_ram_kib() + 512) / 1024,
 	     pmm_usable_kib() / 1024, (pmm_cmos_ram_kib() + 512) / 1024);
 	heap_init();

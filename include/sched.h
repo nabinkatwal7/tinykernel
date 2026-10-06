@@ -81,6 +81,7 @@ void     sched_dump(void);
 int      sched_format(char *buf, uint32_t cap); /* the same table as text (for /proc/tasks) */
 void     sched_tree(void);        /* pstree: tasks indented under their parents */        /* ps */
 uint32_t task_count(void);
+int      sched_largest_uproc(uint32_t *id, uint32_t *pages);   /* forked user process using the most memory (not the caller) */
 
 /* A copy of the interesting task fields, for top-style listings. */
 struct task_snapshot {
