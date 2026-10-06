@@ -93,3 +93,40 @@ int sem_value(sem_t *s)
 {
 	return s->count;
 }
+
+/* xchg is implicitly locked, so this stays correct if we ever run on more than one CPU. */
+static int test_and_set(volatile int *p)
+{
+	int old = 1;
+
+	__asm__ volatile ("xchgl %0, %1" : "+r"(old), "+m"(*p) : : "memory");
+	return old;
+}
+
+uint32_t spin_lock_irqsave(spinlock_t *l)
+{
+	uint32_t flags = irq_save();
+
+	while (test_and_set(&l->locked))
+		__asm__ volatile ("pause");
+	return flags;
+}
+
+void spin_unlock_irqrestore(spinlock_t *l, uint32_t flags)
+{
+	__asm__ volatile ("" : : : "memory");
+	l->locked = 0;
+	irq_restore(flags);
+}
+
+int spin_trylock(spinlock_t *l, uint32_t *flags)
+{
+	uint32_t f = irq_save();
+
+	if (test_and_set(&l->locked)) {
+		irq_restore(f);
+		return -1;
+	}
+	*flags = f;
+	return 0;
+}

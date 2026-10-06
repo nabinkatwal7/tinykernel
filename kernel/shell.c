@@ -20,6 +20,10 @@
 #include "user.h"
 #include "version.h"
 
+/* Self-test helper: needs a local 'fails' counter. */
+#define CHECK(cond, msg) \
+	do { if (!(cond)) { console_printf("  FAIL: %s\n", msg); fails++; } } while (0)
+
 #define LINE_MAX 128
 #define ARGV_MAX 16
 #define HIST_MAX 16
@@ -604,6 +608,45 @@ static int cmd_semtest(int argc, char **argv)
 	return !(sem_max == 2 && sem_value(&test_sem) == 2);
 }
 
+static uint32_t eflags_now(void)
+{
+	uint32_t f;
+
+	__asm__ volatile ("pushfl; popl %0" : "=r"(f));
+	return f;
+}
+
+static int cmd_spintest(int argc, char **argv)
+{
+	spinlock_t lock = SPINLOCK_INIT;
+	uint32_t flags, other, fails = 0;
+
+	(void)argc;
+	(void)argv;
+	CHECK(eflags_now() & 0x200, "interrupts start enabled");
+	flags = spin_lock_irqsave(&lock);
+	CHECK(!(eflags_now() & 0x200), "interrupts disabled while locked");
+	CHECK(lock.locked == 1, "lock is held");
+	CHECK(spin_trylock(&lock, &other) == -1, "second trylock fails");
+	CHECK(!(eflags_now() & 0x200), "failed trylock leaves interrupts disabled");
+	spin_unlock_irqrestore(&lock, flags);
+	CHECK(eflags_now() & 0x200, "interrupts restored after unlock");
+	CHECK(spin_trylock(&lock, &other) == 0, "trylock succeeds when free");
+	spin_unlock_irqrestore(&lock, other);
+
+	flags = irq_save(); /* nested: must restore to 'disabled', not blindly enable */
+	other = spin_lock_irqsave(&lock);
+	spin_unlock_irqrestore(&lock, other);
+	CHECK(!(eflags_now() & 0x200), "nested lock keeps outer disabled state");
+	irq_restore(flags);
+
+	if (fails)
+		console_printf("spintest: %u check(s) failed\n", fails);
+	else
+		console_write("spintest: all checks passed\n");
+	return fails != 0;
+}
+
 static int cmd_kill(int argc, char **argv)
 {
 	uint32_t id;
@@ -744,9 +787,6 @@ static int cmd_format(int argc, char **argv)
 	console_write("disk formatted\n");
 	return 0;
 }
-
-#define CHECK(cond, msg) \
-	do { if (!(cond)) { console_printf("  FAIL: %s\n", msg); fails++; } } while (0)
 
 /* Non-destructive filesystem exercise: uses __fstest* files and cleans up after itself. */
 static int cmd_fstest(int argc, char **argv)
@@ -1062,6 +1102,7 @@ static const struct command commands[] = {
 	{ "overflow", "overflow",             "crash test: kernel stack overflow", cmd_overflow },
 	{ "mutextest", "mutextest",           "race with/without a mutex", cmd_mutextest },
 	{ "semtest", "semtest",             "semaphore limits concurrency", cmd_semtest },
+	{ "spintest", "spintest",             "spinlock IRQ-safety self-test", cmd_spintest },
 	{ "kill",  "kill <id>",             "stop a task", cmd_kill },
 	{ "ls",      "ls",                    "list files", cmd_ls },
 	{ "cat",     "cat <file>",            "print a file", cmd_cat },

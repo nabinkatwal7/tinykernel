@@ -17,6 +17,21 @@ void mutex_lock(mutex_t *m);
 int  mutex_trylock(mutex_t *m);   /* 0 on success, -1 if held */
 void mutex_unlock(mutex_t *m);    /* must be called by the owner */
 
+/*
+ * Spinlock for data shared with interrupt handlers. Acquiring disables interrupts first (so an
+ * IRQ cannot re-enter the same lock on this CPU) and the previous state is restored on release.
+ * Never sleep or call blocking functions while holding one.
+ */
+typedef struct {
+	volatile int locked;
+} spinlock_t;
+
+#define SPINLOCK_INIT { 0 }
+
+uint32_t spin_lock_irqsave(spinlock_t *l);               /* returns the saved EFLAGS */
+void     spin_unlock_irqrestore(spinlock_t *l, uint32_t flags);
+int      spin_trylock(spinlock_t *l, uint32_t *flags);   /* 0 on success */
+
 /* Counting semaphore. */
 typedef struct {
 	int count;
