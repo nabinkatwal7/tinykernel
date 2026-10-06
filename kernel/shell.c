@@ -1125,6 +1125,40 @@ static int cmd_touch(int argc, char **argv)
 	return rc ? fs_fail(argv[1], rc) : 0;
 }
 
+static int cmd_mkdir(int argc, char **argv)
+{
+	int i, rc = 0;
+
+	if (argc < 2) {
+		console_write("usage: mkdir <dir>...\n");
+		return 1;
+	}
+	for (i = 1; i < argc; i++) {
+		int r = vfs_mkdir(argv[i]);
+
+		if (r)
+			rc = fs_fail(argv[i], r);
+	}
+	return rc;
+}
+
+static int cmd_rmdir(int argc, char **argv)
+{
+	int i, rc = 0;
+
+	if (argc < 2) {
+		console_write("usage: rmdir <dir>...\n");
+		return 1;
+	}
+	for (i = 1; i < argc; i++) {
+		int r = vfs_rmdir(argv[i]);
+
+		if (r)
+			rc = fs_fail(argv[i], r);
+	}
+	return rc;
+}
+
 static int cmd_rm(int argc, char **argv)
 {
 	int rc;
@@ -1511,6 +1545,8 @@ static const struct command commands[] = {
 	{ "cat",     "cat <file>",            "print a file", cmd_cat },
 	{ "write",   "write <file> <text>",   "create/replace a file", cmd_write },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
+	{ "mkdir",   "mkdir <dir>",           "create a directory", cmd_mkdir },
+	{ "rmdir",   "rmdir <dir>",           "remove an empty directory", cmd_rmdir },
 	{ "rm",      "rm <file>",             "delete a file", cmd_rm },
 	{ "format",  "format",                "erase the disk and make a filesystem", cmd_format },
 	{ "fstest",  "fstest",                "self-test the filesystem", cmd_fstest },

@@ -18,7 +18,7 @@ struct ofile {
 	int kind;
 	int refs;
 	int flags;
-	char name[FS_NAME_MAX];
+	char name[FILE_PATH_MAX];
 	uint8_t *buf;
 	uint32_t size, cap, pos;
 	int dirty;
@@ -122,7 +122,7 @@ int file_open(const char *path, int flags)
 	struct vfs_stat st;
 	int oi, fd, size, rc;
 
-	if (kstrlen(path) >= FS_NAME_MAX)
+	if (kstrlen(path) >= FILE_PATH_MAX - 1)
 		return FS_EINVAL;
 	fd = new_fd();
 	oi = new_obj();

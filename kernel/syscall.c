@@ -8,6 +8,7 @@
 #include "shell.h"
 #include "timer.h"
 #include "user.h"
+#include "vfs.h"
 
 static int user_ptr_ok(uint32_t p, uint32_t len)
 {
@@ -92,6 +93,12 @@ void syscall_dispatch(struct regs *r)
 			break;
 		}
 		r->eax = (uint32_t)file_write((int)r->ebx, (const void *)r->ecx, r->edx);
+		break;
+	case SYS_MKDIR:
+		r->eax = user_str_ok(r->ebx) ? (uint32_t)vfs_mkdir((const char *)r->ebx) : (uint32_t)-1;
+		break;
+	case SYS_RMDIR:
+		r->eax = user_str_ok(r->ebx) ? (uint32_t)vfs_rmdir((const char *)r->ebx) : (uint32_t)-1;
 		break;
 	case SYS_DUP:
 		r->eax = (uint32_t)file_dup((int)r->ebx);

@@ -21,6 +21,8 @@
 #define SYS_KCMD    16 /* ebx = command line for the kernel shell; returns its status */
 #define SYS_DUP     17 /* ebx = fd; returns a new descriptor */
 #define SYS_DUP2    18 /* ebx = fd, ecx = target */
+#define SYS_MKDIR   19 /* ebx = path */
+#define SYS_RMDIR   20 /* ebx = path */
 #define SYS_FWRITE  10 /* ebx = fd, ecx = buffer, edx = count; fd 1 and 2 are the console */
 
 void syscall_dispatch(struct regs *r);

@@ -15,6 +15,7 @@
 #define FILE_MAX_OPEN 16    /* open regular files at once */
 #define FILE_FIRST_FD 3     /* 0 = stdin (keyboard), 1 = stdout, 2 = stderr (console) */
 #define FILE_MAX_SIZE (256 * 1024)
+#define FILE_PATH_MAX 64    /* longest path open() accepts, including the NUL */
 
 /*
  * Open files of the running program. Because TinyFS stores each file as one contiguous extent,
