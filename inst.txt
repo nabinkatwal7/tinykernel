@@ -1,4 +1,3 @@
-Add filesystem consistency checker,
 Learn FAT12 layout,
 Read a FAT12 floppy image,
 Add FAT12 read support to VFS,

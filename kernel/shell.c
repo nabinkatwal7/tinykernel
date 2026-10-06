@@ -1324,6 +1324,43 @@ static int cmd_sync(int argc, char **argv)
 	return 0;
 }
 
+static void fsck_report(const char *msg)
+{
+	console_printf("  %s\n", msg);
+}
+
+static int cmd_fsck(int argc, char **argv)
+{
+	struct fs_check_result r;
+	int repair = argc > 1 && !kstrcmp(argv[1], "-r"), rc;
+
+	if (need_fs())
+		return 1;
+	console_printf("checking the filesystem%s...\n", repair ? " (repair mode)" : "");
+	rc = fs_check(repair, fsck_report, &r);
+	if (rc)
+		return fs_fail("fsck", rc);
+	if (!r.problems)
+		console_write("fsck: clean\n");
+	else
+		console_printf("fsck: %d problem(s) found, %d repaired%s\n", r.problems, r.repaired,
+			       repair || !r.problems ? "" : " (run 'fsck -r' to repair)");
+	return r.problems != r.repaired;
+}
+
+/* fscorrupt <0-3>: damage the filesystem for testing fsck. */
+static int cmd_fscorrupt(int argc, char **argv)
+{
+	uint32_t kind;
+
+	if (argc != 2 || kstrtoul(argv[1], &kind) || fs_debug_corrupt((int)kind)) {
+		console_write("usage: fscorrupt <0 leak | 1 freed-but-used | 2 orphan | 3 overlap>\n");
+		return 1;
+	}
+	console_write("damaged on purpose; run 'fsck'\n");
+	return 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -1832,6 +1869,8 @@ static const struct command commands[] = {
 	{ "edit",    "edit <file>",           "full-screen text editor", cmd_edit },
 	{ "cachestat", "cachestat [drop]",    "block cache statistics", cmd_cachestat },
 	{ "sync",    "sync",                  "flush cached writes to disk", cmd_sync },
+	{ "fsck",    "fsck [-r]",             "check (and repair) the filesystem", cmd_fsck },
+	{ "fscorrupt", "fscorrupt <0-3>",     "damage the fs for testing fsck", cmd_fscorrupt },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },

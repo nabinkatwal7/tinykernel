@@ -51,6 +51,21 @@ int         fs_rename(const char *from, const char *to);
 int         fs_list(const char *dir, struct fs_stat *out, int max); /* entries in a directory */
 uint32_t    fs_free_sectors(void);
 
+/*
+ * Consistency check. Looks at every entry (valid name, parent exists and is a directory, no
+ * cycles, no duplicate names), every file extent (inside the data area, no two files share a
+ * sector) and the free-space bitmap (agrees with the extents). With repair != 0 it deletes
+ * unusable entries and rebuilds the bitmap. 'report' is called once per finding.
+ */
+struct fs_check_result {
+	int problems;     /* findings */
+	int repaired;     /* findings that were fixed (repair mode) */
+};
+int         fs_check(int repair, void (*report)(const char *msg), struct fs_check_result *res);
+/* Test hook: damage the filesystem on purpose (0 = leak a sector, 1 = free a used sector,
+   2 = orphan an entry, 3 = overlap two files). Returns 0 if the damage could be applied. */
+int         fs_debug_corrupt(int kind);
+
 struct fs_info {
 	uint32_t total_sectors;   /* whole disk */
 	uint32_t used_sectors;    /* metadata + file data */

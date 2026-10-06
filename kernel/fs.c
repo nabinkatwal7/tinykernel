@@ -3,6 +3,7 @@
 #include "ata.h"
 #include "bcache.h"
 #include "klog.h"
+#include "kprintf.h"
 #include "kmalloc.h"
 #include "kstring.h"
 
@@ -568,4 +569,162 @@ int fs_info(struct fs_info *out)
 		}
 	}
 	return FS_OK;
+}
+
+/* ---- fsck ---- */
+
+int fs_check(int repair, void (*report)(const char *msg), struct fs_check_result *res)
+{
+	char msg[96];
+	uint8_t *claimed;
+	int i, j, changed = 0, bitmap_dirty = 0;
+
+	if (!mounted)
+		return FS_ENOMOUNT;
+	res->problems = res->repaired = 0;
+	claimed = kcalloc(bm_sectors, SECTOR_SIZE);
+	if (!claimed)
+		return FS_ENOSPC;
+
+#define PROBLEM(fixed, ...) do { \
+		res->problems++; \
+		if (fixed) res->repaired++; \
+		ksnprintf(msg, sizeof msg, __VA_ARGS__); \
+		report(msg); \
+	} while (0)
+
+	/* metadata sectors are always claimed */
+	for (i = 0; i < (int)data_start; i++)
+		claimed[i >> 3] |= (uint8_t)(1u << (i & 7));
+
+	for (i = 0; i < FS_MAX_FILES; i++) {
+		int bad = 0, steps;
+		uint32_t p;
+
+		if (!used(i))
+			continue;
+		if (!name_ok(dir[i].name) || kstrlen(dir[i].name) >= FS_NAME_MAX) {
+			PROBLEM(repair, "entry %d: invalid name", i);
+			bad = 1;
+		}
+		p = parent(i);
+		if (!bad && p != ROOT) {
+			if (p >= FS_MAX_FILES || !used((int)p) || !is_dir((int)p) || (int)p == i) {
+				PROBLEM(repair, "'%s': parent entry %u is not a live directory (orphan)", dir[i].name, p);
+				bad = 1;
+			} else { /* follow parents upwards: a loop never reaches the root */
+				uint32_t q = p;
+
+				for (steps = 0; q != ROOT && steps <= FS_MAX_FILES; steps++)
+					q = parent((int)q);
+				if (q != ROOT) {
+					PROBLEM(repair, "'%s': directory loop", dir[i].name);
+					bad = 1;
+				}
+			}
+		}
+		if (!bad && !is_dir(i) && dir[i].size) {
+			uint32_t n = sectors_for(dir[i].size), s;
+
+			if (dir[i].start < data_start || dir[i].start + n > total_sectors) {
+				PROBLEM(repair, "'%s': extent %u+%u lies outside the data area", dir[i].name,
+					dir[i].start, n);
+				bad = 1;
+			} else {
+				for (s = dir[i].start; s < dir[i].start + n; s++) {
+					if (claimed[s >> 3] & (1u << (s & 7))) {
+						PROBLEM(repair, "'%s': sector %u is also used by another file", dir[i].name, s);
+						bad = 1;
+						break;
+					}
+				}
+			}
+		}
+		if (!bad) { /* duplicate names within one directory */
+			for (j = 0; j < i; j++) {
+				if (used(j) && parent(j) == parent(i) && !kstrcmp(dir[j].name, dir[i].name)) {
+					PROBLEM(0, "'%s': name appears twice in one directory (entries %d and %d)",
+						dir[i].name, j, i);
+					break;
+				}
+			}
+		}
+		if (bad) {
+			if (repair) {
+				memset(&dir[i], 0, sizeof dir[i]);
+				changed = 1;
+			}
+			continue;
+		}
+		if (!is_dir(i) && dir[i].size) {
+			uint32_t s, n = sectors_for(dir[i].size);
+
+			for (s = dir[i].start; s < dir[i].start + n; s++)
+				claimed[s >> 3] |= (uint8_t)(1u << (s & 7));
+		}
+	}
+
+	/* compare the bitmap with what the entries claim */
+	for (i = 0; i < (int)total_sectors; i++) {
+		int c = claimed[i >> 3] & (1 << (i & 7)), b = bit_get((uint32_t)i);
+
+		if (c && !b) {
+			PROBLEM(repair, "sector %d is in use by a file but marked free in the bitmap", i);
+			bitmap_dirty = 1;
+		} else if (!c && b) {
+			PROBLEM(repair, "sector %d is marked used in the bitmap but belongs to no file (leak)", i);
+			bitmap_dirty = 1;
+		}
+	}
+#undef PROBLEM
+
+	if (repair && (changed || bitmap_dirty)) {
+		memcpy(bitmap, claimed, bm_sectors * SECTOR_SIZE);
+		if (flush_bitmap() || flush_dir()) {
+			kfree(claimed);
+			return FS_EIO;
+		}
+	}
+	kfree(claimed);
+	return FS_OK;
+}
+
+int fs_debug_corrupt(int kind)
+{
+	int i, j;
+
+	if (!mounted)
+		return FS_ENOMOUNT;
+	switch (kind) {
+	case 0: /* leak: mark a free sector as used */
+		for (i = (int)total_sectors - 1; i >= (int)data_start; i--)
+			if (!bit_get((uint32_t)i)) {
+				mark((uint32_t)i, 1, 1);
+				return flush_bitmap();
+			}
+		return FS_ENOSPC;
+	case 1: /* a used sector claimed free */
+		for (i = 0; i < FS_MAX_FILES; i++)
+			if (used(i) && !is_dir(i) && dir[i].size) {
+				mark(dir[i].start, 1, 0);
+				return flush_bitmap();
+			}
+		return FS_ENOENT;
+	case 2: /* orphan: point an entry at a parent that does not exist */
+		for (i = 0; i < FS_MAX_FILES; i++)
+			if (used(i)) {
+				dir[i].flags = (dir[i].flags & ~(0xFFu << 8)) | (126u << 8);
+				return flush_dir();
+			}
+		return FS_ENOENT;
+	case 3: /* overlap: two files share an extent */
+		for (i = 0; i < FS_MAX_FILES; i++)
+			for (j = i + 1; j < FS_MAX_FILES; j++)
+				if (used(i) && used(j) && !is_dir(i) && !is_dir(j) && dir[i].size && dir[j].size) {
+					dir[j].start = dir[i].start;
+					return flush_dir();
+				}
+		return FS_ENOENT;
+	}
+	return FS_EINVAL;
 }
