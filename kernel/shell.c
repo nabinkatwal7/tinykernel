@@ -434,7 +434,7 @@ static int ends_with(const char *s, const char *suffix)
 
 /*
  * A command that is not built into the shell: a path (contains '/'), a file called name or name.sh in a
- * directory of $PATH (default "/bin:/fat"), or a program embedded in the kernel image. Fills 'out' with
+ * directory of $PATH (default "/bin:/fat/bin:/fat"), or a program embedded in the kernel image. Fills 'out' with
  * what to run.
  */
 static int find_external(const char *name, char *out, int size)
@@ -444,7 +444,7 @@ static int find_external(const char *name, char *out, int size)
 	unsigned i;
 
 	if (!path)
-		path = "/bin:/fat";
+		path = "/bin:/fat/bin:/fat";
 	if (nlen + 4 >= (size_t)size)
 		return 0;
 	for (i = 0; name[i]; i++) {
@@ -4314,7 +4314,7 @@ static int exec_output(const char *line)
 	console_capture_begin(buf + len, (unsigned)(REDIR_CAP - len));
 	rc = exec_plain(copy);
 	len += console_capture_end();
-	got = vfs_write(file, buf, (uint32_t)len);
+	got = !kstrcmp(file, "/dev/null") ? 0 : vfs_write(file, buf, (uint32_t)len); /* /dev/null just discards */
 	kfree(buf);
 	if (got) {
 		fs_fail(file, got);

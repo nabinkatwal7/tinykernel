@@ -1,4 +1,3 @@
-Port small shell utilities to user mode,
 Add file permissions and owners,
 Add users and login prompt,
 Add password hashing,
