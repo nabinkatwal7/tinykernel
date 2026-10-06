@@ -10,6 +10,7 @@
 #include "console.h"
 #include "cpustat.h"
 #include "cpu.h"
+#include "crashdump.h"
 #include "debug.h"
 #include "dhcp.h"
 #include "editor.h"
@@ -2852,6 +2853,14 @@ static int cmd_assert(int argc, char **argv)
 	return 0;
 }
 
+/* crashdump [show|clear] : the dump written by the last panic */
+static int cmd_crashdump(int argc, char **argv)
+{
+	if (argc > 1 && !kstrcmp(argv[1], "clear"))
+		return crash_clear();
+	return crash_show();
+}
+
 /* panic [message] : test the panic path and its stack trace */
 static int cmd_panic(int argc, char **argv)
 {
@@ -3350,6 +3359,7 @@ static const struct command commands[] = {
 	{ "shm",     "shm [rm <key>]",        "shared memory segments", cmd_shm },
 	{ "backtrace", "backtrace",          "print the current kernel call chain", cmd_backtrace },
 	{ "assert",  "assert",                "trip a failing assertion (tests the panic message)", cmd_assert },
+	{ "crashdump", "crashdump [show|clear]", "show the crash dump saved by the last panic", cmd_crashdump },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },

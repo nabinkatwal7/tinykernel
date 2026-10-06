@@ -224,7 +224,7 @@ int fs_mount(void)
 	bm_sectors = sb[4];
 	dir_lba = sb[5];
 	data_start = sb[6];
-	if (total_sectors != ata_sectors() || bm_sectors == 0 || data_start >= total_sectors)
+	if (total_sectors != ata_fs_sectors() || bm_sectors == 0 || data_start >= total_sectors)
 		return FS_ENOMOUNT;
 	bitmap = kmalloc(bm_sectors * SECTOR_SIZE);
 	if (!bitmap)
@@ -242,7 +242,7 @@ int fs_format(void)
 	if (!ata_present())
 		return FS_ENOMOUNT;
 	kfree(bitmap);
-	total_sectors = ata_sectors();
+	total_sectors = ata_fs_sectors();
 	bm_lba = 1;
 	bm_sectors = (total_sectors + SECTOR_SIZE * 8 - 1) / (SECTOR_SIZE * 8);
 	dir_lba = bm_lba + bm_sectors;

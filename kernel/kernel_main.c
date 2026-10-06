@@ -3,6 +3,7 @@
 #include "clock.h"
 #include "hrtime.h"
 #include "ata.h"
+#include "crashdump.h"
 #include "bcache.h"
 #include "cmdline.h"
 #include "console.h"
@@ -94,7 +95,11 @@ void kernel_main(void)
 	if (ata_init() == 0) {
 		if (ata_dev_present(1) && fat12_mount(1) != FS_OK)
 			klog(LOG_INFO, "ata: drive 1 is not FAT12");
-		int rc = fs_mount();
+		int rc;
+
+		if (crash_present())
+			klog(LOG_WARN, "a crash dump from the previous run is stored (see 'crashdump')");
+		rc = fs_mount();
 
 		klog(LOG_INFO, "fs: %s", rc == FS_OK ? "mounted" : fs_strerror(rc));
 	}

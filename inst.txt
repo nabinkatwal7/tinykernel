@@ -1,4 +1,3 @@
-Add crash dump to disk,
 Add 'gdb stub' over serial,
 Add pipes between tasks,
 Implement pipe syscall,

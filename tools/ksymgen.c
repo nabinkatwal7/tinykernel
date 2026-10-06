@@ -10,8 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_SYMS   2048
-#define NAMES_SIZE 32768
+#define MAX_SYMS   1536
+#define NAMES_SIZE 16384
 #define BLOB_SIZE  (4 + MAX_SYMS * 8 + NAMES_SIZE)
 
 int main(int argc, char **argv)

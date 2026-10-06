@@ -3,6 +3,7 @@
 #include <stdarg.h>
 
 #include "console.h"
+#include "crashdump.h"
 #include "io.h"
 #include "klog.h"
 #include "kprintf.h"
@@ -70,9 +71,28 @@ void debug_backtrace(uint32_t ebp)
 	}
 }
 
+int debug_frames(uint32_t ebp, uint32_t *out, int max)
+{
+	int n = 0;
+
+	while (n < max && ebp && !(ebp & 3) && ebp >= 0x1000 && ebp < 0xFFFFFF00u) {
+		uint32_t *frame = (uint32_t *)ebp;
+		uint32_t next = frame[0];
+
+		if (!frame[1])
+			break;
+		out[n++] = frame[1];
+		if (next <= ebp || next - ebp > 0x10000)
+			break;
+		ebp = next;
+	}
+	return n;
+}
+
 void panic(const char *fmt, ...)
 {
 	char msg[160];
+	uint32_t frames[BT_MAX_FRAMES];
 	va_list ap;
 
 	cli();
@@ -84,6 +104,7 @@ void panic(const char *fmt, ...)
 	klog(LOG_ERROR, "PANIC: %s", msg);
 	console_write("stack trace:\n");
 	debug_here();
+	crash_save(msg, frames, debug_frames((uint32_t)__builtin_frame_address(0), frames, BT_MAX_FRAMES));
 	for (;;)
 		hlt();
 }
