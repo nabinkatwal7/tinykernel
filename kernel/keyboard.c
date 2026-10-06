@@ -142,6 +142,21 @@ static void keyboard_irq(struct regs *r)
 	wq_wake_one(&kb_wq); /* a key (or at least a scancode) arrived */
 }
 
+void keyboard_inject(int key)
+{
+	uint32_t f = irq_save();
+
+	push(key);
+	irq_restore(f);
+	wq_wake_one(&kb_wq);
+}
+
+void keyboard_inject_sigint(struct regs *r)
+{
+	if (sigint_hook)
+		sigint_hook(r);
+}
+
 void keyboard_set_sigint(void (*hook)(struct regs *r))
 {
 	sigint_hook = hook;

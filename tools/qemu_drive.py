@@ -40,14 +40,19 @@ def main():
         "-drive", f"format=raw,file={os.path.join(BUILD,'os-image.bin')},if=floppy",
         "-drive", f"format=raw,file={disk},if=ide,index=0",
         "-drive", f"format=raw,file={os.path.join(BUILD,'fat.img')},if=ide,index=1", "-boot", "a",
-        "-display", "none", "-serial", f"file:{serial}",
+        "-display", "none",
+        "-chardev", f"socket,id=s0,host=127.0.0.1,port={port + 1},server=on,wait=off,logfile={serial}",
+        "-serial", "chardev:s0",
         "-monitor", f"tcp:127.0.0.1:{port},server,nowait"])
     time.sleep(1.5)
     s = socket.create_connection(("127.0.0.1", port))
+    ser = socket.create_connection(("127.0.0.1", port + 1))
     def mon(cmd):
         s.sendall((cmd + "\n").encode()); time.sleep(0.05)
     time.sleep(1.0)
     for line in args:
+        if line.startswith("ser:"):  # text typed on the serial port; the two characters backslash-r mean Enter
+            ser.sendall(line[4:].replace(chr(92) + "r", chr(13)).encode()); time.sleep(0.6); continue
         if line.startswith("mon:"):
             mon(line[4:]); time.sleep(0.4); continue
         if line.startswith("key:"):

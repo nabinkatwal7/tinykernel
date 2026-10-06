@@ -58,6 +58,7 @@ void kernel_main(void)
 	timer_init(100);
 	sched_init();
 	keyboard_use_irq();
+	serial_rx_init();
 	if (mouse_init() == 0)
 		mousecursor_init();
 	sti();

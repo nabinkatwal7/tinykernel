@@ -1,4 +1,3 @@
-Add serial console input,
 Add PC speaker driver,
 Play startup beep,
 Add 'beep' shell command,

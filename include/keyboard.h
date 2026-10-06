@@ -17,6 +17,8 @@
 void keyboard_set_sigint(void (*hook)(struct regs *r));
 
 void keyboard_poll_controller(void); /* drain the 8042: key bytes to the decoder, aux bytes to the mouse */
+void keyboard_inject(int key);                 /* queue a key as if typed (used by the serial console) */
+void keyboard_inject_sigint(struct regs *r);   /* Ctrl+C from the serial line */
 void keyboard_init(void);
 void keyboard_use_irq(void);      /* switch from polling to IRQ1 (after the IDT is live) */
 int  keyboard_trygetkey(void);    /* -1 if nothing is buffered */
