@@ -626,3 +626,57 @@ int tu_diff(int argc, char **argv)
 	kfree(tb.data);
 	return differ;
 }
+
+/* Prints bytes in the classic hexdump -C layout: offset, 16 hex bytes, then the text. */
+static void dump_bytes(const uint8_t *p, uint32_t len, uint32_t offset)
+{
+	uint32_t i, j;
+
+	for (i = 0; i < len && !shell_interrupted(); i += 16) {
+		console_printf("%08x  ", offset + i);
+		for (j = 0; j < 16; j++) {
+			if (i + j < len)
+				console_printf("%02x ", p[i + j]);
+			else
+				console_write("   ");
+			if (j == 7)
+				console_putchar(' ');
+		}
+		console_write(" |");
+		for (j = 0; j < 16 && i + j < len; j++)
+			console_putchar(p[i + j] >= 32 && p[i + j] < 127 ? (char)p[i + j] : '.');
+		console_write("|\n");
+	}
+}
+
+/* hexdump FILE [offset [length]], or standard input: a hex and ASCII dump of file contents */
+int tu_hexdump_file(int argc, char **argv)
+{
+	struct text t;
+	uint32_t off = 0, len;
+
+	if (argc > 2 && kstrtoul(argv[2], &off)) {
+		console_write("hexdump: bad offset\n");
+		return 1;
+	}
+	if (load_text(argc > 1 ? argv[1] : 0, &t))
+		return 1;
+	if (off > t.len)
+		off = t.len;
+	len = t.len - off;
+	if (argc > 3) {
+		uint32_t want;
+
+		if (kstrtoul(argv[3], &want)) {
+			console_write("hexdump: bad length\n");
+			kfree(t.data);
+			return 1;
+		}
+		if (want < len)
+			len = want;
+	}
+	dump_bytes((const uint8_t *)t.data + off, len, off);
+	console_printf("%08x\n", off + len);
+	kfree(t.data);
+	return 0;
+}

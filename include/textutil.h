@@ -18,4 +18,6 @@ int tu_find(int argc, char **argv);   /* find [dir] [-name pattern] [-type f|d]:
 
 int tu_diff(int argc, char **argv);   /* diff file1 file2: differing lines, ed style; status 1 when the files differ */
 
+int tu_hexdump_file(int argc, char **argv); /* hexdump FILE [offset [length]] (or stdin): offset, hex bytes and text */
+
 #endif

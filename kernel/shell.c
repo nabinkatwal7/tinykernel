@@ -765,12 +765,16 @@ static int cmd_heapcheck(int argc, char **argv)
 	return errors || bad;
 }
 
+/* hexdump <addr> [len] dumps memory; hexdump <file> [offset [len]] (or a pipe) dumps file contents. */
 static int cmd_hexdump(int argc, char **argv)
 {
 	uint32_t addr, len = 64;
+	struct vfs_stat st;
 
+	if ((argc < 2 && file_stdin_active()) || (argc >= 2 && vfs_stat(argv[1], &st) == FS_OK && !st.is_dir))
+		return tu_hexdump_file(argc, argv);
 	if (argc < 2 || kstrtoul(argv[1], &addr) || (argc > 2 && kstrtoul(argv[2], &len))) {
-		console_write("usage: hexdump <addr> [len]\n");
+		console_write("usage: hexdump <addr> [len] | hexdump <file> [offset [len]]\n");
 		return 1;
 	}
 	if (!paging_is_mapped(addr) || !paging_is_mapped(addr + (len ? len - 1 : 0))) {
