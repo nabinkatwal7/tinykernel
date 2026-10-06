@@ -14,6 +14,7 @@
 #include "crashdump.h"
 #include "cred.h"
 #include "debug.h"
+#include "dns.h"
 #include "usbhid.h"
 #include "usb.h"
 #include "ahci.h"
@@ -2495,9 +2496,17 @@ static int cmd_ping(int argc, char **argv)
 		console_write("no network interface\n");
 		return 1;
 	}
-	if (argc < 2 || ip_parse(argv[1], &ip) || (argc > 2 && (kstrtoul(argv[2], &count) || !count || count > 100))) {
-		console_write("usage: ping <a.b.c.d> [count]\n");
+	if (argc < 2 || (argc > 2 && (kstrtoul(argv[2], &count) || !count || count > 100))) {
+		console_write("usage: ping <host or a.b.c.d> [count]\n");
 		return 1;
+	}
+	{
+		int rc = dns_resolve(argv[1], &ip);
+
+		if (rc) {
+			console_printf("ping: %s: %s\n", argv[1], dns_strerror(rc));
+			return 1;
+		}
 	}
 	console_printf("PING %s: 32 bytes of data\n", ip_str(ip, s));
 	for (i = 0; i < count && !shell_interrupted(); i++) {
