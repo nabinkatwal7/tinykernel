@@ -44,3 +44,7 @@ Tokens: plain text is typed followed by Enter; `raw:text` types without Enter; `
 ## Conventions
 
 Tabs, kernel-style braces, `k`-prefixed helpers, comments only for the non-obvious. Shared state touched by IRQs or by several tasks is guarded with `irq_save()` / `irq_restore()`; there are no other locks.
+
+## User-space C programs
+
+`user/c/NAME.c` is compiled with `UCFLAGS`, linked with `user/lib/crt0.S` (entry `_start`, calls `main(argc, argv, envp)` and `exit`) and `user/lib/ulib.c`, linked at `0x800000` and converted to an ELF (`build/c_NAME.elf`). Embed it by adding the `.elf` to `USER_BINS`, `kernel/builtin.S` and the table in `kernel/user.c`. System calls are inline wrappers in `user/lib/usys.h`.

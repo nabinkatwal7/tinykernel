@@ -24,7 +24,8 @@ S_SRCS  := $(wildcard kernel/*.S)
 OBJS    := $(patsubst kernel/%.c,$(BUILD)/%.o,$(C_SRCS)) \
            $(patsubst kernel/%.S,$(BUILD)/%.o,$(S_SRCS))
 HEADERS := $(wildcard include/*.h)
-USER_BINS := $(BUILD)/hello.bin $(BUILD)/counter.bin $(BUILD)/fault.bin $(BUILD)/evil.bin $(BUILD)/spin.bin $(BUILD)/args.bin $(BUILD)/envdump.bin $(BUILD)/helloelf.elf
+USER_BINS := $(BUILD)/hello.bin $(BUILD)/counter.bin $(BUILD)/fault.bin $(BUILD)/evil.bin $(BUILD)/spin.bin $(BUILD)/args.bin $(BUILD)/envdump.bin $(BUILD)/helloelf.elf \
+		$(BUILD)/c_crtdemo.elf
 
 # Headless run: serial log to build/serial.log, no window.
 QEMU_DISKS := -drive format=raw,file=$(IMAGE),if=floppy \
@@ -50,6 +51,23 @@ $(BUILD)/%.elf: user/%.asm user/user.ld | $(BUILD)
 	$(NASM) -f win32 $< -o $(BUILD)/$*.uo
 	$(LD) -m i386pe -T user/user.ld -nostdlib -o $(BUILD)/$*.upe $(BUILD)/$*.uo
 	$(OBJCOPY) -O elf32-i386 $(BUILD)/$*.upe $@
+
+# C user programs: user/c/NAME.c -> build/c_NAME.elf, linked with the C runtime in user/lib.
+UCFLAGS  := -m32 -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie             -fno-asynchronous-unwind-tables -mgeneral-regs-only -Wall -Wextra -Iuser/lib
+ULIB_OBJS := $(BUILD)/ucrt0.o $(BUILD)/ulib.o
+
+$(BUILD)/ucrt0.o: user/lib/crt0.S | $(BUILD)
+	$(CC) $(UCFLAGS) -c $< -o $@
+
+$(BUILD)/ulib.o: user/lib/ulib.c $(wildcard user/lib/*.h) | $(BUILD)
+	$(CC) $(UCFLAGS) -c $< -o $@
+
+$(BUILD)/uc_%.o: user/c/%.c $(wildcard user/lib/*.h) | $(BUILD)
+	$(CC) $(UCFLAGS) -c $< -o $@
+
+$(BUILD)/c_%.elf: $(BUILD)/uc_%.o $(ULIB_OBJS) user/user.ld
+	$(LD) -m i386pe -T user/user.ld -nostdlib -o $(BUILD)/c_$*.upe $(ULIB_OBJS) $<
+	$(OBJCOPY) -O elf32-i386 $(BUILD)/c_$*.upe $@
 
 $(BUILD)/kernel.pe: $(OBJS) kernel/linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)
