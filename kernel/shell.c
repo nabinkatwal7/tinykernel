@@ -266,16 +266,6 @@ static int readline(char *buf, int max)
 	}
 }
 
-/* Tab completion is added in the next change; for now Tab does nothing. */
-static int complete(char *buf, int *len, int max, int *cur)
-{
-	(void)buf;
-	(void)len;
-	(void)max;
-	(void)cur;
-	return 0;
-}
-
 /* ---------------- variable expansion ---------------- */
 
 static int last_status;
@@ -4332,6 +4322,151 @@ int shell_exec_from_user(const char *line)
 		return 1;
 	}
 	return shell_exec(line);
+}
+
+/* ---------------- tab completion ---------------- */
+
+#define MAX_CANDIDATES 64
+
+static struct candidate {
+	char name[VFS_NAME_MAX + 2];
+	int dir;
+} cand[MAX_CANDIDATES];
+static int ncand;
+
+static void add_candidate(const char *name, const char *prefix, int dir)
+{
+	size_t n = kstrlen(prefix);
+
+	if (ncand >= MAX_CANDIDATES || kstrncmp(name, prefix, n) || kstrlen(name) >= sizeof cand[0].name - 1)
+		return;
+	kstrlcpy(cand[ncand].name, name, sizeof cand[0].name);
+	cand[ncand++].dir = dir;
+}
+
+static void add_files(const char *word)
+{
+	static struct vfs_dirent ent[FS_MAX_FILES];
+	char dir[FILE_PATH_MAX];
+	const char *slash = 0, *p, *base;
+	int i, n;
+
+	for (p = word; *p; p++)
+		if (*p == '/')
+			slash = p;
+	if (!slash) {
+		kstrlcpy(dir, vfs_getcwd(), sizeof dir);
+		base = word;
+	} else {
+		size_t dl = (size_t)(slash - word);
+
+		if (dl >= sizeof dir)
+			return;
+		memcpy(dir, word, dl);
+		dir[dl] = '\0';
+		if (!dl)
+			kstrlcpy(dir, "/", sizeof dir);
+		base = slash + 1;
+	}
+	n = vfs_list(dir, ent, FS_MAX_FILES);
+	for (i = 0; i < n; i++)
+		add_candidate(ent[i].name, base, ent[i].is_dir);
+}
+
+static void add_commands(const char *word)
+{
+	const struct command *c;
+	const char *n;
+	int i;
+
+	for (c = commands; c->name; c++)
+		add_candidate(c->name, word, 0);
+	for (i = 0; i < MAX_ALIASES; i++)
+		if (aliases[i].used)
+			add_candidate(aliases[i].name, word, 0);
+	for (i = 0; (n = script_function_name(i)); i++)
+		add_candidate(n, word, 0);
+}
+
+static void type_text(char *buf, int *len, int max, const char *s)
+{
+	while (*s && *len < max - 1) {
+		buf[(*len)++] = *s;
+		console_putchar(*s++);
+	}
+	buf[*len] = '\0';
+}
+
+/*
+ * Completes the word before the cursor (which is at the end of the line): command names for the first word,
+ * file names for the others. One match is finished off; several extend to their common prefix, and a second
+ * Tab lists them.
+ */
+static int complete(char *buf, int *len, int max, int *cur)
+{
+	static int listed_for = -1;
+	char word[64];
+	const char *base;
+	int ws = *len, first = 1, i, common, n, again;
+
+	while (ws > 0 && buf[ws - 1] != ' ' && buf[ws - 1] != '\t')
+		ws--;
+	for (i = 0; i < ws; i++)
+		if (buf[i] != ' ' && buf[i] != '\t')
+			first = 0;
+	if (*len - ws >= (int)sizeof word)
+		return 0;
+	memcpy(word, buf + ws, (size_t)(*len - ws));
+	word[*len - ws] = '\0';
+
+	again = listed_for == *len; /* the text is unchanged since the last Tab */
+	ncand = 0;
+	if (first)
+		add_commands(word);
+	else
+		add_files(word);
+	if (!ncand)
+		return 0;
+
+	base = word;
+	for (i = 0; word[i]; i++)
+		if (word[i] == '/')
+			base = word + i + 1;
+	n = (int)kstrlen(base);
+
+	common = (int)kstrlen(cand[0].name);
+	for (i = 1; i < ncand; i++) {
+		int k = 0;
+
+		while (k < common && cand[0].name[k] == cand[i].name[k])
+			k++;
+		common = k;
+	}
+	if (common > n) { /* there is more that all candidates agree on */
+		char add[VFS_NAME_MAX + 2];
+
+		memcpy(add, cand[0].name + n, (size_t)(common - n));
+		add[common - n] = '\0';
+		type_text(buf, len, max, add);
+		n = common;
+	}
+	if (ncand == 1) {
+		type_text(buf, len, max, cand[0].dir ? "/" : " ");
+		*cur = *len;
+		return 1;
+	}
+	listed_for = *len;
+	*cur = *len;
+	if (!again) /* the first Tab only completes; pressing Tab again on the same text lists the choices */
+		return 1;
+	console_putchar('\n');
+	for (i = 0; i < ncand; i++)
+		console_printf("%s%s  ", cand[i].name, cand[i].dir ? "/" : "");
+	console_putchar('\n');
+	prompt();
+	console_write(buf);
+	*cur = *len;
+	return 1;
 }
 
 void shell_run(void)
