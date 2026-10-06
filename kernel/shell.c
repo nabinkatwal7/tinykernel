@@ -1418,6 +1418,10 @@ static int cmd_smpaffinity(int argc, char **argv)
 static int cmd_useradd(int argc, char **argv);
 static int cmd_logout(int argc, char **argv);
 static int cmd_passwd(int argc, char **argv);
+static int cmd_whoami(int argc, char **argv);
+static int cmd_id(int argc, char **argv);
+static int cmd_su(int argc, char **argv);
+static int cmd_exit(int argc, char **argv);
 static int cmd_chmod(int argc, char **argv);
 static int cmd_chown(int argc, char **argv);
 static int cmd_sha256(int argc, char **argv);
@@ -4032,6 +4036,10 @@ static const struct command commands[] = {
 	{ "sha256",  "sha256 text",           "SHA-256 digest of some text", cmd_sha256 },
 	{ "chmod",   "chmod MODE FILE...",    "change permissions (octal or u+x style)", cmd_chmod },
 	{ "chown",   "chown USER[:GROUP] FILE...", "change the owner (root only)", cmd_chown },
+	{ "whoami", "whoami",                "print the current user", cmd_whoami },
+	{ "id",      "id",                    "numeric user and group ids", cmd_id },
+	{ "su",      "su [user]",             "switch user (exit returns)", cmd_su },
+	{ "exit",    "exit",                  "leave an su session, or log out", cmd_exit },
 	{ "logout",  "logout",                "end the session and show the login prompt", cmd_logout },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
@@ -4645,6 +4653,7 @@ static int complete(char *buf, int *len, int max, int *cur)
 /* ---------------- login ---------------- */
 
 static int login_wanted = 1; /* ask who is there before the next prompt */
+static int su_top;           /* nested su sessions */
 
 /* Reads a line without echoing it. */
 static void read_secret(char *buf, int max)
@@ -4714,6 +4723,7 @@ static int cmd_logout(int argc, char **argv)
 		return 1;
 	}
 	cred_set(0, 0);
+	su_top = 0;
 	login_wanted = 1;
 	return 0;
 }
@@ -4924,6 +4934,94 @@ static int cmd_chown(int argc, char **argv)
 			rc = fs_fail(argv[i], r);
 	}
 	return rc;
+}
+
+static const char *whoami_name(void)
+{
+	return cred_uid() || users_exist() ? user_name_of(cred_uid()) : "root";
+}
+
+/* whoami : the name of the current user */
+static int cmd_whoami(int argc, char **argv)
+{
+	(void)argc;
+	(void)argv;
+	console_printf("%s\n", whoami_name());
+	return 0;
+}
+
+/* id : numeric user and group ids */
+static int cmd_id(int argc, char **argv)
+{
+	(void)argc;
+	(void)argv;
+	console_printf("uid=%u(%s) gid=%u\n", cred_uid(), whoami_name(), cred_gid());
+	return 0;
+}
+
+/* su [user] switches to another user (root by default) inside the same session; 'exit' comes back. */
+#define SU_DEPTH 4
+
+static struct su_saved {
+	uint16_t uid, gid;
+	char user[USER_NAME_MAX], home[USER_HOME_MAX], cwd[VFS_PATH_MAX];
+} su_stack[SU_DEPTH];
+static int su_top;
+
+static int cmd_su(int argc, char **argv)
+{
+	struct user u;
+	const char *target = argc > 1 ? argv[1] : "root";
+	struct su_saved *s;
+	char pw[64];
+
+	if (!users_exist()) {
+		console_write("su: no user database (see useradd)\n");
+		return 1;
+	}
+	if (user_find_name(target, &u)) {
+		console_printf("su: unknown user %s\n", target);
+		return 1;
+	}
+	if (cred_uid()) { /* only root switches without a password */
+		console_write("password: ");
+		read_secret(pw, sizeof pw);
+		if (!user_verify(&u, pw)) {
+			console_write("su: authentication failure\n");
+			return 1;
+		}
+	}
+	if (su_top >= SU_DEPTH) {
+		console_write("su: too many nested sessions\n");
+		return 1;
+	}
+	s = &su_stack[su_top++];
+	s->uid = cred_uid();
+	s->gid = cred_gid();
+	kstrlcpy(s->user, env_get("USER") ? env_get("USER") : "root", sizeof s->user);
+	kstrlcpy(s->home, env_get("HOME") ? env_get("HOME") : "/", sizeof s->home);
+	kstrlcpy(s->cwd, vfs_getcwd(), sizeof s->cwd);
+	cred_set(u.uid, u.gid);
+	env_set("USER", u.name);
+	env_set("HOME", u.home);
+	return 0;
+}
+
+/* exit : leave an 'su' session, or log out */
+static int cmd_exit(int argc, char **argv)
+{
+	(void)argc;
+	(void)argv;
+	if (su_top > 0) {
+		struct su_saved *s = &su_stack[--su_top];
+
+		cred_set(s->uid, s->gid);
+		env_set("USER", s->user);
+		env_set("HOME", s->home);
+		vfs_chdir(s->cwd);
+		return 0;
+	}
+	return cmd_logout(0, 0);
 }
 
 /* useradd NAME PASSWORD : add a user (root only). The first user must be "root". */
