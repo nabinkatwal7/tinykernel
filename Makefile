@@ -11,7 +11,7 @@ CFLAGS  := -m32 -ffreestanding -fno-builtin -fno-stack-protector \
 LDFLAGS := -m i386pe -T kernel/linker.ld -nostdlib
 
 BUILD          := build
-KERNEL_SECTORS := 512
+KERNEL_SECTORS := 768
 KERNEL_ELF     := $(BUILD)/kernel.elf
 KERNEL_BIN     := $(BUILD)/kernel.bin
 BOOT_BIN       := $(BUILD)/boot.bin
@@ -63,7 +63,7 @@ $(BUILD)/%.bin: user/%.asm | $(BUILD)
 $(BUILD)/%.elf: user/%.elf.asm user/user.ld | $(BUILD)
 	$(NASM) -f win32 $< -o $(BUILD)/$*.uo
 	$(LD) -m i386pe -T user/user.ld -nostdlib -o $(BUILD)/$*.upe $(BUILD)/$*.uo
-	$(OBJCOPY) -O elf32-i386 $(BUILD)/$*.upe $@
+	$(OBJCOPY) -S -O elf32-i386 $(BUILD)/$*.upe $@
 
 # C user programs: user/c/NAME.c -> build/c_NAME.elf, linked with the C runtime in user/lib.
 UCFLAGS  := -m32 -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie             -fno-asynchronous-unwind-tables -mgeneral-regs-only -Wall -Wextra -Iuser/lib
@@ -89,7 +89,7 @@ $(BUILD)/uc_%.o: user/c/%.c $(wildcard user/lib/*.h) | $(BUILD)
 
 $(BUILD)/c_%.elf: $(BUILD)/uc_%.o $(ULIB_OBJS) user/user.ld
 	$(LD) -m i386pe -T user/user.ld -nostdlib -o $(BUILD)/c_$*.upe $(ULIB_OBJS) $<
-	$(OBJCOPY) -O elf32-i386 $(BUILD)/c_$*.upe $@
+	$(OBJCOPY) -S -O elf32-i386 $(BUILD)/c_$*.upe $@
 
 $(BUILD)/kernel.pe: $(OBJS) kernel/linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)

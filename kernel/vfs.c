@@ -1,6 +1,7 @@
 #include "vfs.h"
 
 #include "console.h"
+#include "kprintf.h"
 #include "kstring.h"
 
 struct mount {
@@ -103,6 +104,7 @@ void vfs_init(void)
 	memset(mounts, 0, sizeof mounts);
 	vfs_mount("/", &tinyfs_ops, 0);
 	devfs_init();
+	procfs_init();
 }
 
 int vfs_mount(const char *prefix, const struct vfs_ops *ops, void *ctx)
@@ -239,6 +241,17 @@ int vfs_list(const char *path, struct vfs_dirent *out, int max)
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 
 	return m && m->ops->list ? m->ops->list(m->ctx, rest, out, max) : FS_ENOENT;
+}
+
+/* Mount table as text, for /proc/mounts. */
+int vfs_format_mounts(char *buf, uint32_t cap)
+{
+	int i, n = 0;
+
+	for (i = 0; i < VFS_MAX_MOUNTS; i++)
+		if (mounts[i].used)
+			n += ksnprintf(buf + n, cap - (uint32_t)n, "%s %s\n", mounts[i].ops->name, mounts[i].prefix);
+	return n;
 }
 
 void vfs_print_mounts(void)

@@ -70,6 +70,7 @@ void     wq_wait(struct waitq *q, wait_reason_t why);
 int      wq_wake_one(struct waitq *q);   /* 1 if a task was woken */
 int      wq_wake_all(struct waitq *q);   /* number woken */        /* called from the timer IRQ */
 void     sched_dump(void);
+int      sched_format(char *buf, uint32_t cap); /* the same table as text (for /proc/tasks) */
 void     sched_tree(void);        /* pstree: tasks indented under their parents */        /* ps */
 uint32_t task_count(void);
 uint32_t sched_newest_job(void); /* id of the most recently created user-visible task, 0 if none */

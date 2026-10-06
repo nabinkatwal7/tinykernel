@@ -1,4 +1,3 @@
-Add procfs style info files,
 Add directories to filesystem,
 Implement mkdir and rmdir,
 Implement cd and pwd,

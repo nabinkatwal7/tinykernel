@@ -49,7 +49,8 @@ void vfs_init(void);
 
 /* devfs: mounted on /dev by vfs_init(). */
 int  devfs_register(const struct vfs_device *dev);   /* FS_ENOSPC when the table is full */
-void devfs_init(void);                               /* registers the built-in devices */                    /* mounts TinyFS on "/" */
+void devfs_init(void);
+void procfs_init(void);                              /* read-only status files on /proc */                               /* registers the built-in devices */                    /* mounts TinyFS on "/" */
 
 int  vfs_stat(const char *path, struct vfs_stat *st);
 int  vfs_size(const char *path);        /* bytes, or a negative error */
@@ -59,5 +60,6 @@ int  vfs_create(const char *path);
 int  vfs_unlink(const char *path);
 int  vfs_list(const char *path, struct vfs_dirent *out, int max);
 void vfs_print_mounts(void);
+int  vfs_format_mounts(char *buf, uint32_t cap);   /* text for /proc/mounts */
 
 #endif

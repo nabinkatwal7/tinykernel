@@ -53,6 +53,17 @@ void klog(int level, const char *fmt, ...)
 	irq_restore(f);
 }
 
+int klog_copy(char *buf, unsigned cap)
+{
+	unsigned i, n = ring_count < cap - 1 ? ring_count : cap - 1;
+	unsigned start = (ring_head + RING_SIZE - n) % RING_SIZE;
+
+	for (i = 0; i < n; i++)
+		buf[i] = ring[(start + i) % RING_SIZE];
+	buf[n] = '\0';
+	return (int)n;
+}
+
 void klog_dump(void)
 {
 	unsigned i, start = (ring_head + RING_SIZE - ring_count) % RING_SIZE;

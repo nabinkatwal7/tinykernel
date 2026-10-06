@@ -635,3 +635,30 @@ void sched_tree(void)
 	} while (t != task_head);
 	irq_restore(f);
 }
+
+int sched_format(char *buf, uint32_t cap)
+{
+	static const char *const names[] = { "ready", "running", "sleeping", "dead", "blocked", "zombie" };
+	static const char *const why[] = { "", "", "mutex", "sem", "kbd", "other" };
+	uint32_t f = irq_save();
+	task_t *t = task_head;
+	int n = ksnprintf(buf, cap, "ID PPID NAME STATE PRIO CPU HEAP STACK\n");
+
+	do {
+		if (t->state != TASK_DEAD && (uint32_t)n < cap) {
+			const char *state = names[t->state];
+			char tmp[24];
+
+			if (t->state == TASK_BLOCKED) {
+				ksnprintf(tmp, sizeof tmp, "blocked:%s", why[t->reason]);
+				state = tmp;
+			}
+			n += ksnprintf(buf + n, cap - (uint32_t)n, "%u %u %s %s %u %u %u %u\n", t->id, t->ppid,
+				       t->name, state, t->priority, t->cpu_ticks, t->heap_bytes,
+				       t->stack ? TASK_STACK_SIZE : 0u);
+		}
+		t = t->next;
+	} while (t != task_head);
+	irq_restore(f);
+	return n < (int)cap ? n : (int)cap - 1;
+}
