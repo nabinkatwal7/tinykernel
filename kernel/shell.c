@@ -107,7 +107,7 @@ static void set_line(char *buf, int *len, const char *text)
 static void prompt(void)
 {
 	console_set_color(COLOR_LIGHT_GREEN, COLOR_BLACK);
-	console_write("tiny> ");
+	console_printf("tiny:%s> ", vfs_getcwd());
 	console_set_color(COLOR_WHITE, COLOR_BLACK);
 }
 
@@ -1032,7 +1032,7 @@ static int fs_fail(const char *what, int rc)
 static int cmd_ls(int argc, char **argv)
 {
 	struct vfs_dirent ent[FS_MAX_FILES];
-	const char *path = argc > 1 ? argv[1] : "/";
+	const char *path = argc > 1 ? argv[1] : vfs_getcwd();
 	int n, i;
 
 	n = vfs_list(path, ent, FS_MAX_FILES);
@@ -1123,6 +1123,22 @@ static int cmd_touch(int argc, char **argv)
 		return 1;
 	rc = vfs_create(argv[1]);
 	return rc ? fs_fail(argv[1], rc) : 0;
+}
+
+static int cmd_cd(int argc, char **argv)
+{
+	const char *target = argc > 1 ? argv[1] : "/";
+	int rc = vfs_chdir(target);
+
+	return rc ? fs_fail(target, rc) : 0;
+}
+
+static int cmd_pwd(int argc, char **argv)
+{
+	(void)argc;
+	(void)argv;
+	console_printf("%s\n", vfs_getcwd());
+	return 0;
 }
 
 static int cmd_mkdir(int argc, char **argv)
@@ -1545,6 +1561,8 @@ static const struct command commands[] = {
 	{ "cat",     "cat <file>",            "print a file", cmd_cat },
 	{ "write",   "write <file> <text>",   "create/replace a file", cmd_write },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
+	{ "cd",      "cd [dir]",              "change directory", cmd_cd },
+	{ "pwd",     "pwd",                   "print the working directory", cmd_pwd },
 	{ "mkdir",   "mkdir <dir>",           "create a directory", cmd_mkdir },
 	{ "rmdir",   "rmdir <dir>",           "remove an empty directory", cmd_rmdir },
 	{ "rm",      "rm <file>",             "delete a file", cmd_rm },

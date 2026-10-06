@@ -1,4 +1,3 @@
-Implement cd and pwd,
 Add path parsing and normalization,
 Add file append and seek,
 Add 'cp' shell command,

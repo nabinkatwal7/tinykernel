@@ -7,6 +7,7 @@
 #include "sched.h"
 #include "shell.h"
 #include "timer.h"
+#include "kstring.h"
 #include "user.h"
 #include "vfs.h"
 
@@ -99,6 +100,21 @@ void syscall_dispatch(struct regs *r)
 		break;
 	case SYS_RMDIR:
 		r->eax = user_str_ok(r->ebx) ? (uint32_t)vfs_rmdir((const char *)r->ebx) : (uint32_t)-1;
+		break;
+	case SYS_GETCWD: {
+		const char *c = vfs_getcwd();
+		uint32_t len = (uint32_t)kstrlen(c) + 1;
+
+		if (!user_ptr_ok(r->ebx, r->ecx) || len > r->ecx) {
+			r->eax = (uint32_t)-1;
+			break;
+		}
+		memcpy((void *)r->ebx, c, len);
+		r->eax = len - 1;
+		break;
+	}
+	case SYS_CHDIR:
+		r->eax = user_str_ok(r->ebx) ? (uint32_t)vfs_chdir((const char *)r->ebx) : (uint32_t)-1;
 		break;
 	case SYS_DUP:
 		r->eax = (uint32_t)file_dup((int)r->ebx);

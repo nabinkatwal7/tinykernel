@@ -11,6 +11,7 @@
  * it the remainder of the path. Errors are the FS_E* codes from fs.h (negative).
  */
 #define VFS_NAME_MAX 24
+#define VFS_PATH_MAX 64 /* longest absolute path, including the NUL */
 
 struct vfs_dirent {
 	char name[VFS_NAME_MAX];
@@ -63,6 +64,8 @@ int  vfs_unlink(const char *path);
 int  vfs_mkdir(const char *path);
 int  vfs_rmdir(const char *path);
 int  vfs_list(const char *path, struct vfs_dirent *out, int max);
+const char *vfs_getcwd(void);          /* current working directory (absolute) */
+int  vfs_chdir(const char *path);        /* 0, FS_ENOENT or FS_ENOTDIR */
 void vfs_print_mounts(void);
 int  vfs_format_mounts(char *buf, uint32_t cap);   /* text for /proc/mounts */
 

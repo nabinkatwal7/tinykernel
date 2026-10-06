@@ -177,21 +177,56 @@ static struct mount *resolve(const char *path, const char **rest)
 	return best;
 }
 
-/* Paths without a leading slash are relative to the root (TinyFS has no directories yet). */
-static struct mount *lookup(const char *path, char *full, size_t size, const char **rest)
+/* Current working directory: always an absolute path with no trailing slash (except "/"). */
+static char cwd[VFS_PATH_MAX] = "/";
+
+/* Absolute path for 'path': as given if it starts with '/', else relative to the cwd. */
+static void make_absolute(const char *path, char *full, size_t size)
 {
-	if (path[0] != '/') {
+	if (path[0] == '/') {
+		kstrlcpy(full, path, size);
+	} else if (!kstrcmp(cwd, "/")) {
 		full[0] = '/';
 		kstrlcpy(full + 1, path, size - 1);
 	} else {
-		kstrlcpy(full, path, size);
+		ksnprintf(full, size, "%s/%s", cwd, path);
 	}
+}
+
+static struct mount *lookup(const char *path, char *full, size_t size, const char **rest)
+{
+	make_absolute(path, full, size);
 	return resolve(full, rest);
+}
+
+const char *vfs_getcwd(void)
+{
+	return cwd;
+}
+
+int vfs_chdir(const char *path)
+{
+	char full[VFS_PATH_MAX];
+	struct vfs_stat st;
+	int rc;
+	size_t n;
+
+	make_absolute(path, full, sizeof full);
+	rc = vfs_stat(full, &st);
+	if (rc < 0)
+		return rc;
+	if (!st.is_dir)
+		return FS_ENOTDIR;
+	n = kstrlen(full);
+	while (n > 1 && full[n - 1] == '/') /* no trailing slash */
+		full[--n] = '\0';
+	kstrlcpy(cwd, full, sizeof cwd);
+	return FS_OK;
 }
 
 int vfs_stat(const char *path, struct vfs_stat *st)
 {
-	char full[64];
+	char full[VFS_PATH_MAX];
 	const char *rest;
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 
@@ -210,7 +245,7 @@ int vfs_size(const char *path)
 
 int vfs_read(const char *path, void *buf, uint32_t cap)
 {
-	char full[64];
+	char full[VFS_PATH_MAX];
 	const char *rest;
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 
@@ -219,7 +254,7 @@ int vfs_read(const char *path, void *buf, uint32_t cap)
 
 int vfs_write(const char *path, const void *data, uint32_t size)
 {
-	char full[64];
+	char full[VFS_PATH_MAX];
 	const char *rest;
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 
@@ -228,7 +263,7 @@ int vfs_write(const char *path, const void *data, uint32_t size)
 
 int vfs_create(const char *path)
 {
-	char full[64];
+	char full[VFS_PATH_MAX];
 	const char *rest;
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 
@@ -237,7 +272,7 @@ int vfs_create(const char *path)
 
 int vfs_unlink(const char *path)
 {
-	char full[64];
+	char full[VFS_PATH_MAX];
 	const char *rest;
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 
@@ -246,7 +281,7 @@ int vfs_unlink(const char *path)
 
 int vfs_mkdir(const char *path)
 {
-	char full[64];
+	char full[VFS_PATH_MAX];
 	const char *rest;
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 
@@ -255,7 +290,7 @@ int vfs_mkdir(const char *path)
 
 int vfs_rmdir(const char *path)
 {
-	char full[64];
+	char full[VFS_PATH_MAX];
 	const char *rest;
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 
@@ -264,7 +299,7 @@ int vfs_rmdir(const char *path)
 
 int vfs_list(const char *path, struct vfs_dirent *out, int max)
 {
-	char full[64];
+	char full[VFS_PATH_MAX];
 	const char *rest;
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 

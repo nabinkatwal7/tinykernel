@@ -13,6 +13,8 @@
 #define SYS_CLOSE    8
 #define SYS_READ     9
 #define SYS_FWRITE  10
+#define SYS_GETCWD  21
+#define SYS_CHDIR   22
 #define SYS_MKDIR   19
 #define SYS_RMDIR   20
 #define SYS_DUP     17
@@ -52,6 +54,8 @@ static inline int  getkey(void)                     { return syscall3(SYS_GETKEY
 static inline int  open(const char *path, int flags) { return syscall3(SYS_OPEN, (int)path, flags, 0); }
 static inline int  mkdir(const char *path)         { return syscall3(SYS_MKDIR, (int)path, 0, 0); }
 static inline int  rmdir(const char *path)         { return syscall3(SYS_RMDIR, (int)path, 0, 0); }
+static inline int  getcwd(char *buf, int size)    { return syscall3(SYS_GETCWD, (int)buf, size, 0); }
+static inline int  chdir(const char *path)         { return syscall3(SYS_CHDIR, (int)path, 0, 0); }
 static inline int  dup(int fd)                      { return syscall3(SYS_DUP, fd, 0, 0); }
 static inline int  dup2(int fd, int target)         { return syscall3(SYS_DUP2, fd, target, 0); }
 static inline int  close(int fd)                     { return syscall3(SYS_CLOSE, fd, 0, 0); }
