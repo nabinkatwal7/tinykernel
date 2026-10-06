@@ -23,4 +23,9 @@ int      paging_is_mapped(uint32_t virt);                /* in the current addre
 struct regs;
 void     paging_fault(struct regs *r);
 
+/* Address spaces. A new directory shares every kernel mapping with the kernel directory. */
+uint32_t paging_new_dir(void);              /* 0 on out-of-memory */
+void     paging_free_dir(uint32_t dir);     /* frees the directory and any private tables */
+void     paging_switch(uint32_t dir);       /* load CR3 (no-op if already current) */
+
 #endif

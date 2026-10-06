@@ -9,6 +9,7 @@ typedef enum { TASK_READY, TASK_RUNNING, TASK_SLEEPING, TASK_DEAD } task_state_t
 typedef struct task {
 	uint32_t esp;          /* saved kernel stack pointer while not running */
 	uint32_t esp0;         /* kernel stack the CPU switches to on ring3 -> ring0 */
+	uint32_t pgdir;        /* physical address of this task's page directory */
 	uint32_t id;
 	char name[16];
 	task_state_t state;

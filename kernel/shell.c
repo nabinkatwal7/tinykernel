@@ -549,6 +549,47 @@ static int cmd_fstest(int argc, char **argv)
 	return fails != 0;
 }
 
+/* Private address spaces: a mapping made in one directory must not leak into another. */
+static int cmd_pgtest(int argc, char **argv)
+{
+	uint32_t kdir = paging_kernel_dir(), d, f1, f2, flags;
+	volatile uint32_t *virt = (volatile uint32_t *)0x40000000;
+	int fails = 0;
+
+	(void)argc;
+	(void)argv;
+	d = paging_new_dir();
+	f1 = pmm_alloc();
+	f2 = pmm_alloc();
+	CHECK(d && f1 && f2, "allocate directory and frames");
+	if (!d || !f1 || !f2)
+		return 1;
+
+	CHECK(!paging_map(d, 0x40000000, f1, PTE_RW), "map in new directory");
+	CHECK(paging_translate(d, 0x40000000) == f1, "visible in new directory");
+	CHECK(paging_translate(kdir, 0x40000000) == PAGING_NOT_MAPPED, "not visible in kernel dir");
+
+	CHECK(!paging_map(d, 0x00500000, f2, PTE_RW), "remap a shared low slot privately");
+	CHECK(paging_translate(d, 0x00500000) == f2, "private remap visible");
+	CHECK(paging_translate(kdir, 0x00500000) == 0x00500000, "kernel identity map untouched");
+
+	flags = irq_save(); /* the scheduler would switch CR3 under us */
+	paging_switch(d);
+	*virt = 0xC0FFEE;
+	paging_switch(kdir);
+	irq_restore(flags);
+	CHECK(*(volatile uint32_t *)f1 == 0xC0FFEE, "write through private mapping reached the frame");
+
+	paging_free_dir(d);
+	pmm_free(f1);
+	pmm_free(f2);
+	if (fails)
+		console_printf("pgtest: %d check(s) failed\n", fails);
+	else
+		console_write("pgtest: all checks passed\n");
+	return fails != 0;
+}
+
 static int cmd_disk(int argc, char **argv)
 {
 	uint8_t sec[SECTOR_SIZE];
@@ -732,7 +773,8 @@ static const struct command commands[] = {
 	{ "rm",      "rm <file>",             "delete a file", cmd_rm },
 	{ "format",  "format",                "erase the disk and make a filesystem", cmd_format },
 	{ "fstest",  "fstest",                "self-test the filesystem", cmd_fstest },
-	{ "disk",    "disk [lba]",            "disk info / dump a sector", cmd_disk },
+	{ "pgtest",  "pgtest",                "self-test address spaces", cmd_pgtest },
+	{ "disk",   "disk [lba]",            "disk info / dump a sector", cmd_disk },
 	{ "install", "install [name]",        "list/copy built-in programs to disk", cmd_install },
 	{ "run",     "run <program>",         "run a program in user mode", cmd_run },
 	{ "history", "history",               "show command history", cmd_history },

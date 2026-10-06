@@ -6,6 +6,7 @@
 #include "klog.h"
 #include "kmalloc.h"
 #include "kstring.h"
+#include "paging.h"
 #include "timer.h"
 
 #define TASK_STACK_SIZE 8192
@@ -50,6 +51,7 @@ void sched_init(void)
 	task_t *t = kcalloc(1, sizeof *t);
 
 	kstrlcpy(t->name, "kmain", sizeof t->name);
+	t->pgdir = paging_kernel_dir();
 	t->id = next_id++;
 	t->state = TASK_RUNNING;
 	t->priority = 1;
@@ -87,6 +89,7 @@ task_t *task_create(const char *name, void (*entry)(void *), void *arg, uint32_t
 	kstrlcpy(t->name, name, sizeof t->name);
 	t->esp = (uint32_t)sp;
 	t->esp0 = (uint32_t)t->stack + TASK_STACK_SIZE;
+	t->pgdir = paging_kernel_dir();
 	t->entry = entry;
 	t->arg = arg;
 	t->priority = priority ? priority : 1;
@@ -148,6 +151,7 @@ static void schedule_locked(void)
 		next->slice_left = BASE_SLICE * next->priority;
 		current = next;
 		gdt_set_kernel_stack(next->esp0);
+		paging_switch(next->pgdir);
 		switch_context(&prev->esp, next->esp);
 	} else {
 		prev->state = TASK_RUNNING;

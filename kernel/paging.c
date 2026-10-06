@@ -106,22 +106,36 @@ static void flush_page(uint32_t virt)
 	__asm__ volatile ("invlpg (%0)" : : "r"(virt) : "memory");
 }
 
-int paging_map(uint32_t dir, uint32_t virt, uint32_t phys, uint32_t flags)
+/* Make sure 'dir' owns the page table behind 'pde' (clone it if it is shared with the kernel). */
+static uint32_t *own_table(uint32_t *pd, uint32_t virt)
 {
-	uint32_t *pd, *pt;
-	uint32_t *pde;
+	uint32_t *pde = &pd[virt >> 22];
+	uint32_t *pt;
 
-	if (!dir)
-		dir = current_dir();
-	pd = (uint32_t *)dir;
-	pde = &pd[virt >> 22];
 	if (!(*pde & PTE_P)) {
 		pt = alloc_table();
 		if (!pt)
-			return -1;
+			return 0;
 		*pde = (uint32_t)pt | PTE_P | PTE_RW | PTE_US;
+	} else if (pd != kdir && (*pde & ~0xFFFu) == (kdir[virt >> 22] & ~0xFFFu)) {
+		pt = alloc_table();
+		if (!pt)
+			return 0;
+		memcpy(pt, (void *)(*pde & ~0xFFFu), PAGE_SIZE);
+		*pde = (uint32_t)pt | (*pde & 0xFFFu);
 	}
-	pt = (uint32_t *)(*pde & ~0xFFFu);
+	return (uint32_t *)(*pde & ~0xFFFu);
+}
+
+int paging_map(uint32_t dir, uint32_t virt, uint32_t phys, uint32_t flags)
+{
+	uint32_t *pt;
+
+	if (!dir)
+		dir = current_dir();
+	pt = own_table((uint32_t *)dir, virt);
+	if (!pt)
+		return -1;
 	pt[(virt >> 12) & 0x3FF] = (phys & ~0xFFFu) | (flags & 0xFFFu) | PTE_P;
 	if (dir == current_dir())
 		flush_page(virt);
@@ -137,8 +151,8 @@ int paging_unmap(uint32_t dir, uint32_t virt)
 	pd = (uint32_t *)dir;
 	if (!(pd[virt >> 22] & PTE_P))
 		return -1;
-	pt = (uint32_t *)(pd[virt >> 22] & ~0xFFFu);
-	if (!(pt[(virt >> 12) & 0x3FF] & PTE_P))
+	pt = own_table(pd, virt);
+	if (!pt || !(pt[(virt >> 12) & 0x3FF] & PTE_P))
 		return -1;
 	pt[(virt >> 12) & 0x3FF] = 0;
 	if (dir == current_dir())
@@ -165,4 +179,39 @@ uint32_t paging_translate(uint32_t dir, uint32_t virt)
 int paging_is_mapped(uint32_t virt)
 {
 	return !enabled || paging_translate(0, virt) != PAGING_NOT_MAPPED;
+}
+
+/*
+ * A new address space starts as a copy of the kernel directory: the page tables themselves are
+ * shared, so kernel mappings stay identical everywhere. Mapping something new in a fresh
+ * directory (paging_map) allocates a private table only for that 4 MiB slot, so it never
+ * shows up in other spaces. Shared kernel tables are recognised by pointer equality.
+ */
+uint32_t paging_new_dir(void)
+{
+	uint32_t *d = alloc_table();
+
+	if (!d)
+		return 0;
+	memcpy(d, kdir, PAGE_SIZE);
+	return (uint32_t)d;
+}
+
+void paging_free_dir(uint32_t dir)
+{
+	uint32_t *d = (uint32_t *)dir;
+	uint32_t i;
+
+	if (!dir || d == kdir)
+		return;
+	for (i = 0; i < ENTRIES; i++)
+		if ((d[i] & PTE_P) && (d[i] & ~0xFFFu) != (kdir[i] & ~0xFFFu))
+			pmm_free(d[i] & ~0xFFFu); /* private table */
+	pmm_free(dir);
+}
+
+void paging_switch(uint32_t dir)
+{
+	if (enabled && dir && dir != current_dir())
+		__asm__ volatile ("movl %0, %%cr3" : : "r"(dir) : "memory");
 }
