@@ -38,7 +38,7 @@ PROG_IMAGES := $(foreach p,$(FLAT_PROGS),$(p):$(BUILD)/$(p).bin) \
 USER_BINS := $(FLAT_PROGS:%=$(BUILD)/%.bin) $(ELF_PROGS:%=$(BUILD)/%.elf) $(C_PROGS:%=$(BUILD)/c_%.elf)
 
 # Headless run: serial log to build/serial.log, no window.
-QEMU_NET := -netdev user,id=n0,hostfwd=udp::5601-:7777 -device rtl8139,netdev=n0
+QEMU_NET := -smp 2 -netdev user,id=n0,hostfwd=udp::5601-:7777 -device rtl8139,netdev=n0
 QEMU_DISKS := $(QEMU_NET) -drive format=raw,file=$(IMAGE),if=floppy \
               -drive format=raw,file=$(DISK),if=ide,index=0 \
               -drive format=raw,file=$(FATIMG),if=ide,index=1 -boot a

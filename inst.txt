@@ -1,4 +1,3 @@
-Detect extra CPUs from ACPI MADT,
 Start second CPU core,
 Add SMP-safe spinlocks,
 Run scheduler on multiple cores,
