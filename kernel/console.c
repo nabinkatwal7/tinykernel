@@ -103,9 +103,43 @@ void console_clear(void)
 	irq_restore(f);
 }
 
+static char *cap_buf;
+static unsigned cap_size, cap_len;
+
+void console_capture_begin(char *buf, unsigned cap)
+{
+	uint32_t f = irq_save();
+
+	cap_buf = buf;
+	cap_size = cap;
+	cap_len = 0;
+	if (cap)
+		buf[0] = '\0';
+	irq_restore(f);
+}
+
+int console_capture_end(void)
+{
+	uint32_t f = irq_save();
+	int n = (int)cap_len;
+
+	cap_buf = 0;
+	irq_restore(f);
+	return n;
+}
+
 void console_putchar(char c)
 {
 	uint32_t f = irq_save();
+
+	if (cap_buf) { /* captured, not displayed */
+		if (cap_len + 1 < cap_size) {
+			cap_buf[cap_len++] = c;
+			cap_buf[cap_len] = '\0';
+		}
+		irq_restore(f);
+		return;
+	}
 
 	if (c == '\b') {
 		serial_putc('\b');

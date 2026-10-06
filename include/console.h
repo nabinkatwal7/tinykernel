@@ -24,6 +24,11 @@ void console_clear(void);           /* clears the scrolling area (row 0 is the s
 void console_putchar(char c);       /* handles \n \r \b \t; mirrored to COM1 */
 void console_write(const char *s);
 void console_printf(const char *fmt, ...);
+/* Output capture: while active, console output is appended to the buffer instead of being shown
+   (serial too). Used by the self-test runner. */
+void console_capture_begin(char *buf, unsigned cap);
+int  console_capture_end(void);      /* returns the number of characters captured */
+
 void console_set_color(uint8_t fg, uint8_t bg);
 void console_status(const char *text);
 

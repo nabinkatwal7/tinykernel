@@ -154,6 +154,9 @@ void syscall_dispatch(struct regs *r)
 		r->eax = user_str_ok(r->ebx) ? (uint32_t)shell_exec_from_user((const char *)r->ebx)
 					     : (uint32_t)-1;
 		break;
+	case SYS_SBRK:
+		r->eax = user_sbrk((int32_t)r->ebx);
+		break;
 	case SYS_GETPID:
 		r->eax = task_current()->id;
 		break;

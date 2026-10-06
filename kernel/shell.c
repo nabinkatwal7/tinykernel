@@ -30,6 +30,7 @@
 #include "pmm.h"
 #include "rtc.h"
 #include "sched.h"
+#include "selftest.h"
 #include "slab.h"
 #include "speaker.h"
 #include "sync.h"
@@ -2245,6 +2246,11 @@ static int cmd_cmdline(int argc, char **argv)
 	return 0;
 }
 
+static int cmd_selftest(int argc, char **argv)
+{
+	return selftest_run(argc > 1 && !kstrcmp(argv[1], "-v")) != 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -2778,6 +2784,7 @@ static const struct command commands[] = {
 	{ "acpi",    "acpi",                  "show ACPI tables and power-off info", cmd_acpi },
 	{ "shutdown", "shutdown",             "sync and power off", cmd_shutdown },
 	{ "cmdline", "cmdline",               "show the kernel parameters", cmd_cmdline },
+	{ "selftest", "selftest [-v]",         "run every self-test", cmd_selftest },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },
 	{ "cd",      "cd [dir]",              "change directory", cmd_cd },
