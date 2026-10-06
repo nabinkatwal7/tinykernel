@@ -71,7 +71,7 @@ static int dev_list(void *ctx, const char *path, struct vfs_dirent *out, int max
 }
 
 static const struct vfs_ops devfs_ops = {
-	"devfs", dev_stat, 0, 0, 0, 0, dev_list, 0, 0,
+	"devfs", dev_stat, 0, 0, 0, 0, dev_list, 0, 0, 0,
 };
 
 /* ---- built-in devices ---- */

@@ -1214,6 +1214,22 @@ static int cmd_cp(int argc, char **argv)
 	return rc ? fs_fail(dst, rc) : 0;
 }
 
+static int cmd_mv(int argc, char **argv)
+{
+	char dst[VFS_PATH_MAX];
+	int rc;
+
+	if (argc != 3) {
+		console_write("usage: mv <source> <destination>\n");
+		return 1;
+	}
+	if (need_fs())
+		return 1;
+	dest_path(argv[1], argv[2], dst, sizeof dst);
+	rc = vfs_rename(argv[1], dst);
+	return rc ? fs_fail(argv[1], rc) : 0;
+}
+
 static int cmd_touch(int argc, char **argv)
 {
 	int rc;
@@ -1711,6 +1727,7 @@ static const struct command commands[] = {
 	{ "cat",     "cat <file>",            "print a file", cmd_cat },
 	{ "write",   "write <file> <text>",   "create/replace a file", cmd_write },
 	{ "append",  "append <file> <text>",  "append a line to a file", cmd_append },
+	{ "mv",      "mv <src> <dst>",        "move or rename", cmd_mv },
 	{ "cp",      "cp <src> <dst>",        "copy a file", cmd_cp },
 	{ "touch",   "touch <file>",          "create an empty file", cmd_touch },
 	{ "pathtest", "pathtest",             "path normalization self-test", cmd_pathtest },

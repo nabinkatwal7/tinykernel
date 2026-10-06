@@ -1,4 +1,3 @@
-Add 'mv' shell command,
 Add 'stat' shell command,
 Add 'df' shell command,
 Add simple text editor,

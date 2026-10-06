@@ -42,6 +42,7 @@ struct vfs_ops {
 	int (*list)(void *ctx, const char *path, struct vfs_dirent *out, int max);  /* entries */
 	int (*mkdir)(void *ctx, const char *path);
 	int (*rmdir)(void *ctx, const char *path);
+	int (*rename)(void *ctx, const char *from, const char *to);
 };
 
 #define VFS_MAX_MOUNTS 8
@@ -63,6 +64,7 @@ int  vfs_create(const char *path);
 int  vfs_unlink(const char *path);
 int  vfs_mkdir(const char *path);
 int  vfs_rmdir(const char *path);
+int  vfs_rename(const char *from, const char *to); /* both paths must be on the same mount */
 int  vfs_list(const char *path, struct vfs_dirent *out, int max);
 /* Canonical absolute form of 'path' (relative paths start at 'base'): duplicate slashes collapse,
    '.' disappears, '..' removes the previous component (the root is its own parent), no trailing

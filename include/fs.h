@@ -45,6 +45,9 @@ int         fs_stat(const char *path, struct fs_stat *st);
 int         fs_delete(const char *path); /* files only */
 int         fs_mkdir(const char *path);
 int         fs_rmdir(const char *path);  /* must be empty */
+/* Move/rename a file or directory. An existing *file* at the destination is replaced; moving a
+   directory into itself is refused (FS_EINVAL). */
+int         fs_rename(const char *from, const char *to);
 int         fs_list(const char *dir, struct fs_stat *out, int max); /* entries in a directory */
 uint32_t    fs_free_sectors(void);
 const char *fs_strerror(int err);

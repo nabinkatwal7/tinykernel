@@ -103,8 +103,15 @@ static int tfs_rmdir(void *ctx, const char *path)
 	return fs_rmdir(tfs_name(path));
 }
 
+static int tfs_rename(void *ctx, const char *from, const char *to)
+{
+	(void)ctx;
+	ensure_mounted();
+	return fs_rename(tfs_name(from), tfs_name(to));
+}
+
 static const struct vfs_ops tinyfs_ops = {
-	"tinyfs", tfs_stat, tfs_read, tfs_write, tfs_create, tfs_unlink, tfs_list, tfs_mkdir, tfs_rmdir,
+	"tinyfs", tfs_stat, tfs_read, tfs_write, tfs_create, tfs_unlink, tfs_list, tfs_mkdir, tfs_rmdir, tfs_rename,
 };
 
 /* ---- mount table ---- */
@@ -322,6 +329,18 @@ int vfs_unlink(const char *path)
 	struct mount *m = lookup(path, full, sizeof full, &rest);
 
 	return m && m->ops->unlink ? m->ops->unlink(m->ctx, rest) : FS_ENOENT;
+}
+
+int vfs_rename(const char *from, const char *to)
+{
+	char f1[VFS_PATH_MAX], f2[VFS_PATH_MAX];
+	const char *r1, *r2;
+	struct mount *m1 = lookup(from, f1, sizeof f1, &r1);
+	struct mount *m2 = lookup(to, f2, sizeof f2, &r2);
+
+	if (!m1 || m1 != m2 || !m1->ops->rename)
+		return FS_EINVAL;
+	return m1->ops->rename(m1->ctx, r1, r2);
 }
 
 int vfs_mkdir(const char *path)

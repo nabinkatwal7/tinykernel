@@ -407,6 +407,37 @@ int fs_rmdir(const char *path)
 	return flush_dir();
 }
 
+int fs_rename(const char *from, const char *to)
+{
+	char leaf[FS_NAME_MAX];
+	int src = fs_entry(from), par, victim, up;
+
+	if (src < 0)
+		return src;
+	if (src == (int)ROOT)
+		return FS_EINVAL;
+	par = walk_parent(to, leaf);
+	if (par < 0)
+		return par;
+	if (!name_ok(leaf))
+		return FS_EINVAL;
+	/* a directory may not move into itself or below itself */
+	for (up = par; up != (int)ROOT; up = (int)parent(up))
+		if (up == src)
+			return FS_EINVAL;
+	victim = find_in((uint32_t)par, leaf);
+	if (victim == src)
+		return FS_OK; /* same place, same name */
+	if (victim >= 0) {
+		if (is_dir(victim) || is_dir(src))
+			return FS_EEXIST;
+		memset(&dir[victim], 0, sizeof dir[victim]); /* replace the old file */
+	}
+	kstrlcpy(dir[src].name, leaf, FS_NAME_MAX);
+	dir[src].flags = (dir[src].flags & ~(0xFFu << 8)) | ((uint32_t)par << 8);
+	return flush_dir();
+}
+
 int fs_list(const char *path, struct fs_stat *out, int max)
 {
 	int idx = fs_entry(path), i, n = 0;
