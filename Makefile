@@ -31,7 +31,11 @@ HEADERS := $(wildcard include/*.h)
 #   user/c/NAME.c      ELF built from C with the runtime in user/lib
 FLAT_PROGS := $(patsubst user/%.asm,%,$(filter-out %.elf.asm,$(wildcard user/*.asm)))
 ELF_PROGS  := $(patsubst user/%.elf.asm,%,$(wildcard user/*.elf.asm))
-C_PROGS    := $(patsubst user/c/%.c,%,$(wildcard user/c/*.c))
+# Programs that live on the FAT12 data disk (/fat/bin) instead of in the kernel image: the image has to fit the
+# bootloader's load area, and these do not need to exist before the disk is mounted. Names are 8.3 file names.
+FAT_PROGS  := advent snake tetris cal xxd sleep yes true false tee uniq rev nl basename dirname
+C_PROGS    := $(filter-out $(FAT_PROGS),$(patsubst user/c/%.c,%,$(wildcard user/c/*.c)))
+FAT_BINS   := $(FAT_PROGS:%=$(BUILD)/c_%.elf)
 PROG_IMAGES := $(foreach p,$(FLAT_PROGS),$(p):$(BUILD)/$(p).bin) \
                $(foreach p,$(ELF_PROGS),$(p):$(BUILD)/$(p).elf) \
                $(foreach p,$(C_PROGS),$(p):$(BUILD)/c_$(p).elf)
@@ -133,8 +137,12 @@ $(BUILD):
 $(BUILD)/mkfat12.exe: tools/mkfat12.c | $(BUILD)
 	gcc -O1 -o $@ $<
 
-$(FATIMG): $(BUILD)/mkfat12.exe $(wildcard fatroot/* fatroot/*/*)
-	$(BUILD)/mkfat12.exe $@ fatroot
+$(FATIMG): $(BUILD)/mkfat12.exe $(wildcard fatroot/* fatroot/*/*) $(FAT_BINS)
+	rm -rf $(BUILD)/fatroot
+	mkdir -p $(BUILD)/fatroot/bin
+	cp -r fatroot/. $(BUILD)/fatroot/
+	for p in $(FAT_PROGS); do cp $(BUILD)/c_$$p.elf $(BUILD)/fatroot/bin/$$p; done
+	$(BUILD)/mkfat12.exe $@ $(BUILD)/fatroot
 
 run: $(IMAGE) $(DISK) $(FATIMG)
 	$(QEMU) $(QEMU_DISKS) -serial file:$(BUILD)/serial.log

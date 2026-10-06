@@ -26,7 +26,8 @@ void serial_putc(char c)
 	outb(COM1, (uint8_t)c);
 }
 
-static int esc_state; /* 0 = normal, 1 = after ESC, 2 = after ESC [ */
+static int esc_state; /* 0 = normal, 1 = after ESC, 2 = after ESC [, 3 = after ESC [ digit */
+static int esc_digit;
 
 static void rx_char(uint8_t c, struct regs *r)
 {
@@ -34,9 +35,27 @@ static void rx_char(uint8_t c, struct regs *r)
 		esc_state = c == '[' ? 2 : 0;
 		return;
 	}
+	if (esc_state == 3) { /* ESC [ n ~ : Home, Delete, End */
+		esc_state = 0;
+		if (c == '~') {
+			switch (esc_digit) {
+			case '1': case '7': keyboard_inject(KEY_HOME); break;
+			case '3': keyboard_inject(KEY_DEL); break;
+			case '4': case '8': keyboard_inject(KEY_END); break;
+			}
+		}
+		return;
+	}
 	if (esc_state == 2) {
 		esc_state = 0;
+		if (c >= '0' && c <= '9') {
+			esc_digit = c;
+			esc_state = 3;
+			return;
+		}
 		switch (c) {
+		case 'H': keyboard_inject(KEY_HOME); break;
+		case 'F': keyboard_inject(KEY_END); break;
 		case 'A': keyboard_inject(KEY_UP); break;
 		case 'B': keyboard_inject(KEY_DOWN); break;
 		case 'C': keyboard_inject(KEY_RIGHT); break;

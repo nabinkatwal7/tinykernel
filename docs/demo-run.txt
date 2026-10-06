@@ -19,7 +19,7 @@ stress-testing kmalloc/kfree... ok
 tiny> spawn 2
 [worker 1] step 1/5
 [worker 2] step 1/5
-tiny> sleep 2600
+tiny> msleep 2600
 [worker 1] step 2/5
 [worker 2] step 2/5
 [worker 1] step 3/5

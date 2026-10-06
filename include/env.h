@@ -1,7 +1,7 @@
 #ifndef ENV_H
 #define ENV_H
 
-#define ENV_MAX      16
+#define ENV_MAX      32
 #define ENV_NAME_MAX 24
 #define ENV_VAL_MAX  64
 

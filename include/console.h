@@ -20,6 +20,10 @@
 #define COLOR_YELLOW      14
 #define COLOR_WHITE       15
 
+/* Cursor movement without erasing, for line editing: written like characters. The cursor wraps between rows. */
+#define CON_LEFT  '\x11'
+#define CON_RIGHT '\x12'
+
 void console_clear(void);           /* clears the scrolling area (row 0 is the status bar) */
 void console_putchar(char c);       /* handles \n \r \b \t; mirrored to COM1 */
 void console_write(const char *s);
@@ -27,6 +31,7 @@ void console_printf(const char *fmt, ...);
 /* Output capture: while active, console output is appended to the buffer instead of being shown
    (serial too). Used by the self-test runner. */
 void console_capture_begin(char *buf, unsigned cap);
+int  console_capture_full(void);    /* 1 while a capture is active and its buffer has no room left */
 int  console_capture_end(void);      /* returns the number of characters captured */
 
 void console_set_color(uint8_t fg, uint8_t bg);

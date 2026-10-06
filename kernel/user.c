@@ -16,6 +16,7 @@
 #include "paging.h"
 #include "pcache.h"
 #include "pmm.h"
+#include "vga.h"
 #include "sched.h"
 
 #define builtins builtin_progs
@@ -360,6 +361,10 @@ int user_run_args(const char *name, int argc, char **argv)
 	rc = enter_user(entry, push_args(argc > ARGS_MAX ? ARGS_MAX : argc, argv));
 	active = 0;
 	file_close_all(); /* flush anything the program forgot to close */
+	if (vga_in_graphics() && !gfxcon_active()) { /* a program that left the graphics screen up */
+		vga_set_text();
+		console_clear();
+	}
 	t->pgdir = saved_dir;
 	paging_switch(saved_dir);
 

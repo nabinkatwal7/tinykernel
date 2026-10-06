@@ -386,6 +386,9 @@ int file_write(int fd, const void *buf, uint32_t n)
 	if (o->kind == OBJ_CONSOLE_OUT) {
 		uint32_t i;
 
+		if (console_capture_full()) /* the reader of a pipeline has all it can take: like SIGPIPE, writing fails */
+			return FS_EPIPE;
+
 		for (i = 0; i < n; i++)
 			console_putchar(((const char *)buf)[i]);
 		return (int)n;

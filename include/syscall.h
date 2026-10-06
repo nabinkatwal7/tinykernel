@@ -37,6 +37,16 @@
 #define SYS_MUNMAP  32 /* ebx = address */
 #define SYS_MSYNC   33 /* ebx = address */
 #define SYS_PIPE    34 /* ebx = int[2] receiving the read and write descriptors */
+#define SYS_TRYKEY  35 /* a key if one is waiting, else -1 (never blocks) */
+#define SYS_PUTAT   36 /* ebx = column, ecx = row, edx = (attribute << 8) | character: write straight to the text screen */
+#define SYS_CLS     37 /* clear the screen */
+#define SYS_GFX     38 /* ebx = operation, ecx = int[6] of arguments: the 320x200 graphics screen (see GFX_* below) */
+#define GFX_ENTER   0  /* switch to graphics mode */
+#define GFX_LEAVE   1  /* back to text mode */
+#define GFX_RECT    2  /* x, y, w, h, color: filled rectangle */
+#define GFX_TEXT    3  /* x, y, fg, bg (-1 = transparent), string pointer */
+#define GFX_CLEAR   4  /* color */
+#define GFX_PALETTE 5  /* index, r, g, b (0-255) */
 #define SYS_FWRITE  10 /* ebx = fd, ecx = buffer, edx = count; fd 1 and 2 are the console */
 
 void syscall_dispatch(struct regs *r);

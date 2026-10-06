@@ -3,6 +3,8 @@
 #include "console.h"
 #include "clock.h"
 #include "file.h"
+#include "gfx.h"
+#include "vga.h"
 #include "keyboard.h"
 #include "klog.h"
 #include "sched.h"
@@ -206,6 +208,48 @@ void syscall_dispatch(struct regs *r)
 	case SYS_MUNMAP:
 		r->eax = (uint32_t)mmap_unmap(r->ebx);
 		break;
+	case SYS_TRYKEY:
+		r->eax = (uint32_t)keyboard_trygetkey();
+		break;
+	case SYS_PUTAT:
+		if (!gfxcon_active())
+			console_putat((int)r->ebx, (int)r->ecx, (char)(r->edx & 0xFF), (uint8_t)(r->edx >> 8));
+		break;
+	case SYS_CLS:
+		console_clear();
+		break;
+	case SYS_GFX: {
+		const int *a = (const int *)r->ecx;
+
+		r->eax = (uint32_t)-1;
+		if (!user_ptr_ok(r->ecx, 6 * sizeof(int)) || gfxcon_active())
+			break;
+		if (r->ebx == GFX_ENTER) {
+			r->eax = (uint32_t)vga_set_graphics();
+		} else if (!vga_in_graphics()) {
+			break; /* everything else needs the graphics screen */
+		} else if (r->ebx == GFX_LEAVE) {
+			vga_set_text();
+			console_clear();
+			r->eax = 0;
+		} else if (r->ebx == GFX_RECT) {
+			gfx_fill_rect(a[0], a[1], a[2], a[3], (uint8_t)a[4]);
+			r->eax = 0;
+		} else if (r->ebx == GFX_CLEAR) {
+			vga_fill((uint8_t)a[0]);
+			r->eax = 0;
+		} else if (r->ebx == GFX_PALETTE) {
+			vga_set_palette((uint8_t)a[0], (uint8_t)a[1], (uint8_t)a[2], (uint8_t)a[3]);
+			r->eax = 0;
+		} else if (r->ebx == GFX_TEXT && user_str_ok((uint32_t)a[4])) {
+			char text[64];
+
+			kstrlcpy(text, (const char *)a[4], sizeof text);
+			gfx_text(a[0], a[1], text, a[2], a[3]);
+			r->eax = 0;
+		}
+		break;
+	}
 	case SYS_PIPE: {
 		int fds[2];
 

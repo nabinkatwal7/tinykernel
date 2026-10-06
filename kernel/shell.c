@@ -3,6 +3,7 @@
 #include "ata.h"
 #include "acpi.h"
 #include "apic.h"
+#include "arith.h"
 #include "arp.h"
 #include "bcache.h"
 #include "cmdline.h"
@@ -42,6 +43,8 @@
 #include "pmm.h"
 #include "rtc.h"
 #include "sched.h"
+#include "textutil.h"
+#include "script.h"
 #include "selftest.h"
 #include "shm.h"
 #include "slab.h"
@@ -147,38 +150,119 @@ static void prompt(void)
 	console_set_color(COLOR_WHITE, COLOR_BLACK);
 }
 
+static void move_cursor(int n) /* n > 0 right, n < 0 left */
+{
+	while (n > 0) {
+		console_putchar(CON_RIGHT);
+		n--;
+	}
+	while (n < 0) {
+		console_putchar(CON_LEFT);
+		n++;
+	}
+}
+
+/* Redraw buf[from..len) at the cursor, blank 'extra' cells after it, and put the cursor back at 'cur'. */
+static void redraw_tail(const char *buf, int from, int len, int extra, int cur)
+{
+	int i;
+
+	for (i = from; i < len; i++)
+		console_putchar(buf[i]);
+	for (i = 0; i < extra; i++)
+		console_putchar(' ');
+	move_cursor(cur - (len + extra));
+}
+
+static int complete(char *buf, int *len, int max, int *cur); /* tab completion */
+
+/*
+ * Line editor: the cursor can be anywhere in the line. Left/Right/Home/End move it, characters are inserted at
+ * it, Backspace and Delete remove around it, Up/Down walk the history; Ctrl+A/E jump to the ends, Ctrl+U clears
+ * the line before the cursor, Ctrl+K the rest, Ctrl+L redraws the screen, Tab completes.
+ */
 static int readline(char *buf, int max)
 {
-	int len = 0, pos = hist_count;
+	int len = 0, cur = 0, pos = hist_count;
 
 	for (;;) {
 		int k = keyboard_getkey();
 
 		if (k == '\n') {
+			move_cursor(len - cur);
 			console_putchar('\n');
 			buf[len] = '\0';
 			return len;
 		} else if (k == '\b') {
-			if (len > 0) {
+			if (cur > 0) {
+				memmove(buf + cur - 1, buf + cur, (size_t)(len - cur));
 				len--;
-				console_putchar('\b');
+				cur--;
+				move_cursor(-1);
+				redraw_tail(buf, cur, len, 1, cur);
 			}
+		} else if (k == KEY_DEL) {
+			if (cur < len) {
+				memmove(buf + cur, buf + cur + 1, (size_t)(len - cur - 1));
+				len--;
+				redraw_tail(buf, cur, len, 1, cur);
+			}
+		} else if (k == KEY_LEFT) {
+			if (cur > 0) {
+				cur--;
+				move_cursor(-1);
+			}
+		} else if (k == KEY_RIGHT) {
+			if (cur < len) {
+				cur++;
+				move_cursor(1);
+			}
+		} else if (k == KEY_HOME || k == 0x01) { /* ctrl+A */
+			move_cursor(-cur);
+			cur = 0;
+		} else if (k == KEY_END || k == 0x05) {  /* ctrl+E */
+			move_cursor(len - cur);
+			cur = len;
+		} else if (k == 0x0B) {                  /* ctrl+K: delete to the end of the line */
+			redraw_tail(buf, len, len, len - cur, cur);
+			len = cur;
+		} else if (k == 0x15) {                  /* ctrl+U: delete to the start of the line */
+			int gone = cur;
+
+			move_cursor(-cur);
+			memmove(buf, buf + cur, (size_t)(len - cur));
+			len -= gone;
+			cur = 0;
+			redraw_tail(buf, 0, len, gone, 0);
 		} else if (k == KEY_UP) {
-			if (pos > 0)
+			if (pos > 0) {
+				move_cursor(len - cur);
 				set_line(buf, &len, hist[--pos]);
+				cur = len;
+			}
 		} else if (k == KEY_DOWN) {
 			if (pos < hist_count) {
+				move_cursor(len - cur);
 				pos++;
 				set_line(buf, &len, pos == hist_count ? "" : hist[pos]);
+				cur = len;
 			}
+		} else if (k == '\t') {
+			move_cursor(len - cur); /* completion works at the end of the line */
+			cur = len;
+			complete(buf, &len, max, &cur);
 		} else if (k == 0x0C) { /* ctrl+L */
 			console_clear();
 			prompt();
 			buf[len] = '\0';
 			console_write(buf);
+			move_cursor(cur - len);
 		} else if (k >= 32 && k < 127 && len < max - 1) {
-			buf[len++] = (char)k;
+			memmove(buf + cur + 1, buf + cur, (size_t)(len - cur));
+			buf[cur++] = (char)k;
+			len++;
 			console_putchar((char)k);
+			redraw_tail(buf, cur, len, 0, cur);
 		}
 	}
 }
@@ -207,8 +291,39 @@ static void expand(const char *in, char *out, int size)
 				out[o++] = *in++;
 			continue;
 		}
-		if (c == '$' && !single && (in[1] == '?' || in[1] == '_' || (in[1] >= 'A' && in[1] <= 'Z')
-					    || (in[1] >= 'a' && in[1] <= 'z'))) {
+		if (c == '$' && !single && in[1] == '(' && in[2] == '(') { /* $((arithmetic)) */
+			char expr[96], num[16];
+			const char *p = in + 3, *q;
+			int depth = 0, n = 0, bad = 1;
+			int32_t v = 0;
+
+			for (q = p; *q; q++) {
+				if (*q == '(')
+					depth++;
+				else if (*q == ')' && depth > 0)
+					depth--;
+				else if (*q == ')' && q[1] == ')')
+					break;
+			}
+			if (*q) {
+				for (; p < q && n < (int)sizeof expr - 1; p++)
+					expr[n++] = *p;
+				expr[n] = '\0';
+				bad = arith_eval(expr, &v);
+				in = q + 2;
+			} else {
+				in += 3; /* unterminated: drop the opener */
+			}
+			if (bad)
+				kstrlcpy(num, "0", sizeof num);
+			else
+				ksnprintf(num, sizeof num, "%d", v);
+			for (p = num; *p && o < size - 1; p++)
+				out[o++] = *p;
+			continue;
+		}
+		if (c == '$' && !single && (in[1] == '?' || in[1] == '#' || in[1] == '_' || (in[1] >= '0' && in[1] <= '9')
+					    || (in[1] >= 'A' && in[1] <= 'Z') || (in[1] >= 'a' && in[1] <= 'z'))) {
 			char name[ENV_NAME_MAX];
 			const char *val;
 			int n = 0;
@@ -218,6 +333,12 @@ static void expand(const char *in, char *out, int size)
 				in++;
 				ksnprintf(name, sizeof name, "%d", last_status);
 				val = name;
+			} else if (*in == '#') { /* number of script arguments */
+				in++;
+				ksnprintf(name, sizeof name, "%d", script_nargs());
+				val = name;
+			} else if (*in >= '0' && *in <= '9') { /* script parameter $0..$9 */
+				val = script_param(*in++ - '0');
 			} else {
 				while ((*in >= 'A' && *in <= 'Z') || (*in >= 'a' && *in <= 'z') || *in == '_'
 				       || (*in >= '0' && *in <= '9')) {
@@ -236,6 +357,137 @@ static void expand(const char *in, char *out, int size)
 		in++;
 	}
 	out[o] = '\0';
+}
+
+/* Points at the last ')' of the "$((...))" starting at s (or at its third character when unterminated). */
+static char *arith_end(char *s)
+{
+	int depth = 0;
+	char *q;
+
+	for (q = s + 3; *q; q++) {
+		if (*q == '(')
+			depth++;
+		else if (*q == ')' && depth > 0)
+			depth--;
+		else if (*q == ')' && q[1] == ')')
+			return q + 1;
+	}
+	return s + 2;
+}
+
+/* ---------------- aliases ---------------- */
+
+#define MAX_ALIASES 16
+
+static struct { char name[16]; char value[64]; int used; } aliases[MAX_ALIASES];
+
+static int alias_find(const char *name, size_t len)
+{
+	int i;
+
+	for (i = 0; i < MAX_ALIASES; i++)
+		if (aliases[i].used && kstrlen(aliases[i].name) == len && !kstrncmp(aliases[i].name, name, len))
+			return i;
+	return -1;
+}
+
+/* Replace an aliased first word by its text, up to a few times (an alias may refer to another, but never to itself twice). */
+static const char *apply_alias(const char *line, char *buf, int size)
+{
+	int round, last = -1;
+
+	for (round = 0; round < 4; round++) {
+		const char *w = line;
+		size_t len;
+		int a;
+
+		while (*w == ' ' || *w == '\t')
+			w++;
+		for (len = 0; w[len] && w[len] != ' ' && w[len] != '\t'; len++)
+			;
+		a = len ? alias_find(w, len) : -1;
+		if (a < 0 || a == last)
+			break;
+		ksnprintf(buf, (size_t)size, "%s%s", aliases[a].value, w + len);
+		line = buf;
+		last = a;
+	}
+	return line;
+}
+
+/* ---------------- command search path ---------------- */
+
+static int is_file(const char *path)
+{
+	struct vfs_stat st;
+
+	return vfs_stat(path, &st) == FS_OK && !st.is_dir;
+}
+
+static int ends_with(const char *s, const char *suffix)
+{
+	size_t n = kstrlen(s), m = kstrlen(suffix);
+
+	return n >= m && !kstrcmp(s + n - m, suffix);
+}
+
+/*
+ * A command that is not built into the shell: a path (contains '/'), a file called name or name.sh in a
+ * directory of $PATH (default "/bin:/fat/bin:/fat"), or a program embedded in the kernel image. Fills 'out' with
+ * what to run.
+ */
+static int find_external(const char *name, char *out, int size)
+{
+	const char *path = env_get("PATH");
+	size_t nlen = kstrlen(name);
+	unsigned i;
+
+	if (!path)
+		path = "/bin:/fat/bin:/fat";
+	if (nlen + 4 >= (size_t)size)
+		return 0;
+	for (i = 0; name[i]; i++) {
+		if (name[i] == '/') {
+			if (is_file(name)) {
+				kstrlcpy(out, name, (size_t)size);
+				return 1;
+			}
+			ksnprintf(out, (size_t)size, "%s.sh", name);
+			return is_file(out);
+		}
+	}
+	while (*path) {
+		size_t n = 0;
+
+		while (path[n] && path[n] != ':')
+			n++;
+		if (n && n + nlen + 5 < (size_t)size) {
+			memcpy(out, path, n);
+			out[n] = '/';
+			kstrlcpy(out + n + 1, name, size - (int)n - 1);
+			if (is_file(out))
+				return 1;
+			kstrlcpy(out + n + 1 + nlen, ".sh", size - (int)(n + 1 + nlen));
+			if (is_file(out))
+				return 1;
+		}
+		path += n + (path[n] == ':');
+	}
+	for (i = 0; i < builtin_nprogs; i++) {
+		if (!kstrcmp(builtin_progs[i].name, name)) {
+			kstrlcpy(out, name, (size_t)size);
+			return 1;
+		}
+	}
+	return 0;
+}
+
+static int run_external(const char *path, int argc, char **argv)
+{
+	if (ends_with(path, ".sh"))
+		return script_run(path, argc, argv);
+	return user_run_args(path, argc, argv);
 }
 
 /* ---------------- parser ---------------- */
@@ -422,7 +674,7 @@ static int cmd_sleep(int argc, char **argv)
 	uint32_t ms;
 
 	if (argc < 2 || kstrtoul(argv[1], &ms)) {
-		console_write("usage: sleep <ms>\n");
+		console_write("usage: msleep <ms>\n");
 		return 1;
 	}
 	while (ms && !interrupted) { /* Ctrl+C aware */
@@ -513,12 +765,16 @@ static int cmd_heapcheck(int argc, char **argv)
 	return errors || bad;
 }
 
+/* hexdump <addr> [len] dumps memory; hexdump <file> [offset [len]] (or a pipe) dumps file contents. */
 static int cmd_hexdump(int argc, char **argv)
 {
 	uint32_t addr, len = 64;
+	struct vfs_stat st;
 
+	if ((argc < 2 && file_stdin_active()) || (argc >= 2 && vfs_stat(argv[1], &st) == FS_OK && !st.is_dir))
+		return tu_hexdump_file(argc, argv);
 	if (argc < 2 || kstrtoul(argv[1], &addr) || (argc > 2 && kstrtoul(argv[2], &len))) {
-		console_write("usage: hexdump <addr> [len]\n");
+		console_write("usage: hexdump <addr> [len] | hexdump <file> [offset [len]]\n");
 		return 1;
 	}
 	if (!paging_is_mapped(addr) || !paging_is_mapped(addr + (len ? len - 1 : 0))) {
@@ -2963,6 +3219,23 @@ static int cmd_shtest(int argc, char **argv)
 	ok &= sh_expect("echo one | cat", "one\n");
 	ok &= sh_expect("echo two | cat | cat", "two\n");
 	ok &= sh_expect("echo 'a | b' | cat", "a | b\n");
+	ok &= sh_expect("shv=4", "");
+	ok &= sh_expect("echo $((shv*shv+1))", "17\n");
+	ok &= sh_expect("let shv=shv*2", "");
+	ok &= sh_expect("echo $shv $((shv > 7 && shv < 9))", "8 1\n");
+	{
+		static const char script[] = "# loop with continue, then an if/else\nshi=0\nwhile test $shi -lt 4\ndo\n"
+					     "  let shi=shi+1\n  if test $shi = 2\n  then\n    continue\n  fi\n  echo n$shi\n"
+					     "done\nif test $shi -eq 4\nthen\n  echo four\nelse\n  echo other\nfi\n";
+
+		vfs_write("sht.sh", script, sizeof script - 1);
+		ok &= sh_expect("sh sht.sh", "n1\nn3\nn4\nfour\n");
+		vfs_unlink("sht.sh");
+		env_unset("shi");
+	}
+	ok &= sh_expect("alias shx='echo aliased'", "");
+	ok &= sh_expect("shx a b", "aliased a b\n");
+	ok &= sh_expect("unalias shx", "");
 	ok &= sh_expect("echo x > sht.txt", "");
 	ok &= sh_expect("echo y >> sht.txt", "");
 	ok &= sh_expect("cat sht.txt", "x\ny\n");
@@ -2972,10 +3245,219 @@ static int cmd_shtest(int argc, char **argv)
 	ok &= sh_expect("cat sht2.txt", "x\ny\n");
 	ok &= sh_expect("echo 'q > r' > sht.txt", "");
 	ok &= sh_expect("cat sht.txt", "q > r\n");
+	env_unset("shv");
 	vfs_unlink("sht.txt");
 	vfs_unlink("sht2.txt");
 	console_printf("shtest: %s\n", ok ? "ok" : "FAILED");
 	return !ok;
+}
+
+/* sh <script> [args...] : run a script file */
+static int cmd_sh(int argc, char **argv)
+{
+	if (argc < 2) {
+		console_write("usage: sh <script> [args...]\n");
+		return 1;
+	}
+	return script_run(argv[1], argc - 1, argv + 1);
+}
+
+static char *assignment_eq(const char *w);
+
+/* let expr... : "let x=x+1" assigns the value of an integer expression; "let 3*4" prints it */
+static int cmd_let(int argc, char **argv)
+{
+	int i, rc = 0;
+
+	if (argc < 2) {
+		console_write("usage: let NAME=expression | let expression\n");
+		return 1;
+	}
+	for (i = 1; i < argc; i++) {
+		char *eq = assignment_eq(argv[i]);
+		int32_t v;
+		char num[16];
+
+		if (arith_eval(eq ? eq + 1 : argv[i], &v)) {
+			console_printf("let: bad expression '%s'\n", argv[i]);
+			return 1;
+		}
+		if (!eq) {
+			console_printf("%d\n", v);
+		} else {
+			ksnprintf(num, sizeof num, "%d", v);
+			*eq = 0;
+			rc = env_set(argv[i], num) ? 1 : rc;
+			*eq = '=';
+		}
+	}
+	return rc;
+}
+
+static int test_int(const char *s, int32_t *v)
+{
+	return arith_eval(s, v);
+}
+
+/* test EXPR : status 0 if true. -z S, -n S, -e/-f/-d PATH, A = B, A != B, A -eq|-ne|-lt|-le|-gt|-ge B, ! EXPR */
+static int cmd_test(int argc, char **argv)
+{
+	struct vfs_stat st;
+	int neg = 0, n;
+	char **a = argv + 1;
+	int r = 0;
+
+	argc--;
+	if (argc > 0 && !kstrcmp(a[0], "!")) {
+		neg = 1;
+		a++;
+		argc--;
+	}
+	n = argc;
+	if (n == 1) {
+		r = a[0][0] != 0;
+	} else if (n == 2 && !kstrcmp(a[0], "-z")) {
+		r = a[1][0] == 0;
+	} else if (n == 2 && !kstrcmp(a[0], "-n")) {
+		r = a[1][0] != 0;
+	} else if (n == 2 && (!kstrcmp(a[0], "-e") || !kstrcmp(a[0], "-f") || !kstrcmp(a[0], "-d"))) {
+		r = vfs_stat(a[1], &st) == FS_OK;
+		if (r && a[0][1] == 'f')
+			r = !st.is_dir;
+		else if (r && a[0][1] == 'd')
+			r = st.is_dir;
+	} else if (n == 3 && !kstrcmp(a[1], "=")) {
+		r = !kstrcmp(a[0], a[2]);
+	} else if (n == 3 && !kstrcmp(a[1], "!=")) {
+		r = kstrcmp(a[0], a[2]) != 0;
+	} else if (n == 3 && a[1][0] == '-') {
+		int32_t x, y;
+
+		if (test_int(a[0], &x) || test_int(a[2], &y)) {
+			console_write("test: integer expression expected\n");
+			return 2;
+		}
+		if (!kstrcmp(a[1], "-eq"))
+			r = x == y;
+		else if (!kstrcmp(a[1], "-ne"))
+			r = x != y;
+		else if (!kstrcmp(a[1], "-lt"))
+			r = x < y;
+		else if (!kstrcmp(a[1], "-le"))
+			r = x <= y;
+		else if (!kstrcmp(a[1], "-gt"))
+			r = x > y;
+		else if (!kstrcmp(a[1], "-ge"))
+			r = x >= y;
+		else {
+			console_printf("test: unknown operator %s\n", a[1]);
+			return 2;
+		}
+	} else if (n != 0) {
+		console_write("test: bad expression\n");
+		return 2;
+	}
+	return (r != 0) == !neg ? 0 : 1;
+}
+
+/* alias [name=value] : define or list aliases */
+static int cmd_alias(int argc, char **argv)
+{
+	int i, k;
+
+	if (argc < 2) {
+		for (i = 0; i < MAX_ALIASES; i++)
+			if (aliases[i].used)
+				console_printf("alias %s='%s'\n", aliases[i].name, aliases[i].value);
+		return 0;
+	}
+	for (k = 1; k < argc; k++) {
+		char *eq = assignment_eq(argv[k]);
+
+		if (!eq) {
+			i = alias_find(argv[k], kstrlen(argv[k]));
+			if (i < 0) {
+				console_printf("alias: %s not found\n", argv[k]);
+				return 1;
+			}
+			console_printf("alias %s='%s'\n", aliases[i].name, aliases[i].value);
+			continue;
+		}
+		*eq = 0;
+		i = alias_find(argv[k], kstrlen(argv[k]));
+		for (int j = 0; i < 0 && j < MAX_ALIASES; j++)
+			if (!aliases[j].used)
+				i = j;
+		if (i < 0 || kstrlen(argv[k]) >= sizeof aliases[0].name) {
+			console_write("alias: table full or name too long\n");
+			*eq = '=';
+			return 1;
+		}
+		aliases[i].used = 1;
+		kstrlcpy(aliases[i].name, argv[k], sizeof aliases[i].name);
+		kstrlcpy(aliases[i].value, eq + 1, sizeof aliases[i].value);
+		*eq = '=';
+	}
+	return 0;
+}
+
+/* unalias name... */
+static int cmd_unalias(int argc, char **argv)
+{
+	int k, rc = 0;
+
+	if (argc < 2) {
+		console_write("usage: unalias name...\n");
+		return 1;
+	}
+	for (k = 1; k < argc; k++) {
+		int i = alias_find(argv[k], kstrlen(argv[k]));
+
+		if (i < 0) {
+			console_printf("unalias: %s not found\n", argv[k]);
+			rc = 1;
+		} else {
+			aliases[i].used = 0;
+		}
+	}
+	return rc;
+}
+
+/* functions : list the shell functions defined by scripts */
+static int cmd_functions(int argc, char **argv)
+{
+	int i;
+	const char *n;
+
+	(void)argc;
+	(void)argv;
+	for (i = 0; (n = script_function_name(i)); i++)
+		console_printf("%s()\n", n);
+	if (!script_function_count())
+		console_write("no functions\n");
+	return 0;
+}
+
+/* calc EXPRESSION : evaluate an integer expression (+ - * / % ( ) comparisons, && ||, variables) */
+static int cmd_calc(int argc, char **argv)
+{
+	char expr[LINE_MAX];
+	int32_t v;
+	int i, n = 0;
+
+	if (argc < 2) {
+		console_write("usage: calc <expression>   e.g. calc (3+4)*0x10\n");
+		return 1;
+	}
+	expr[0] = 0;
+	for (i = 1; i < argc; i++)
+		n += ksnprintf(expr + n, sizeof expr - (size_t)n, "%s%s", i > 1 ? " " : "", argv[i]);
+	if (arith_eval(expr, &v)) {
+		console_printf("calc: cannot evaluate '%s'\n", expr);
+		return 1;
+	}
+	console_printf("%d (0x%x)\n", v, (uint32_t)v);
+	return 0;
 }
 
 /* panic [message] : test the panic path and its stack trace */
@@ -3347,7 +3829,7 @@ static int cmd_demo(int argc, char **argv)
 		"meminfo",
 		"memtest",
 		"spawn 2",
-		"sleep 2600",
+		"msleep 2600",
 		"ps",
 		"format",
 		"write hello.txt Written by the demo",
@@ -3386,7 +3868,7 @@ static const struct command commands[] = {
 	{ "date",    "date",                  "show the real-time clock", cmd_date },
 	{ "time",    "time <cmd...>",         "time a command", cmd_time },
 	{ "timer",   "timer [every] <ms> <txt>", "kernel timers: set/list/cancel", cmd_timer },
-	{ "sleep",   "sleep <ms>",            "sleep via the scheduler", cmd_sleep },
+	{ "msleep",  "msleep <ms>",           "sleep via the scheduler (milliseconds; see also the sleep program)", cmd_sleep },
 	{ "meminfo", "meminfo",               "memory map, frames and heap", cmd_meminfo },
 	{ "memtest", "memtest",               "stress test the allocator", cmd_memtest },
 	{ "hog",     "hog <bytes>",           "hold heap memory (shows in ps)", cmd_hog },
@@ -3482,6 +3964,20 @@ static const struct command commands[] = {
 	{ "shtest",  "shtest",                "test pipelines and redirection", cmd_shtest },
 	{ "jobs",    "jobs",                  "list background jobs", cmd_jobs },
 	{ "fg",      "fg [%n]",               "wait for a background job", cmd_fg },
+	{ "sh",      "sh <script> [args]",    "run a shell script", cmd_sh },
+	{ "let",     "let NAME=expr",         "integer arithmetic on shell variables", cmd_let },
+	{ "test",    "test EXPR",             "evaluate a condition (status 0 = true)", cmd_test },
+	{ "alias",   "alias [name=text]",     "define or list command aliases", cmd_alias },
+	{ "unalias", "unalias name",          "remove an alias", cmd_unalias },
+	{ "functions", "functions",           "list shell functions", cmd_functions },
+	{ "grep",    "grep [-ivnc] pat [file]", "print lines that contain pat", tu_grep },
+	{ "wc",      "wc [-lwc] [file...]",   "count lines, words and bytes", tu_wc },
+	{ "head",    "head [-n N] [file]",    "first lines of a file", tu_head },
+	{ "tail",    "tail [-n N] [file]",    "last lines of a file", tu_tail },
+	{ "sort",    "sort [-nru] [file...]", "sort lines", tu_sort },
+	{ "find",    "find [dir] [-name pat]", "search a directory tree", tu_find },
+	{ "diff",    "diff file1 file2",      "compare two files line by line", tu_diff },
+	{ "calc",    "calc EXPRESSION",       "evaluate an integer expression", cmd_calc },
 	{ "panic",   "panic [message]",       "deliberately panic (prints a stack trace)", cmd_panic },
 	{ "ksym",   "ksym [name|0xADDR]",    "kernel symbol table", cmd_ksym },
 	{ "pcache",  "pcache [drop|test]",    "file page cache", cmd_pcache },
@@ -3514,6 +4010,8 @@ static char *find_pipe(char *s)
 				quote = 0;
 		} else if (*s == '"' || *s == '\'') {
 			quote = *s;
+		} else if (s[0] == '$' && s[1] == '(' && s[2] == '(') {
+			s = arith_end(s); /* operators inside $(( )) are not shell syntax */
 		} else if (*s == '\\' && s[1]) {
 			s++;
 		} else if (*s == '|') {
@@ -3563,6 +4061,8 @@ static int strip_ampersand(char *line)
 				quote = 0;
 		} else if (*s == '"' || *s == '\'') {
 			quote = *s;
+		} else if (s[0] == '$' && s[1] == '(' && s[2] == '(') {
+			s = arith_end(s); /* operators inside $(( )) are not shell syntax */
 		} else if (*s == '\\' && s[1]) {
 			s++;
 		}
@@ -3704,10 +4204,11 @@ static int exec_command(const char *line);
  */
 int shell_exec(const char *line)
 {
-	char copy[LINE_MAX];
+	char copy[LINE_MAX], aliasbuf[LINE_MAX];
 	char *bar, *data;
 	int rc, len;
 
+	line = apply_alias(line, aliasbuf, sizeof aliasbuf);
 	kstrlcpy(copy, line, sizeof copy);
 	if (strip_ampersand(copy))
 		return start_job(copy);
@@ -3750,6 +4251,8 @@ static int take_redirect(char *line, char op, char *file, int size, int *append)
 		}
 		if (*s == '"' || *s == '\'') {
 			quote = *s;
+		} else if (s[0] == '$' && s[1] == '(' && s[2] == '(') {
+			s = arith_end(s);
 		} else if (*s == '\\' && s[1]) {
 			s++;
 		} else if (*s == op) {
@@ -3811,7 +4314,7 @@ static int exec_output(const char *line)
 	console_capture_begin(buf + len, (unsigned)(REDIR_CAP - len));
 	rc = exec_plain(copy);
 	len += console_capture_end();
-	got = vfs_write(file, buf, (uint32_t)len);
+	got = !kstrcmp(file, "/dev/null") ? 0 : vfs_write(file, buf, (uint32_t)len); /* /dev/null just discards */
 	kfree(buf);
 	if (got) {
 		fs_fail(file, got);
@@ -3858,6 +4361,37 @@ static int exec_command(const char *line)
 	return rc;
 }
 
+/* "NAME=value" with a valid variable name: the position of '=', or NULL. */
+static char *assignment_eq(const char *w)
+{
+	const char *p = w;
+
+	if (!((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') || *p == '_'))
+		return 0;
+	while ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') || *p == '_' || (*p >= '0' && *p <= '9'))
+		p++;
+	return *p == '=' ? (char *)p : 0;
+}
+
+/* If every word is NAME=value, set them all (as environment variables) and return 1. */
+static int all_assignments(int argc, char **argv)
+{
+	int i;
+
+	for (i = 0; i < argc; i++)
+		if (!assignment_eq(argv[i]))
+			return 0;
+	for (i = 0; i < argc; i++) {
+		char *eq = assignment_eq(argv[i]);
+
+		*eq = 0;
+		if (env_set(argv[i], eq + 1))
+			console_printf("cannot set %s (environment full?)\n", argv[i]);
+		*eq = '=';
+	}
+	return 1;
+}
+
 static int exec_plain(const char *line)
 {
 	char copy[LINE_MAX];
@@ -3870,10 +4404,24 @@ static int exec_plain(const char *line)
 	if (argc == 0)
 		return 0;
 
+	if (all_assignments(argc, argv)) /* NAME=value ... sets shell variables */
+		return last_status = 0;
+	if (script_call(argv[0], argc, argv, &last_status)) /* a function defined by a script */
+		return last_status;
+
 	cmd_table = commands;
 	for (c = commands; c->name; c++) {
 		if (!kstrcmp(c->name, argv[0])) {
 			last_status = c->fn(argc, argv);
+			return last_status;
+		}
+	}
+
+	{
+		char path[VFS_PATH_MAX];
+
+		if (find_external(argv[0], path, sizeof path)) {
+			last_status = run_external(path, argc, argv);
 			return last_status;
 		}
 	}
@@ -3894,6 +4442,151 @@ int shell_exec_from_user(const char *line)
 	return shell_exec(line);
 }
 
+/* ---------------- tab completion ---------------- */
+
+#define MAX_CANDIDATES 64
+
+static struct candidate {
+	char name[VFS_NAME_MAX + 2];
+	int dir;
+} cand[MAX_CANDIDATES];
+static int ncand;
+
+static void add_candidate(const char *name, const char *prefix, int dir)
+{
+	size_t n = kstrlen(prefix);
+
+	if (ncand >= MAX_CANDIDATES || kstrncmp(name, prefix, n) || kstrlen(name) >= sizeof cand[0].name - 1)
+		return;
+	kstrlcpy(cand[ncand].name, name, sizeof cand[0].name);
+	cand[ncand++].dir = dir;
+}
+
+static void add_files(const char *word)
+{
+	static struct vfs_dirent ent[FS_MAX_FILES];
+	char dir[FILE_PATH_MAX];
+	const char *slash = 0, *p, *base;
+	int i, n;
+
+	for (p = word; *p; p++)
+		if (*p == '/')
+			slash = p;
+	if (!slash) {
+		kstrlcpy(dir, vfs_getcwd(), sizeof dir);
+		base = word;
+	} else {
+		size_t dl = (size_t)(slash - word);
+
+		if (dl >= sizeof dir)
+			return;
+		memcpy(dir, word, dl);
+		dir[dl] = '\0';
+		if (!dl)
+			kstrlcpy(dir, "/", sizeof dir);
+		base = slash + 1;
+	}
+	n = vfs_list(dir, ent, FS_MAX_FILES);
+	for (i = 0; i < n; i++)
+		add_candidate(ent[i].name, base, ent[i].is_dir);
+}
+
+static void add_commands(const char *word)
+{
+	const struct command *c;
+	const char *n;
+	int i;
+
+	for (c = commands; c->name; c++)
+		add_candidate(c->name, word, 0);
+	for (i = 0; i < MAX_ALIASES; i++)
+		if (aliases[i].used)
+			add_candidate(aliases[i].name, word, 0);
+	for (i = 0; (n = script_function_name(i)); i++)
+		add_candidate(n, word, 0);
+}
+
+static void type_text(char *buf, int *len, int max, const char *s)
+{
+	while (*s && *len < max - 1) {
+		buf[(*len)++] = *s;
+		console_putchar(*s++);
+	}
+	buf[*len] = '\0';
+}
+
+/*
+ * Completes the word before the cursor (which is at the end of the line): command names for the first word,
+ * file names for the others. One match is finished off; several extend to their common prefix, and a second
+ * Tab lists them.
+ */
+static int complete(char *buf, int *len, int max, int *cur)
+{
+	static int listed_for = -1;
+	char word[64];
+	const char *base;
+	int ws = *len, first = 1, i, common, n, again;
+
+	while (ws > 0 && buf[ws - 1] != ' ' && buf[ws - 1] != '\t')
+		ws--;
+	for (i = 0; i < ws; i++)
+		if (buf[i] != ' ' && buf[i] != '\t')
+			first = 0;
+	if (*len - ws >= (int)sizeof word)
+		return 0;
+	memcpy(word, buf + ws, (size_t)(*len - ws));
+	word[*len - ws] = '\0';
+
+	again = listed_for == *len; /* the text is unchanged since the last Tab */
+	ncand = 0;
+	if (first)
+		add_commands(word);
+	else
+		add_files(word);
+	if (!ncand)
+		return 0;
+
+	base = word;
+	for (i = 0; word[i]; i++)
+		if (word[i] == '/')
+			base = word + i + 1;
+	n = (int)kstrlen(base);
+
+	common = (int)kstrlen(cand[0].name);
+	for (i = 1; i < ncand; i++) {
+		int k = 0;
+
+		while (k < common && cand[0].name[k] == cand[i].name[k])
+			k++;
+		common = k;
+	}
+	if (common > n) { /* there is more that all candidates agree on */
+		char add[VFS_NAME_MAX + 2];
+
+		memcpy(add, cand[0].name + n, (size_t)(common - n));
+		add[common - n] = '\0';
+		type_text(buf, len, max, add);
+		n = common;
+	}
+	if (ncand == 1) {
+		type_text(buf, len, max, cand[0].dir ? "/" : " ");
+		*cur = *len;
+		return 1;
+	}
+	listed_for = *len;
+	*cur = *len;
+	if (!again) /* the first Tab only completes; pressing Tab again on the same text lists the choices */
+		return 1;
+	console_putchar('\n');
+	for (i = 0; i < ncand; i++)
+		console_printf("%s%s  ", cand[i].name, cand[i].dir ? "/" : "");
+	console_putchar('\n');
+	prompt();
+	console_write(buf);
+	*cur = *len;
+	return 1;
+}
+
 void shell_run(void)
 {
 	char line[LINE_MAX];
@@ -3903,6 +4596,12 @@ void shell_run(void)
 	env_set("USER", "root");
 	env_set("SHELL", "tinysh");
 	env_set("TERM", "vga80x25");
+	if (is_file("/etc/rc")) { /* startup script */
+		char *rc_argv[] = { "/etc/rc", 0 };
+
+		console_write("running /etc/rc\n");
+		script_run("/etc/rc", 1, rc_argv);
+	}
 	for (;;) {
 		interrupted = 0;
 		report_jobs();
